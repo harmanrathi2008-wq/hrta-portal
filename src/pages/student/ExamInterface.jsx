@@ -20,6 +20,8 @@ export default function ExamInterface() {
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [zoomedImage, setZoomedImage] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomLastDist, setZoomLastDist] = useState(null);
 
   // Section Tracking States
   const [sections, setSections] = useState([]);
@@ -878,19 +880,19 @@ export default function ExamInterface() {
               {current.question_text}
             </div>
 
-            {/* Attached Graphic Image */}
+            {/* Attached Graphic Image - Full original quality, no compression */}
             {current.image_url && current.image_url !== "null" && current.image_url.trim() !== "" && !imageError && (
-              <div className="my-6 text-center border p-2 bg-gray-50 max-w-2xl mx-auto shadow-sm rounded">
+              <div className="my-6 text-center border p-2 bg-gray-50 mx-auto shadow-sm rounded overflow-auto">
                 <div
                   className="relative inline-block cursor-zoom-in group"
-                  onClick={() => setZoomedImage(current.image_url)}
+                  onClick={() => { setZoomedImage(current.image_url); setZoomScale(1); }}
                   title="Click to zoom"
                 >
                   <img
                     src={current.image_url}
                     alt="Question Graphic"
-                    className="max-w-full max-h-[420px] object-contain mx-auto rounded"
-                    style={{ imageRendering: 'crisp-edges' }}
+                    className="max-w-full h-auto mx-auto rounded block"
+                    style={{ display: 'block', imageRendering: 'auto' }}
                     onError={() => setImageError(true)}
                   />
                   {/* Zoom hint overlay */}
@@ -903,33 +905,83 @@ export default function ExamInterface() {
                     </span>
                   </div>
                 </div>
-                <p className="text-[10px] text-gray-400 font-semibold mt-1">🔍 Click image to zoom</p>
+                <p className="text-[10px] text-gray-400 font-semibold mt-1">🔍 Click image to zoom in | Pinch or scroll to zoom in lightbox</p>
               </div>
             )}
 
-            {/* Image Zoom Lightbox Modal */}
+            {/* Image Zoom Lightbox Modal - supports pinch zoom + mouse wheel zoom */}
             {zoomedImage && (
               <div
-                className="fixed inset-0 z-[9999] bg-black bg-opacity-90 flex items-center justify-center p-4"
-                onClick={() => setZoomedImage(null)}
+                className="fixed inset-0 z-[9999] bg-black bg-opacity-95 flex items-center justify-center"
+                onClick={() => { setZoomedImage(null); setZoomScale(1); }}
+                onWheel={(e) => {
+                  e.preventDefault();
+                  setZoomScale(prev => Math.min(Math.max(prev - e.deltaY * 0.002, 0.5), 5));
+                }}
               >
-                <div className="relative max-w-[95vw] max-h-[95vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-                  {/* Close button */}
-                  <button
-                    onClick={() => setZoomedImage(null)}
-                    className="absolute -top-10 right-0 text-white bg-red-600 hover:bg-red-700 rounded-full w-8 h-8 flex items-center justify-center font-black text-lg shadow-lg z-10 cursor-pointer transition-colors"
-                    title="Close"
-                  >
-                    ✕
-                  </button>
+                {/* Zoom controls */}
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => setZoomScale(p => Math.max(p - 0.25, 0.5))} className="bg-white bg-opacity-20 hover:bg-opacity-40 text-white font-black w-9 h-9 rounded-full text-xl flex items-center justify-center cursor-pointer transition-colors shadow-lg">−</button>
+                  <span className="text-white text-xs font-bold bg-black bg-opacity-50 px-3 py-1 rounded-full">{Math.round(zoomScale * 100)}%</span>
+                  <button onClick={() => setZoomScale(p => Math.min(p + 0.25, 5))} className="bg-white bg-opacity-20 hover:bg-opacity-40 text-white font-black w-9 h-9 rounded-full text-xl flex items-center justify-center cursor-pointer transition-colors shadow-lg">+</button>
+                  <button onClick={() => setZoomScale(1)} className="bg-white bg-opacity-20 hover:bg-opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded-full cursor-pointer transition-colors shadow-lg">Reset</button>
+                </div>
+
+                {/* Close button */}
+                <button
+                  onClick={() => { setZoomedImage(null); setZoomScale(1); }}
+                  className="absolute top-4 right-4 text-white bg-red-600 hover:bg-red-700 rounded-full w-10 h-10 flex items-center justify-center font-black text-xl shadow-lg z-20 cursor-pointer transition-colors"
+                  title="Close"
+                >
+                  ✕
+                </button>
+
+                {/* Scrollable image container for pinch/zoom */}
+                <div
+                  className="overflow-auto w-full h-full flex items-center justify-center"
+                  style={{ touchAction: 'pinch-zoom' }}
+                  onClick={e => e.stopPropagation()}
+                  onTouchStart={e => {
+                    if (e.touches.length === 2) {
+                      const dist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                      );
+                      setZoomLastDist(dist);
+                    }
+                  }}
+                  onTouchMove={e => {
+                    if (e.touches.length === 2 && zoomLastDist !== null) {
+                      const dist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                      );
+                      const delta = dist - zoomLastDist;
+                      setZoomScale(prev => Math.min(Math.max(prev + delta * 0.005, 0.5), 5));
+                      setZoomLastDist(dist);
+                    }
+                  }}
+                  onTouchEnd={() => setZoomLastDist(null)}
+                >
                   <img
                     src={zoomedImage}
                     alt="Zoomed Question Graphic"
-                    className="max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl"
-                    style={{ imageRendering: 'crisp-edges' }}
+                    style={{
+                      transform: `scale(${zoomScale})`,
+                      transformOrigin: 'center center',
+                      transition: 'transform 0.1s ease',
+                      imageRendering: 'auto',
+                      maxWidth: 'none',
+                      display: 'block',
+                      margin: 'auto',
+                    }}
+                    draggable={false}
                   />
-                  <p className="text-white text-xs font-semibold mt-3 opacity-60">Click outside or ✕ to close</p>
                 </div>
+
+                <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white text-xs font-semibold opacity-50 pointer-events-none">
+                  Pinch / Scroll to zoom • Use +/− buttons • Click outside to close
+                </p>
               </div>
             )}
 
