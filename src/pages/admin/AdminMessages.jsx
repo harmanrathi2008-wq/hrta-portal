@@ -140,14 +140,29 @@ export default function AdminMessages() {
     try {
       const fileName = `admin-messages/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
 
+      // 1. Get signed upload URL from backend
+      const res = await fetch(`${API_BASE}/api/get-upload-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || 'Failed to get secure upload URL');
+      }
+
+      const { token, path } = await res.json();
+
       // Simulate progress while uploading
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => Math.min(prev + 5, 90));
       }, 200);
 
+      // 2. Upload file directly to Supabase using the signed URL/token
       const { data, error } = await supabase.storage
         .from('hrta-files')
-        .upload(fileName, file, {
+        .uploadToSignedUrl(path, token, file, {
           cacheControl: '3600',
           upsert: false,
           contentType: 'application/pdf',
@@ -157,10 +172,10 @@ export default function AdminMessages() {
 
       if (error) throw error;
 
-      // Get public URL
+      // 3. Get public URL
       const { data: urlData } = supabase.storage
         .from('hrta-files')
-        .getPublicUrl(fileName);
+        .getPublicUrl(path);
 
       setUploadProgress(100);
       return urlData.publicUrl;

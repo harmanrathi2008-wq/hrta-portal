@@ -8,6 +8,14 @@ import { dirname, join } from 'path'
 import nodemailer from 'nodemailer'
 import axios from 'axios'
 
+// Load environment variables for local development if dotenv is present
+try {
+  const dotenv = await import('dotenv')
+  dotenv.config()
+} catch (e) {
+  // dotenv not installed/loaded, relying on native --env-file or platform injection
+}
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
@@ -17,10 +25,15 @@ const PORT = process.env.PORT || 8080
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 
-// Supabase
+// Supabase Clients
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
   process.env.VITE_SUPABASE_ANON_KEY
+)
+
+const supabaseAdmin = createClient(
+  process.env.VITE_SUPABASE_URL,
+  process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
 )
 
 // Resend - Use RESEND_API_KEY (not VITE_)
@@ -558,6 +571,31 @@ app.post('/api/delete-image', async (req, res) => {
   } catch (error) {
     console.error('Cloudinary delete error:', error)
     res.status(500).json({ error: 'Failed to delete image' })
+  }
+})
+
+// ============ GET SIGNED UPLOAD URL FOR STORAGE ============
+app.post('/api/get-upload-url', async (req, res) => {
+  try {
+    const { fileName } = req.body;
+    if (!fileName) {
+      return res.status(400).json({ error: 'fileName is required.' });
+    }
+
+    const { data, error } = await supabaseAdmin.storage
+      .from('hrta-files')
+      .createSignedUploadUrl(fileName);
+
+    if (error) throw error;
+
+    res.json({
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path: data.path
+    });
+  } catch (error) {
+    console.error('Error generating signed upload URL:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate upload URL' });
   }
 })
 
