@@ -632,7 +632,7 @@ app.post('/api/admin-message', async (req, res) => {
         <div style="margin: 28px 0; padding: 20px 24px; background: linear-gradient(135deg, #1e3a5f 0%, #0f2440 100%); border-radius: 12px; border: 1px solid #2a4d7a;">
           <p style="margin: 0 0 12px 0; color: #64b5f6; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">📎 Attached Document</p>
           <p style="margin: 0 0 16px 0; color: #cfd8dc; font-size: 13px;">${pdfFileName || 'Document.pdf'}</p>
-          <a href="${pdfUrl}" target="_blank" 
+          <a href="${pdfUrl}?download=" download="${pdfFileName || 'Document.pdf'}" target="_blank" 
              style="display: inline-block; background: linear-gradient(135deg, #0288d1, #0097a7); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13px; letter-spacing: 0.03em;">
             📥 Download PDF
           </a>
