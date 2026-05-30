@@ -1,0 +1,1186 @@
+import React, { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { supabase } from "../../lib/supabase";
+
+export default function ExamInterface() {
+  const { examId } = useParams();
+  const navigate = useNavigate();
+
+  // App & Exam States
+  const [student, setStudent] = useState(null);
+  const [exam, setExam] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [timeSpent, setTimeSpent] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [responses, setResponses] = useState({});
+  const [status, setStatus] = useState({});
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [submitModalOpen, setSubmitModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState(null);
+
+  // Section Tracking States
+  const [sections, setSections] = useState([]);
+  const [activeSection, setActiveSection] = useState("");
+
+  // Security Locking States
+  const [hasFocus, setHasFocus] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  // Fetch Data: Student, Exam, Questions
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const userId = sessionStorage.getItem("userId");
+        const role = sessionStorage.getItem("role");
+
+        if (!userId || role !== "student") {
+          navigate("/");
+          return;
+        }
+
+        const [studentRes, examRes, questionsRes] = await Promise.all([
+          supabase.from("students").select("*").eq("id", userId).single(),
+          supabase.from("exams").select("*").eq("id", examId).single(),
+          supabase
+            .from("questions")
+            .select("*")
+            .eq("exam_id", examId)
+            .order("order_index", { ascending: true }),
+        ]);
+
+        if (studentRes.error) throw studentRes.error;
+        if (examRes.error) throw examRes.error;
+        if (questionsRes.error) throw questionsRes.error;
+
+        setStudent(studentRes.data);
+        setExam(examRes.data);
+        setQuestions(questionsRes.data);
+
+        // Group questions into sections based on 'topic' or fallback to 'subject'
+        const secs = [];
+        questionsRes.data.forEach((q) => {
+          const secName = (q.topic || examRes.data.subject || "Section A").toUpperCase().trim();
+          if (!secs.includes(secName)) {
+            secs.push(secName);
+          }
+        });
+        setSections(secs);
+        if (secs.length > 0) {
+          setActiveSection(secs[0]);
+        }
+
+        // Initialize status tracker
+        const initialStatus = {};
+        questionsRes.data.forEach((q) => {
+          initialStatus[q.id] = "notVisited";
+        });
+        if (questionsRes.data.length > 0) {
+          initialStatus[questionsRes.data[0].id] = "notAnswered";
+        }
+        setStatus(initialStatus);
+      } catch (err) {
+        console.error("Error loading exam data:", err);
+        alert("Failed to load exam data. Please check connection.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, [examId, navigate]);
+
+  // Timer Initialization & Countdown Hook
+  useEffect(() => {
+    if (!exam) return;
+
+    const timerKey = `exam_start_time_${examId}`;
+    let startTime = sessionStorage.getItem(timerKey);
+    if (!startTime) {
+      startTime = Date.now().toString();
+      sessionStorage.setItem(timerKey, startTime);
+    }
+
+    const startTimestamp = parseInt(startTime, 10);
+    const durationSeconds = (exam.duration_minutes || 180) * 60;
+
+    const updateTimer = () => {
+      const elapsed = Math.floor((Date.now() - startTimestamp) / 1000);
+      const remaining = Math.max(0, durationSeconds - elapsed);
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(timerInterval);
+        handleAutoSubmit();
+      }
+    };
+
+    updateTimer();
+    const timerInterval = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(timerInterval);
+  }, [exam]);
+
+  // Active Question Time Tracker
+  useEffect(() => {
+    const currentQ = questions[currentIdx];
+    if (!loading && currentQ && currentQ.id) {
+      const interval = setInterval(() => {
+        setTimeSpent((prev) => ({
+          ...prev,
+          [currentQ.id]: (prev[currentQ.id] || 0) + 1,
+        }));
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [currentIdx, loading, questions]);
+
+  // Security Focus & Screenshot Listeners Hook
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    const handleBlur = () => setHasFocus(false);
+    const handleFocus = () => setHasFocus(true);
+
+    const preventDefault = (e) => e.preventDefault();
+
+    const handleKeyDown = (e) => {
+      // Intercept PrintScreen
+      if (e.key === "PrintScreen" || e.keyCode === 44) {
+        e.preventDefault();
+        try {
+          navigator.clipboard.writeText(""); // Clear clipboard to prevent paste
+        } catch (err) {}
+        alert("Screenshots are strictly prohibited during the examination!");
+      }
+      // Intercept dev tools (F12) and print/save keys
+      if (
+        (e.ctrlKey && ["p", "c", "v", "u", "s"].includes(e.key.toLowerCase())) ||
+        e.key === "F12"
+      ) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("copy", preventDefault);
+    document.addEventListener("cut", preventDefault);
+    document.addEventListener("paste", preventDefault);
+    document.addEventListener("contextmenu", preventDefault);
+    window.addEventListener("keydown", handleKeyDown);
+
+    // Initial fullscreen trigger request
+    enterFullscreen();
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("copy", preventDefault);
+      document.removeEventListener("cut", preventDefault);
+      document.removeEventListener("paste", preventDefault);
+      document.removeEventListener("contextmenu", preventDefault);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  const enterFullscreen = () => {
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement
+        .requestFullscreen()
+        .then(() => setIsFullscreen(true))
+        .catch(() => {});
+    }
+  };
+
+  const current = questions[currentIdx] || {};
+
+  // Sync active section when question index changes
+  useEffect(() => {
+    if (current && exam) {
+      const qSec = (current.topic || exam.subject || "Section A").toUpperCase().trim();
+      if (qSec !== activeSection) {
+        setActiveSection(qSec);
+      }
+      setImageError(false); // Reset image load error state for the new question
+    }
+  }, [currentIdx, questions, exam]);
+
+  // Formats seconds into HH:MM:SS
+  const formatTime = (totalSeconds) => {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${hrs.toString().padStart(2, "0")}:${mins
+      .toString()
+      .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  // Navigates to a specific question safely
+  const handleQuestionSelect = (idx) => {
+    if (idx < 0 || idx >= questions.length) return;
+    setCurrentIdx(idx);
+    const targetQId = questions[idx].id;
+    if (status[targetQId] === "notVisited") {
+      setStatus((prev) => ({ ...prev, [targetQId]: "notAnswered" }));
+    }
+  };
+
+  // Handles clicking a Section Tab
+  const handleSectionSelect = (secName) => {
+    setActiveSection(secName);
+    const firstQIdx = questions.findIndex(
+      (q) => (q.topic || exam.subject || "Section A").toUpperCase().trim() === secName
+    );
+    if (firstQIdx !== -1) {
+      handleQuestionSelect(firstQIdx);
+    }
+  };
+
+  // Actions
+  const handleSaveNext = () => {
+    const ans = responses[current.id];
+    const isAnswered =
+      ans !== undefined &&
+      ans !== null &&
+      ans !== "" &&
+      (!Array.isArray(ans) || ans.length > 0);
+
+    setStatus((prev) => ({
+      ...prev,
+      [current.id]: isAnswered ? "answered" : "notAnswered",
+    }));
+
+    advanceNext();
+  };
+
+  const advanceNext = () => {
+    const currentQSec = (current.topic || exam.subject || "Section A").toUpperCase().trim();
+    const currentSecQs = questions.filter(
+      (q) => (q.topic || exam.subject || "Section A").toUpperCase().trim() === currentQSec
+    );
+    const isLastInSec = currentSecQs[currentSecQs.length - 1].id === current.id;
+
+    if (isLastInSec) {
+      // Last question in this section - check if there is a next section
+      const curSecIdx = sections.indexOf(currentQSec);
+      if (curSecIdx !== -1 && curSecIdx < sections.length - 1) {
+        const nextSec = sections[curSecIdx + 1];
+        alert(`You have completed the [${currentQSec}] section. Moving to the next section: [${nextSec}]`);
+        handleSectionSelect(nextSec);
+      }
+    } else {
+      // Standard next question in same section
+      const curIdxInSec = currentSecQs.findIndex((q) => q.id === current.id);
+      const nextQInSec = currentSecQs[curIdxInSec + 1];
+      const nextGlobalIdx = questions.findIndex((q) => q.id === nextQInSec.id);
+      handleQuestionSelect(nextGlobalIdx);
+    }
+  };
+
+  const handleClear = () => {
+    setResponses((prev) => ({ ...prev, [current.id]: null }));
+    setStatus((prev) => ({ ...prev, [current.id]: "notAnswered" }));
+  };
+
+  const handleSaveMarkReview = () => {
+    const ans = responses[current.id];
+    const isAnswered =
+      ans !== undefined &&
+      ans !== null &&
+      ans !== "" &&
+      (!Array.isArray(ans) || ans.length > 0);
+
+    setStatus((prev) => ({
+      ...prev,
+      [current.id]: isAnswered ? "answeredAndMarkedForReview" : "markedForReview",
+    }));
+
+    advanceNext();
+  };
+
+  const handleMarkReviewNext = () => {
+    const ans = responses[current.id];
+    const isAnswered =
+      ans !== undefined &&
+      ans !== null &&
+      ans !== "" &&
+      (!Array.isArray(ans) || ans.length > 0);
+
+    setStatus((prev) => ({
+      ...prev,
+      [current.id]: isAnswered ? "answeredAndMarkedForReview" : "markedForReview",
+    }));
+
+    advanceNext();
+  };
+
+  const handleBack = () => {
+    if (currentIdx > 0) {
+      handleQuestionSelect(currentIdx - 1);
+    }
+  };
+
+  const handleNext = () => {
+    if (currentIdx < questions.length - 1) {
+      handleQuestionSelect(currentIdx + 1);
+    }
+  };
+
+  // Evaluation & Final Submission
+  const getSubmissionStats = () => {
+    const counts = {
+      notVisited: 0,
+      notAnswered: 0,
+      answered: 0,
+      markedForReview: 0,
+      answeredAndMarkedForReview: 0,
+    };
+    questions.forEach((q) => {
+      const s = status[q.id] || "notVisited";
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  };
+
+  const counts = getSubmissionStats();
+
+  const executeSubmission = async (isAuto = false) => {
+    setSubmitting(true);
+    try {
+      const userId = sessionStorage.getItem("userId");
+      if (!userId) throw new Error("No student session found.");
+
+      // Advanced JEE evaluation engine
+      let totalScore = 0;
+      let totalMarks = 0;
+      let correctCount = 0;
+      let wrongCount = 0;
+      let unattemptedCount = 0;
+
+      questions.forEach((q) => {
+        if (q.status !== "dropped") {
+          totalMarks += q.positive_marks || exam.correct_marks || 4;
+        }
+
+        const studentAnswer = responses[q.id];
+        const hasAnswered =
+          studentAnswer !== undefined &&
+          studentAnswer !== null &&
+          studentAnswer !== "" &&
+          (!Array.isArray(studentAnswer) || studentAnswer.length > 0);
+
+        if (!hasAnswered) {
+          unattemptedCount++;
+        } else {
+          const qType = q.question_type || q.type;
+          const posMarks = parseFloat(q.positive_marks) || parseFloat(exam.correct_marks) || 4;
+          const negMarks = parseFloat(q.negative_marks) || parseFloat(exam.negative_marks) || 0;
+          const policy = q.scoring_policy || "exact_match";
+
+          // Parse correct list
+          let correctList = [];
+          try {
+            correctList = JSON.parse(q.correct_answer);
+            if (!Array.isArray(correctList)) correctList = [correctList];
+          } catch (e) {
+            if (q.correct_answer) correctList = [q.correct_answer];
+          }
+          correctList = correctList.map((item) => String(item).trim().toLowerCase());
+
+          // Parse selected list
+          let selectedList = [];
+          if (Array.isArray(studentAnswer)) {
+            selectedList = studentAnswer.map((item) => String(item).trim().toLowerCase());
+          } else {
+            selectedList = [String(studentAnswer).trim().toLowerCase()];
+          }
+
+          // 1. Numerical comparison
+          if (qType === "numerical_integer" || qType === "numerical_decimal") {
+            const sNum = parseFloat(studentAnswer);
+            const cNum = parseFloat(q.correct_answer);
+            if (isNaN(sNum) || isNaN(cNum)) {
+              wrongCount++;
+              totalScore -= negMarks;
+            } else if (qType === "numerical_integer") {
+              if (Math.round(sNum) === Math.round(cNum)) {
+                correctCount++;
+                totalScore += posMarks;
+              } else {
+                wrongCount++;
+                totalScore -= negMarks;
+              }
+            } else {
+              // Decimal: Compare up to 2 decimal places with absolute window
+              if (Math.abs(sNum - cNum) < 0.0101) {
+                correctCount++;
+                totalScore += posMarks;
+              } else {
+                wrongCount++;
+                totalScore -= negMarks;
+              }
+            }
+          }
+          // 2. MCQ Single Correct or True/False
+          else if (qType === "mcq_single" || qType === "true_false" || qType === "single") {
+            if (correctList.includes(selectedList[0])) {
+              correctCount++;
+              totalScore += posMarks;
+            } else {
+              wrongCount++;
+              totalScore -= negMarks;
+            }
+          }
+          // 3. MCQ Multiple Correct
+          else if (qType === "mcq_multiple" || qType === "multiple") {
+            const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
+            if (hasIncorrect) {
+              wrongCount++;
+              totalScore -= policy === "partial_positive" ? 0 : negMarks;
+            } else {
+              const numSel = selectedList.length;
+              const numCor = correctList.length;
+
+              if (numSel === numCor) {
+                // Exact Match
+                correctCount++;
+                totalScore += posMarks;
+              } else if (numSel < numCor && numSel > 0) {
+                // Partial correctness
+                if (policy === "partial_positive" || policy === "partial_negative") {
+                  correctCount++; // Treat as partial correct
+                  totalScore += numSel; // +1 per correct option selected
+                } else {
+                  // policy exact match
+                  wrongCount++;
+                  totalScore -= negMarks;
+                }
+              } else {
+                unattemptedCount++;
+              }
+            }
+          }
+          // Fallback string match
+          else {
+            if (String(studentAnswer).trim().toLowerCase() === String(q.correct_answer).trim().toLowerCase()) {
+              correctCount++;
+              totalScore += posMarks;
+            } else {
+              wrongCount++;
+              totalScore -= negMarks;
+            }
+          }
+        }
+      });
+
+      // Retrieve target total marks if defined by the admin
+      const finalTotalMarks = exam && exam.total_marks ? parseFloat(exam.total_marks) : totalMarks;
+      const percentage = finalTotalMarks > 0 ? Math.round((totalScore / finalTotalMarks) * 100) : 0;
+      const timerKey = `exam_start_time_${examId}`;
+      const startTime = sessionStorage.getItem(timerKey) || Date.now().toString();
+
+      // Calculate attempt number
+      let attemptNumber = 1;
+      try {
+        const { data: existingAttempts } = await supabase
+          .from("exam_results")
+          .select("id")
+          .eq("student_id", userId)
+          .eq("exam_id", examId);
+        if (existingAttempts) {
+          attemptNumber = existingAttempts.length + 1;
+        }
+      } catch (e) {
+        console.error("Error fetching attempt count:", e);
+      }
+
+      const resultPayload = {
+        student_id: userId,
+        exam_id: examId,
+        answers: responses,
+        status: "submitted",
+        total_score: totalScore,
+        total_marks: finalTotalMarks,
+        percentage: percentage,
+        correct_count: correctCount,
+        wrong_count: wrongCount,
+        unattempted_count: unattemptedCount,
+        started_at: new Date(parseInt(startTime, 10)).toISOString(),
+        submitted_at: new Date().toISOString(),
+        question_statuses: timeSpent,
+        attempt_number: attemptNumber
+      };
+
+      const { error } = await supabase.from("exam_results").insert([resultPayload]);
+      if (error) throw error;
+
+      // Complete active personal assignment if it exists
+      try {
+        const { data: activeAssign } = await supabase
+          .from("personal_assignments")
+          .select("id")
+          .eq("student_id", userId)
+          .eq("exam_id", examId)
+          .eq("status", "active")
+          .maybeSingle();
+
+        if (activeAssign) {
+          await supabase
+            .from("personal_assignments")
+            .update({ status: "completed", updated_at: new Date().toISOString() })
+            .eq("id", activeAssign.id);
+        }
+      } catch (e) {
+        console.error("Error completing personal assignment:", e);
+      }
+
+      sessionStorage.removeItem(timerKey);
+      if (!isAuto) alert("Examination responses saved and submitted successfully!");
+      
+      // Attempt exiting fullscreen when done
+      try {
+        if (document.exitFullscreen) document.exitFullscreen();
+      } catch (e) {}
+
+      navigate("/student/dashboard");
+    } catch (err) {
+      console.error("Submission failed:", err);
+      alert("Failed to submit exam: " + err.message);
+    } finally {
+      setSubmitting(false);
+      setSubmitModalOpen(false);
+    }
+  };
+
+  const handleAutoSubmit = () => {
+    executeSubmission(true);
+  };
+
+  const renderOptions = () => {
+    const qType = current.question_type || current.type;
+
+    if (qType === "numerical_integer" || qType === "numerical_decimal") {
+      return (
+        <div className="mt-4">
+          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
+            Your Answer ({qType === "numerical_decimal" ? "Decimal value" : "Integer value"}):
+          </label>
+          <input
+            type="number"
+            step={qType === "numerical_decimal" ? "any" : "1"}
+            className="border-2 border-gray-300 p-2.5 w-64 text-sm font-semibold rounded shadow-inner focus:outline-none focus:border-[#1f497d]"
+            placeholder="Type numerical value"
+            value={responses[current.id] || ""}
+            onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+          />
+        </div>
+      );
+    }
+
+    if (!current.options || !Array.isArray(current.options)) return null;
+
+    if (qType === "single" || qType === "mcq_single" || qType === "true_false") {
+      return current.options.map((opt, i) => (
+        <label key={i} className="flex items-center gap-3 text-sm font-semibold cursor-pointer my-3 p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
+          <input
+            type="radio"
+            name={`q-${current.id}`}
+            checked={responses[current.id] === opt}
+            onChange={() => setResponses({ ...responses, [current.id]: opt })}
+            className="w-4.5 h-4.5 text-[#1f497d] cursor-pointer"
+          />
+          <span className="text-gray-800">{opt}</span>
+        </label>
+      ));
+    }
+
+    if (qType === "multiple" || qType === "mcq_multiple") {
+      return current.options.map((opt, i) => (
+        <label key={i} className="flex items-center gap-3 text-sm font-semibold cursor-pointer my-3 p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
+          <input
+            type="checkbox"
+            checked={(responses[current.id] || []).includes(opt)}
+            onChange={() => {
+              let arr = responses[current.id] || [];
+              if (!Array.isArray(arr)) {
+                arr = arr ? [arr] : [];
+              }
+              arr = arr.includes(opt) ? arr.filter((o) => o !== opt) : [...arr, opt];
+              setResponses({ ...responses, [current.id]: arr });
+            }}
+            className="w-4.5 h-4.5 text-[#1f497d] cursor-pointer rounded"
+          />
+          <span className="text-gray-800">{opt}</span>
+        </label>
+      ));
+    }
+
+    return (
+      <input
+        type="text"
+        className="border p-2.5 w-full text-sm font-semibold rounded shadow-inner"
+        placeholder="Type answer here"
+        value={responses[current.id] || ""}
+        onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+      />
+    );
+  };
+
+  const getButtonClass = (qId, idx) => {
+    const s = status[qId] || "notVisited";
+    let base = "w-9 h-8 flex items-center justify-center text-xs font-bold border transition-all cursor-pointer ";
+
+    if (currentIdx === idx) {
+      base += "ring-2 ring-[#1f497d] ring-offset-1 ";
+    }
+
+    if (s === "notVisited") {
+      return base + "bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200 rounded";
+    }
+    if (s === "notAnswered") {
+      return base + "bg-[#e0533c] border-[#d0432c] text-white rounded-t-md rounded-bl-md hover:opacity-90";
+    }
+    if (s === "answered") {
+      return base + "bg-[#4caf50] border-[#3e9e42] text-white rounded-t-md rounded-br-md hover:opacity-90";
+    }
+    if (s === "markedForReview") {
+      return base + "bg-[#5e35b1] border-[#4e25a1] text-white rounded-full hover:opacity-90";
+    }
+    if (s === "answeredAndMarkedForReview") {
+      return base + "bg-[#5e35b1] border-[#4e25a1] text-white rounded-full relative hover:opacity-90";
+    }
+    return base;
+  };
+
+  // Full screen mandatory blocker page
+  if (!isFullscreen && !loading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0">
+        <div className="bg-slate-900 border border-slate-700 p-8 rounded-lg max-w-md shadow-2xl">
+          <svg className="w-16 h-16 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>
+          </svg>
+          <h2 className="text-lg font-black mb-3 text-blue-400">FULLSCREEN REQUIRED</h2>
+          <p className="text-sm font-semibold text-gray-400 leading-relaxed mb-6">
+            This examination must be taken in Full Screen mode to maintain testing integrity. Click below to enter fullscreen and begin.
+          </p>
+          <button
+            onClick={enterFullscreen}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 font-bold rounded uppercase transition-all shadow-md tracking-wider cursor-pointer"
+          >
+            Enter Fullscreen
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Focus lost anticheat blocker page
+  if (!hasFocus && !loading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0 animate-pulse">
+        <div className="bg-red-950 border border-red-500 p-8 rounded-lg max-w-md shadow-2xl">
+          <svg className="w-16 h-16 text-yellow-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+          </svg>
+          <h2 className="text-lg font-black mb-3 text-red-500">⚠️ FOCUS LOST DETECTED</h2>
+          <p className="text-xs font-semibold text-gray-350 leading-relaxed mb-6">
+            You switched tabs, opened developers inspect tools, or focused outside the test screen. All violations are logged automatically. Click below to return focus.
+          </p>
+          <button
+            onClick={() => window.focus()}
+            className="bg-yellow-500 hover:bg-yellow-600 text-gray-950 px-6 py-2 rounded font-bold uppercase transition-all shadow-md text-xs cursor-pointer"
+          >
+            Return to Exam
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center font-bold bg-[#f1f4f9] text-[#1f497d]">
+        <svg className="animate-spin h-8 w-8 mr-3" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        LOADING HARMAN RATHI TESTING AGENCY EXAMINATION SYSTEM...
+      </div>
+    );
+  }
+
+  if (questions.length === 0) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center font-bold bg-[#f1f4f9] p-8 text-center">
+        <p className="text-xl text-red-600 mb-4">No questions have been configured for this exam yet.</p>
+        <button onClick={() => navigate("/student/dashboard")} className="bg-[#1f497d] text-white px-6 py-2.5 rounded font-bold hover:bg-[#15345a]">
+          Return to Dashboard
+        </button>
+      </div>
+    );
+  }
+
+  const activeSectionQs = questions.filter(
+    (q) => (q.topic || exam.subject || "Section A").toUpperCase().trim() === activeSection
+  );
+
+  return (
+    <div className="h-screen flex flex-col bg-[#e6e6e6] font-sans select-none">
+      
+      {/* 1. TOP NAV BAR */}
+      <div className="bg-[#1f497d] text-white py-1 px-6 flex justify-between items-center text-[11px] font-bold border-b border-[#143256] shrink-0">
+        <span className="tracking-wide uppercase">Harman Rathi Testing Agency - Candidate Terminal</span>
+        <button
+          onClick={() => {
+            if (window.confirm("Return to student dashboard? Your current responses will NOT be saved unless submitted.")) {
+              sessionStorage.removeItem(`exam_start_time_${examId}`);
+              try {
+                if (document.exitFullscreen) document.exitFullscreen();
+              } catch (e) {}
+              navigate("/student/dashboard");
+            }
+          }}
+          className="bg-[#28a745] hover:bg-[#218838] px-3.5 py-1 text-white font-bold flex items-center gap-1 rounded transition-colors text-[10px] uppercase shadow-sm cursor-pointer"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+          </svg>
+          Home
+        </button>
+      </div>
+
+      {/* 2. MAIN LOGO HEADER BANNER */}
+      <div className="bg-white px-6 py-2.5 flex justify-between items-center border-b border-gray-300 shadow-sm shrink-0">
+        {/* Left: Mahatma Gandhi Logo */}
+        <div className="flex items-center">
+          <img src="/assets/gandhi.png" alt="Gandhi 150 Years" className="h-12 w-auto object-contain" />
+        </div>
+
+        {/* Center-Left: Branding */}
+        <div className="flex-1 px-6 flex flex-col items-start leading-none justify-center">
+          <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">राष्ट्रीय परीक्षा एजेंसी</span>
+          <span className="text-[#1f497d] text-lg font-extrabold tracking-tight">Harman Rathi Testing Agency</span>
+          <span className="text-[8px] font-bold text-white bg-[#28a745] px-2 py-0.5 rounded tracking-widest uppercase inline-block mt-1">
+            Excellence in Assessment
+          </span>
+        </div>
+
+        {/* Center-Right: Ministry of Education Emblem */}
+        <div className="hidden lg:flex items-center space-x-2.5 border-l border-gray-300 pl-6">
+          <img src="/assets/emblem.png" alt="Emblem of India" className="h-10 w-auto object-contain" />
+          <div className="flex flex-col text-left leading-tight">
+            <span className="text-gray-800 font-extrabold text-xs uppercase tracking-wide">Ministry of Education</span>
+            <span className="text-gray-500 font-bold text-[10px]">Government of India</span>
+          </div>
+        </div>
+
+        {/* Right: Azadi ka Amrit Mahotsav Logo */}
+        <div className="flex items-center border-l border-gray-300 pl-6 ml-6">
+          <img src="/assets/amrit.png" alt="Azadi Ka Amrit Mahotsav" className="h-11 w-auto object-contain" />
+        </div>
+      </div>
+
+      {/* 3. CANDIDATE PROFILE & EXAM SPEC DETAILS BAR */}
+      <div className="bg-[#f9f9f9] border border-gray-300 m-2 p-3 rounded flex flex-col md:flex-row justify-between gap-4 shadow-sm items-center shrink-0">
+        {/* Profile photo and specs */}
+        <div className="flex items-center gap-4 flex-1">
+          <div className="w-16 h-20 bg-white border border-gray-400 p-0.5 rounded shadow-sm overflow-hidden flex items-center justify-center shrink-0">
+            {student?.photo_url ? (
+              <img src={student.photo_url} alt="Candidate" className="w-full h-full object-cover" />
+            ) : (
+              <svg className="w-10 h-12 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+              </svg>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs font-semibold text-gray-700">
+            <div>
+              <span className="text-gray-500">Candidate Name :</span>{" "}
+              <span className="text-[#e0533c] font-bold uppercase">{student?.full_name || "STUDENT NAME"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Exam Name :</span>{" "}
+              <span className="text-gray-900 font-bold">{exam?.title || "JEE-Main"}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Subject Name :</span>{" "}
+              <span className="text-gray-900 font-bold">{exam?.subject || "Core Course"}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">Remaining Time :</span>{" "}
+              <span className="bg-[#029bc4] text-white font-mono font-bold px-3 py-0.5 rounded text-xs tracking-widest shadow-sm">
+                {formatTime(timeLeft)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Language select dropdown */}
+        <div className="flex items-center gap-2 text-xs font-bold text-gray-700 border-l border-gray-300 pl-4">
+          <span>View In:</span>
+          <select className="border border-gray-400 rounded px-3 py-1 bg-white text-xs font-bold outline-none focus:border-[#1f497d] shadow-sm">
+            <option value="english">English</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 4. SPLIT GRID INTERFACE */}
+      <div className="flex flex-1 overflow-hidden px-2 pb-2 gap-2 relative">
+        
+        {/* Left Column: Question Area */}
+        <div className={`bg-white border border-gray-400 flex flex-col rounded shadow-sm overflow-hidden transition-all duration-300 ${
+          isSidebarOpen ? "flex-1 md:w-2/3 lg:w-3/4" : "w-full"
+        }`}>
+          
+          {/* Section Selector Tabs - NTA style */}
+          {sections.length > 1 && (
+            <div className="flex bg-gray-100 border-b border-gray-300 text-xs font-bold shrink-0">
+              {sections.map((sec) => (
+                <button
+                  key={sec}
+                  onClick={() => handleSectionSelect(sec)}
+                  className={`px-5 py-2.5 border-r border-gray-300 transition-colors uppercase tracking-wider cursor-pointer ${
+                    activeSection === sec
+                      ? "bg-[#1f497d] text-white border-b-2 border-b-yellow-500"
+                      : "bg-gray-55 hover:bg-gray-200 text-gray-700"
+                  }`}
+                >
+                  {sec}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-[#1f497d] text-white p-2 font-bold text-xs uppercase flex justify-between items-center shrink-0">
+            <span>Question Paper Section: <span className="text-yellow-450">{activeSection}</span></span>
+            <span className="bg-yellow-500 text-gray-900 text-[10px] px-2 py-0.5 rounded font-black">
+              Q. {currentIdx + 1} of {questions.length}
+            </span>
+          </div>
+
+          {/* Question Text Area */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            <h3 className="font-bold text-base text-gray-800 border-b border-gray-250 pb-3 mb-4">
+              Question {currentIdx + 1}:
+            </h3>
+            
+            <div className="text-sm font-semibold text-gray-800 mb-6 whitespace-pre-wrap leading-relaxed select-none">
+              {current.question_text}
+            </div>
+
+            {/* Attached Graphic Image */}
+            {current.image_url && current.image_url !== "null" && current.image_url.trim() !== "" && !imageError && (
+              <div className="my-6 text-center border p-2 bg-gray-50 max-w-2xl mx-auto shadow-sm rounded">
+                <div
+                  className="relative inline-block cursor-zoom-in group"
+                  onClick={() => setZoomedImage(current.image_url)}
+                  title="Click to zoom"
+                >
+                  <img
+                    src={current.image_url}
+                    alt="Question Graphic"
+                    className="max-w-full max-h-[420px] object-contain mx-auto rounded"
+                    style={{ imageRendering: 'crisp-edges' }}
+                    onError={() => setImageError(true)}
+                  />
+                  {/* Zoom hint overlay */}
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 rounded flex items-center justify-center">
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black bg-opacity-60 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                      </svg>
+                      Click to Zoom
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400 font-semibold mt-1">🔍 Click image to zoom</p>
+              </div>
+            )}
+
+            {/* Image Zoom Lightbox Modal */}
+            {zoomedImage && (
+              <div
+                className="fixed inset-0 z-[9999] bg-black bg-opacity-90 flex items-center justify-center p-4"
+                onClick={() => setZoomedImage(null)}
+              >
+                <div className="relative max-w-[95vw] max-h-[95vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+                  {/* Close button */}
+                  <button
+                    onClick={() => setZoomedImage(null)}
+                    className="absolute -top-10 right-0 text-white bg-red-600 hover:bg-red-700 rounded-full w-8 h-8 flex items-center justify-center font-black text-lg shadow-lg z-10 cursor-pointer transition-colors"
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                  <img
+                    src={zoomedImage}
+                    alt="Zoomed Question Graphic"
+                    className="max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl"
+                    style={{ imageRendering: 'crisp-edges' }}
+                  />
+                  <p className="text-white text-xs font-semibold mt-3 opacity-60">Click outside or ✕ to close</p>
+                </div>
+              </div>
+            )}
+
+            {/* Answer Options Inputs */}
+            <div className="border-t border-gray-200 pt-4 mt-6">
+              {renderOptions()}
+            </div>
+
+            {/* Last Question Warning Notice */}
+            {currentIdx === questions.length - 1 && (
+              <div className="mt-6 bg-orange-50 border-l-4 border-orange-500 p-3 text-orange-850 text-xs font-bold rounded shadow-inner">
+                ⚠️ You are on the last question of this exam. Please review your answers and click "Save & Submit Exam" below to complete.
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Button Matrix */}
+          <div className="bg-gray-100 p-4 border-t border-gray-300 flex flex-col gap-3 shrink-0">
+            {/* Row 1: Save & Mark Options */}
+            <div className="flex flex-wrap gap-2">
+              {currentIdx === questions.length - 1 ? (
+                <button
+                  onClick={() => {
+                    // Update status for the final question
+                    const ans = responses[current.id];
+                    const isAnswered = ans !== undefined && ans !== null && ans !== "" && (!Array.isArray(ans) || ans.length > 0);
+                    setStatus((prev) => ({ ...prev, [current.id]: isAnswered ? "answered" : "notAnswered" }));
+                    setSubmitModalOpen(true);
+                  }}
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 text-xs font-black rounded shadow-md uppercase transition-colors animate-pulse cursor-pointer tracking-wide"
+                >
+                  Save & Submit Exam
+                </button>
+              ) : (
+                <button
+                  onClick={handleSaveNext}
+                  className="bg-[#28a745] hover:bg-[#218838] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+                >
+                  Save & Next
+                </button>
+              )}
+              <button
+                onClick={handleClear}
+                className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleSaveMarkReview}
+                className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+              >
+                Save & Mark For Review
+              </button>
+              <button
+                onClick={handleMarkReviewNext}
+                className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+              >
+                Mark For Review & Next
+              </button>
+            </div>
+
+            {/* Row 2: Standard Navigation + Submit */}
+            <div className="flex justify-between items-center border-t border-gray-300 pt-3">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBack}
+                  disabled={currentIdx === 0}
+                  className="bg-white border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  &lt;&lt; Back
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={currentIdx === questions.length - 1}
+                  className="bg-white border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Next &gt;&gt;
+                </button>
+              </div>
+              
+              <button
+                onClick={() => setSubmitModalOpen(true)}
+                className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-8 py-2.5 text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider"
+              >
+                Submit Exam
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Collapsible Sidebar Toggle handle */}
+        <div className="flex items-center justify-center shrink-0">
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="bg-[#333] hover:bg-black text-white w-5 h-16 rounded flex items-center justify-center shadow-md cursor-pointer transition-colors"
+            title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
+          >
+            {isSidebarOpen ? (
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"></path>
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1-1.414l-4-4a1 1 0 010-1.414l-4-4a1 1 0 011.414 0z" clipRule="evenodd"></path>
+              </svg>
+            )}
+          </button>
+        </div>
+
+        {/* Right Column: Legend counts & Questions Palette Grid */}
+        <div className={`bg-white border border-gray-400 rounded shadow-sm p-4 flex flex-col shrink-0 transition-all duration-300 ${
+          isSidebarOpen ? "w-80 opacity-100" : "w-0 opacity-0 hidden"
+        }`}>
+          
+          <h4 className="font-bold text-xs uppercase text-gray-700 border-b pb-2 mb-3 tracking-wide">
+            Question Palette
+          </h4>
+
+          {/* NTA Status Legend Grid */}
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2 border border-gray-300 border-dashed p-2.5 rounded mb-4 text-[10px] font-bold text-gray-650 bg-gray-50">
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-6 bg-gray-200 border border-gray-400 rounded flex items-center justify-center font-bold text-gray-700">{counts.notVisited}</div>
+              <span>Not Visited</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-6 bg-[#e0533c] border-[#d0432c] text-white rounded-t-md rounded-bl-md flex items-center justify-center font-bold">{counts.notAnswered}</div>
+              <span>Not Answered</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-6 bg-[#4caf50] border-[#3e9e42] text-white rounded-t-md rounded-br-md flex items-center justify-center font-bold">{counts.answered}</div>
+              <span>Answered</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-6 bg-[#5e35b1] border-[#4e25a1] text-white rounded-full flex items-center justify-center font-bold">{counts.markedForReview}</div>
+              <span>Marked for Review</span>
+            </div>
+            <div className="flex items-center space-x-2 col-span-2 border-t pt-1.5 mt-1 border-gray-250">
+              <div className="w-7 h-6 bg-[#5e35b1] border-[#4e25a1] text-white rounded-full flex items-center justify-center font-bold relative shrink-0">
+                {counts.answeredAndMarkedForReview}
+                <span className="absolute bottom-0.5 right-0.5 w-2 h-2 bg-green-400 rounded-full border border-white"></span>
+              </div>
+              <span className="leading-tight text-[9px] text-gray-550">Answered & Marked for Review (will be evaluated)</span>
+            </div>
+          </div>
+
+          <h5 className="font-bold text-[10px] uppercase text-[#1f497d] mb-2 tracking-wider flex justify-between">
+            <span>Grid ({activeSection}):</span>
+            <span className="text-[#e0533c] font-black">{activeSectionQs.length} Qs</span>
+          </h5>
+
+          {/* Question Grid Buttons Palette - Filtered to Active Section */}
+          <div className="flex-1 overflow-y-auto border border-gray-300 p-2.5 bg-gray-50 rounded shadow-inner max-h-[350px]">
+            <div className="grid grid-cols-5 gap-2">
+              {questions.map((q, i) => {
+                const qSec = (q.topic || exam.subject || "Section A").toUpperCase().trim();
+                // Filter buttons to only display questions from the active tab section
+                if (qSec !== activeSection) return null;
+
+                return (
+                  <button
+                    key={q.id}
+                    onClick={() => handleQuestionSelect(i)}
+                    className={getButtonClass(q.id, i)}
+                  >
+                    {String(i + 1).padStart(2, "0")}
+                    {status[q.id] === "answeredAndMarkedForReview" && (
+                      <span className="absolute bottom-0.5 right-0.5 w-2 h-2 bg-green-400 rounded-full border border-white"></span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 5. BACKDROP CONFIRMATION MODAL ON SUBMIT */}
+      {submitModalOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-[#1f497d] rounded-lg shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="bg-[#1f497d] text-white px-5 py-3 font-bold text-sm uppercase flex justify-between items-center">
+              <span>Exam Submission Confirmation</span>
+              <button
+                onClick={() => setSubmitModalOpen(false)}
+                className="text-white hover:text-gray-300 text-lg font-bold outline-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div className="p-5 text-xs text-gray-700 leading-relaxed font-sans">
+              <p className="font-bold text-gray-800 text-sm mb-3">
+                Here is a summary of your attempt counts:
+              </p>
+              
+              <table className="w-full border-collapse border border-gray-300 mb-5 text-left font-semibold">
+                <tbody>
+                  <tr className="border-b border-gray-250 bg-gray-50">
+                    <td className="p-2 border-r border-gray-250 text-gray-500">Total Questions:</td>
+                    <td className="p-2 text-gray-850 font-black">{questions.length}</td>
+                  </tr>
+                  <tr className="border-b border-gray-250 bg-green-50">
+                    <td className="p-2 border-r border-gray-250 text-green-700">Answered:</td>
+                    <td className="p-2 text-green-800 font-black">{counts.answered}</td>
+                  </tr>
+                  <tr className="border-b border-gray-250 bg-red-50">
+                    <td className="p-2 border-r border-gray-250 text-red-700">Not Answered:</td>
+                    <td className="p-2 text-red-800 font-black">{counts.notAnswered}</td>
+                  </tr>
+                  <tr className="border-b border-gray-250 bg-purple-50">
+                    <td className="p-2 border-r border-gray-250 text-purple-700">Marked for Review:</td>
+                    <td className="p-2 text-purple-800 font-black">{counts.markedForReview}</td>
+                  </tr>
+                  <tr className="border-b border-gray-250 bg-indigo-50">
+                    <td className="p-2 border-r border-gray-250 text-indigo-700">Answered & Marked for Review:</td>
+                    <td className="p-2 text-indigo-800 font-black">{counts.answeredAndMarkedForReview}</td>
+                  </tr>
+                  <tr className="bg-gray-50">
+                    <td className="p-2 border-r border-gray-250 text-gray-400">Not Visited:</td>
+                    <td className="p-2 text-gray-600 font-black">{counts.notVisited}</td>
+                  </tr>
+                </tbody>
+              </table>
+              
+              <p className="font-bold text-red-600 text-center text-sm border-t pt-3">
+                Are you sure you want to submit your final responses?
+              </p>
+              <p className="text-center text-gray-500 text-[10px] mt-1">
+                You will not be able to modify your answers after this action.
+              </p>
+            </div>
+            
+            <div className="bg-gray-100 px-5 py-3 border-t border-gray-300 flex justify-end gap-3.5">
+              <button
+                onClick={() => setSubmitModalOpen(false)}
+                className="px-5 py-1.5 bg-white border border-gray-400 text-gray-700 rounded font-bold hover:bg-gray-50 text-xs shadow-sm uppercase cursor-pointer"
+              >
+                No, Go Back
+              </button>
+              <button
+                onClick={() => executeSubmission(false)}
+                disabled={submitting}
+                className="px-6 py-1.5 bg-[#28a745] hover:bg-[#218838] text-white rounded font-black shadow-sm text-xs uppercase disabled:opacity-50 cursor-pointer"
+              >
+                {submitting ? "Submitting..." : "Yes, Submit Exam"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
