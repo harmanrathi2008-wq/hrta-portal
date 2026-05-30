@@ -8,6 +8,8 @@ const ReviewSubmission = () => {
 
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
+  const [unpublishing, setUnpublishing] = useState(false);
+  const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState('');
   
   const [submission, setSubmission] = useState(null);
@@ -187,67 +189,102 @@ const ReviewSubmission = () => {
     }));
   };
 
-  const handlePublish = async () => {
-    if (!window.confirm("Are you sure you want to publish this result? The student will be able to see their score.")) {
-      return;
+  // Shared function to calculate and save result
+  const calculateAndSave = async (newStatus) => {
+    let totalScore = 0;
+    let totalMarks = 0;
+    let correctCount = 0;
+    let wrongCount = 0;
+    let unattemptedCount = 0;
+
+    questions.forEach(q => {
+      if (q.status !== 'dropped') {
+        totalMarks += (parseFloat(q.positive_marks) || parseFloat(exam.correct_marks) || 4);
+      }
+      const studentAnswer = submission?.answers?.[q.id];
+      const autoMark = calculateAutoMark(q);
+      const finalMark = markOverrides[q.id] !== undefined ? parseFloat(markOverrides[q.id]) : autoMark;
+      totalScore += finalMark;
+      if (studentAnswer === undefined || studentAnswer === null || studentAnswer === '') {
+        unattemptedCount++;
+      } else if (finalMark > 0) {
+        correctCount++;
+      } else {
+        wrongCount++;
+      }
+    });
+
+    const percentage = totalMarks > 0 ? Math.round((totalScore / totalMarks) * 100) : 0;
+
+    const payload = {
+      status: newStatus,
+      total_score: totalScore,
+      total_marks: totalMarks,
+      percentage,
+      correct_count: correctCount,
+      wrong_count: wrongCount,
+      unattempted_count: unattemptedCount,
+      marks_adjustments: markOverrides,
+    };
+    if (newStatus === 'published') {
+      payload.published_at = new Date().toISOString();
     }
-    
+
+    const { error: updateError } = await supabase
+      .from('exam_results')
+      .update(payload)
+      .eq('id', submissionId);
+
+    if (updateError) throw updateError;
+  };
+
+  const handlePublish = async () => {
+    if (!window.confirm("Publish this result? The student will immediately see their score on their dashboard.")) return;
     setPublishing(true);
     try {
-      // 1. Calculate final aggregates
-      let totalScore = 0;
-      let totalMarks = 0;
-      let correctCount = 0;
-      let wrongCount = 0;
-      let unattemptedCount = 0;
-
-      questions.forEach(q => {
-        // Assume 'dropped' questions aren't in total marks
-        if (q.status !== 'dropped') {
-          totalMarks += (q.positive_marks || exam.correct_marks || 4);
-        }
-
-        const studentAnswer = submission?.answers?.[q.id];
-        const autoMark = calculateAutoMark(q);
-        const finalMark = markOverrides[q.id] !== undefined ? markOverrides[q.id] : autoMark;
-
-        totalScore += finalMark;
-
-        if (studentAnswer === undefined || studentAnswer === '') {
-          unattemptedCount++;
-        } else if (finalMark > 0) {
-          correctCount++;
-        } else {
-          wrongCount++;
-        }
-      });
-
-      const percentage = totalMarks > 0 ? Math.round((totalScore / totalMarks) * 100) : 0;
-
-      // 2. Update the submission record
-      const { error: updateError } = await supabase
-        .from('exam_results')
-        .update({
-          status: 'published',
-          total_score: totalScore,
-          total_marks: totalMarks,
-          percentage: percentage,
-          correct_count: correctCount,
-          wrong_count: wrongCount,
-          unattempted_count: unattemptedCount,
-          marks_adjustments: markOverrides,
-          published_at: new Date().toISOString()
-        })
-        .eq('id', submissionId);
-
-      if (updateError) throw updateError;
-
-      alert("Result Published Successfully!");
-      navigate('/admin/dashboard');
-
+      await calculateAndSave('published');
+      alert('✅ Result Published! Student can now see their scorecard.');
+      navigate('/admin/results');
     } catch (err) {
-      console.error("Publish Error:", err);
-      alert("Failed to publish result.");
+      console.error('Publish Error:', err);
+      alert('Failed to publish result: ' + err.message);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleUnpublish = async () => {
+    if (!window.confirm("Unpublish this result? The student will NO LONGER see their scorecard until you republish.")) return;
+    setUnpublishing(true);
+    try {
+      const { error } = await supabase
+        .from('exam_results')
+        .update({ status: 'reviewed', published_at: null })
+        .eq('id', submissionId);
+      if (error) throw error;
+      alert('Result unpublished. Student can no longer see this result.');
+      navigate('/admin/results');
+    } catch (err) {
+      console.error('Unpublish Error:', err);
+      alert('Failed to unpublish: ' + err.message);
+    } finally {
+      setUnpublishing(false);
+    }
+  };
+
+  const handleRepublish = async () => {
+    if (!window.confirm("Save updated marks and Republish? Changes will go LIVE immediately on the student's dashboard.")) return;
+    setPublishing(true);
+    try {
+      await calculateAndSave('published');
+      setEditMode(false);
+      // Refresh submission data
+      const { data } = await supabase.from('exam_results').select('*').eq('id', submissionId).single();
+      if (data) setSubmission(data);
+      alert('✅ Marks updated and Result Republished! Changes are now live on student dashboard.');
+    } catch (err) {
+      console.error('Republish Error:', err);
+      alert('Failed to republish: ' + err.message);
     } finally {
       setPublishing(false);
     }
@@ -332,12 +369,12 @@ const ReviewSubmission = () => {
           </Link>
           <h1 className="text-3xl font-bold text-gray-800">Review Submission</h1>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button
             onClick={handleResetAttempt}
             className="px-5 py-3 rounded font-bold text-white shadow-md bg-red-600 hover:bg-red-700 transition-colors cursor-pointer text-sm"
           >
-            Reset Attempt (Assign Again)
+            Reset Attempt
           </button>
           
           {submission.status === 'blocked' ? (
@@ -352,32 +389,87 @@ const ReviewSubmission = () => {
               onClick={handleToggleAccess}
               className="px-5 py-3 rounded font-bold text-white shadow-md bg-amber-500 hover:bg-amber-600 transition-colors cursor-pointer text-sm"
             >
-              Revoke Access (Block)
+              Revoke Access
             </button>
           )}
 
+          {/* ===== PUBLISHED STATE BUTTONS ===== */}
           {submission.status === 'published' && (
-            <Link
-              to={`/admin/results/${submissionId}/scorecard`}
-              className="px-5 py-3 rounded font-bold text-white shadow-md bg-green-600 hover:bg-green-700 transition-colors text-sm flex items-center justify-center cursor-pointer"
-            >
-              View Scorecard
-            </Link>
+            <>
+              <Link
+                to={`/admin/results/${submissionId}/scorecard`}
+                className="px-5 py-3 rounded font-bold text-white shadow-md bg-emerald-600 hover:bg-emerald-700 transition-colors text-sm flex items-center justify-center cursor-pointer"
+              >
+                View Scorecard
+              </Link>
+
+              {!editMode ? (
+                <button
+                  onClick={() => setEditMode(true)}
+                  className="px-5 py-3 rounded font-bold text-white shadow-md bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer text-sm"
+                >
+                  ✏️ Edit Marks
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleRepublish}
+                    disabled={publishing}
+                    className="px-5 py-3 rounded font-bold text-white shadow-md bg-blue-600 hover:bg-blue-700 transition-colors cursor-pointer text-sm disabled:opacity-50"
+                  >
+                    {publishing ? 'Republishing...' : '🚀 Save & Republish'}
+                  </button>
+                  <button
+                    onClick={() => { setEditMode(false); setMarkOverrides(submission.marks_adjustments || {}); }}
+                    className="px-5 py-3 rounded font-bold text-gray-700 shadow-md bg-gray-200 hover:bg-gray-300 transition-colors cursor-pointer text-sm"
+                  >
+                    Cancel Edit
+                  </button>
+                </>
+              )}
+
+              <button
+                onClick={handleUnpublish}
+                disabled={unpublishing}
+                className="px-5 py-3 rounded font-bold text-white shadow-md bg-orange-500 hover:bg-orange-600 transition-colors cursor-pointer text-sm disabled:opacity-50"
+              >
+                {unpublishing ? 'Unpublishing...' : '🔒 Unpublish'}
+              </button>
+            </>
           )}
 
-          <button
-            onClick={handlePublish}
-            disabled={publishing || submission.status === 'published' || submission.status === 'blocked'}
-            className={`px-6 py-3 rounded font-bold text-white shadow-md transition-colors text-sm ${
-              submission.status === 'published' || submission.status === 'blocked'
-                ? 'bg-gray-450 text-gray-200 cursor-not-allowed' 
-                : 'bg-blue-600 hover:bg-blue-700 cursor-pointer'
-            }`}
-          >
-            {publishing ? 'Publishing...' : submission.status === 'published' ? 'Already Published' : submission.status === 'blocked' ? 'Access Revoked' : 'Publish Result'}
-          </button>
+          {/* ===== NOT YET PUBLISHED BUTTONS ===== */}
+          {submission.status !== 'published' && submission.status !== 'blocked' && (
+            <button
+              onClick={handlePublish}
+              disabled={publishing}
+              className="px-6 py-3 rounded font-bold text-white shadow-md bg-blue-600 hover:bg-blue-700 transition-colors cursor-pointer text-sm disabled:opacity-50"
+            >
+              {publishing ? 'Publishing...' : '📢 Publish Result'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Status Banner */}
+      {submission.status === 'published' && (
+        <div className={`max-w-6xl mx-auto mb-4 px-5 py-3 rounded-lg font-bold text-sm flex items-center gap-3 ${
+          editMode 
+            ? 'bg-indigo-50 border border-indigo-300 text-indigo-800'
+            : 'bg-green-50 border border-green-300 text-green-800'
+        }`}>
+          {editMode ? (
+            <><span className="text-lg">✏️</span> <span>EDIT MODE — Modify marks below then click <strong>Save & Republish</strong> to push changes live to student dashboard.</span></>
+          ) : (
+            <><span className="text-lg">✅</span> <span>This result is <strong>PUBLISHED</strong> and visible on the student's dashboard. Click <strong>Edit Marks</strong> to change marks and republish.</span></>
+          )}
+        </div>
+      )}
+      {submission.status === 'reviewed' && (
+        <div className="max-w-6xl mx-auto mb-4 px-5 py-3 rounded-lg font-bold text-sm flex items-center gap-3 bg-yellow-50 border border-yellow-300 text-yellow-800">
+          <span className="text-lg">🔒</span> <span>This result is <strong>UNPUBLISHED</strong>. Student cannot see their result. Click <strong>Publish Result</strong> to make it visible.</span>
+        </div>
+      )}
 
       {/* Meta Info Cards */}
       <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -457,11 +549,18 @@ const ReviewSubmission = () => {
                   </div>
                 </div>
 
-                {/* Marking Override Engine */}
-                <div className="flex items-center justify-between bg-blue-50 p-4 rounded border border-blue-200">
+                {/* Marking Override Engine — only editable when not published OR in edit mode */}
+                <div className={`flex items-center justify-between p-4 rounded border ${
+                  editMode || submission.status !== 'published'
+                    ? 'bg-blue-50 border-blue-200'
+                    : 'bg-gray-50 border-gray-200'
+                }`}>
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-blue-900">Auto-Calculated Marks: {autoMark}</span>
                     {hasOverride && <span className="text-xs text-orange-600 font-bold mt-1">⚠️ Manual Override Active</span>}
+                    {submission.status === 'published' && !editMode && (
+                      <span className="text-xs text-gray-400 font-semibold mt-1">Click "Edit Marks" to change</span>
+                    )}
                   </div>
                   
                   <div className="flex items-center space-x-3">
@@ -472,7 +571,14 @@ const ReviewSubmission = () => {
                       value={markOverrides[q.id] !== undefined ? markOverrides[q.id] : ''}
                       onChange={(e) => handleOverrideChange(q.id, e.target.value)}
                       placeholder={autoMark.toString()}
-                      className={`w-24 px-3 py-2 border rounded font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 ${hasOverride ? 'bg-orange-50 border-orange-300 text-orange-700' : 'bg-white border-gray-300'}`}
+                      disabled={submission.status === 'published' && !editMode}
+                      className={`w-24 px-3 py-2 border rounded font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        submission.status === 'published' && !editMode
+                          ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                          : hasOverride
+                          ? 'bg-orange-50 border-orange-300 text-orange-700'
+                          : 'bg-white border-gray-300'
+                      }`}
                     />
                   </div>
                 </div>
