@@ -561,6 +561,121 @@ app.post('/api/delete-image', async (req, res) => {
   }
 })
 
+// ============ ADMIN MESSAGE SENDER ============
+app.post('/api/admin-message', async (req, res) => {
+  try {
+    const { students, subject, message, pdfUrl, pdfFileName } = req.body;
+
+    if (!students || students.length === 0) {
+      return res.status(400).json({ error: 'No recipients specified.' });
+    }
+    if (!subject) {
+      return res.status(400).json({ error: 'Subject is required.' });
+    }
+
+    // Pick the best available Resend instance
+    const mailer = resendStudent || resend;
+    const fromEmail = FROM_EMAIL;
+
+    const results = [];
+    const errors = [];
+
+    for (const student of students) {
+      if (!student.email) { errors.push(`${student.full_name}: no email`); continue; }
+
+      // Build beautiful HTML email
+      const pdfSection = pdfUrl ? `
+        <div style="margin: 28px 0; padding: 20px 24px; background: linear-gradient(135deg, #1e3a5f 0%, #0f2440 100%); border-radius: 12px; border: 1px solid #2a4d7a;">
+          <p style="margin: 0 0 12px 0; color: #64b5f6; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">📎 Attached Document</p>
+          <p style="margin: 0 0 16px 0; color: #cfd8dc; font-size: 13px;">${pdfFileName || 'Document.pdf'}</p>
+          <a href="${pdfUrl}" target="_blank" 
+             style="display: inline-block; background: linear-gradient(135deg, #0288d1, #0097a7); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13px; letter-spacing: 0.03em;">
+            📥 Download PDF
+          </a>
+          <p style="margin: 12px 0 0 0; color: #607d8b; font-size: 11px;">This link is secure and provided by HRTA portal storage.</p>
+        </div>` : '';
+
+      const messageSection = message ? `
+        <div style="background: #0d1b2a; border-radius: 10px; padding: 20px 24px; border-left: 4px solid #0288d1; margin: 20px 0;">
+          <p style="margin: 0; color: #cfd8dc; font-size: 14px; line-height: 1.8; white-space: pre-line;">${message}</p>
+        </div>` : '';
+
+      const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+      <body style="margin:0; padding:0; background:#060d17; font-family: 'Segoe UI', Arial, sans-serif;">
+        <div style="max-width: 620px; margin: 0 auto; padding: 20px;">
+
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #0d1b2a 0%, #0a1628 100%); border-radius: 16px 16px 0 0; padding: 32px 36px; border-bottom: 2px solid #0288d1; text-align: center;">
+            <h1 style="margin: 0; color: #00bcd4; font-size: 22px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase;">Harman Rathi Testing Agency</h1>
+            <p style="margin: 6px 0 0; color: #546e7a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;">Excellence in Assessment</p>
+          </div>
+
+          <!-- Subject Bar -->
+          <div style="background: linear-gradient(90deg, #0288d1, #0097a7); padding: 14px 36px;">
+            <p style="margin: 0; color: white; font-size: 15px; font-weight: 800;">📧 ${subject}</p>
+          </div>
+
+          <!-- Body -->
+          <div style="background: #0d1b2a; padding: 32px 36px; border-radius: 0 0 16px 16px; border: 1px solid #1a2e45; border-top: none;">
+            <p style="margin: 0 0 12px 0; color: #64b5f6; font-size: 14px; font-weight: 700;">Dear ${student.full_name},</p>
+            <p style="margin: 0 0 6px 0; color: #78909c; font-size: 12px;">Application No: <strong style="color:#90a4ae">${student.application_id || 'N/A'}</strong></p>
+
+            ${messageSection}
+            ${pdfSection}
+
+            <!-- Footer -->
+            <div style="margin-top: 36px; padding-top: 20px; border-top: 1px solid #1a2e45; text-align: center;">
+              <p style="margin: 0; color: #37474f; font-size: 11px; line-height: 1.6;">
+                This is an official communication from <strong style="color:#546e7a">Harman Rathi Testing Agency (HRTA)</strong>.<br>
+                Please do not reply to this email. For queries, contact your exam coordinator.
+              </p>
+              <p style="margin: 10px 0 0; color: #263238; font-size: 10px;">© ${new Date().getFullYear()} HRTA · All Rights Reserved</p>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>`;
+
+      // Attach PDF if small enough (< 40MB)
+      const emailPayload = {
+        from: `HRTA Notifications <${fromEmail}>`,
+        to: [student.email],
+        subject: `[HRTA] ${subject}`,
+        html: htmlBody,
+      };
+
+      try {
+        const { error: sendError } = await mailer.emails.send(emailPayload);
+        if (sendError) {
+          errors.push(`${student.full_name}: ${sendError.message}`);
+        } else {
+          results.push(student.full_name);
+        }
+      } catch (e) {
+        errors.push(`${student.full_name}: ${e.message}`);
+      }
+
+      // Small delay to avoid rate limiting
+      if (students.length > 1) await new Promise(r => setTimeout(r, 200));
+    }
+
+    res.json({
+      success: true,
+      sent: results.length,
+      failed: errors.length,
+      recipients: results,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+
+  } catch (err) {
+    console.error('Admin message error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send message' });
+  }
+});
+
 // ============ SERVE STATIC FILES ============
 app.use(express.static(join(__dirname, 'dist')))
 

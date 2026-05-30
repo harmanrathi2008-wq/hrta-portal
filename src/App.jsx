@@ -19,6 +19,7 @@ import AdminAnnouncements from './pages/admin/AdminAnnouncements'
 import AdminCertificates from './pages/admin/AdminCertificates'
 import StudyMaterials from './pages/admin/StudyMaterials'
 import AdminScorecard from './pages/admin/AdminScorecard'
+import AdminMessages from './pages/admin/AdminMessages'
 
 // Student Pages
 import StudentDashboard from './pages/student/StudentDashboard'
@@ -89,6 +90,7 @@ function App() {
             <Route path="/admin/announcements" element={<AdminAnnouncements />} />
             <Route path="/admin/certificates" element={<AdminCertificates />} />
             <Route path="/admin/materials" element={<StudyMaterials />} />
+            <Route path="/admin/messages" element={<AdminMessages />} />
           </Route>
 
           {/* Student Routes */}

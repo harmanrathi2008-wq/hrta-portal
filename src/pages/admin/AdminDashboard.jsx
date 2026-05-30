@@ -610,6 +610,10 @@ CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests
                   <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📚</span>
                   Upload Study Materials
                 </Link>
+                <Link to="/admin/messages" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-purple-500/10 hover:text-purple-300 rounded-xl transition-all group uppercase tracking-wider border border-purple-500/10 bg-purple-500/5">
+                  <span className="bg-white/5 group-hover:bg-purple-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">✉️</span>
+                  Message Center (Send to Gmail)
+                </Link>
                 <Link to="/admin/settings" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
                   <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">⚙️</span>
                   Platform Settings & Limits
