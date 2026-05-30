@@ -628,15 +628,29 @@ app.post('/api/admin-message', async (req, res) => {
       if (!student.email) { errors.push(`${student.full_name}: no email`); continue; }
 
       // Build beautiful HTML email
+      const googleViewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(pdfUrl)}`;
+      const downloadUrl = `${pdfUrl}?download=`;
+
       const pdfSection = pdfUrl ? `
-        <div style="margin: 28px 0; padding: 20px 24px; background: linear-gradient(135deg, #1e3a5f 0%, #0f2440 100%); border-radius: 12px; border: 1px solid #2a4d7a;">
+        <div style="margin: 28px 0; padding: 24px; background: linear-gradient(135deg, #1e3a5f 0%, #0f2440 100%); border-radius: 12px; border: 1px solid #2a4d7a;">
           <p style="margin: 0 0 12px 0; color: #64b5f6; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">📎 Attached Document</p>
-          <p style="margin: 0 0 16px 0; color: #cfd8dc; font-size: 13px;">${pdfFileName || 'Document.pdf'}</p>
-          <a href="${pdfUrl}?download=" download="${pdfFileName || 'Document.pdf'}" target="_blank" 
-             style="display: inline-block; background: linear-gradient(135deg, #0288d1, #0097a7); color: white; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13px; letter-spacing: 0.03em;">
-            📥 Download PDF
-          </a>
-          <p style="margin: 12px 0 0 0; color: #607d8b; font-size: 11px;">This link is secure and provided by HRTA portal storage.</p>
+          <p style="margin: 0 0 20px 0; color: #cfd8dc; font-size: 13px; font-weight: bold;">${pdfFileName || 'Document.pdf'}</p>
+          
+          <div style="margin-bottom: 12px;">
+            <a href="${googleViewerUrl}" target="_blank" 
+               style="display: block; text-align: center; background: linear-gradient(135deg, #4285f4, #34a853); color: white; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 13px; letter-spacing: 0.03em; box-shadow: 0 4px 6px rgba(0,0,0,0.15);">
+              📂 Open in Google Drive / View PDF
+            </a>
+          </div>
+          
+          <div>
+            <a href="${downloadUrl}" download="${pdfFileName || 'Document.pdf'}" target="_blank" 
+               style="display: block; text-align: center; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #cfd8dc; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 12px; letter-spacing: 0.03em;">
+              📥 Direct Download to Device
+            </a>
+          </div>
+          
+          <p style="margin: 14px 0 0 0; color: #607d8b; font-size: 11px; text-align: center;">Note: For mobile users, clicking "Open in Google Drive" will launch the Drive app to let you choose your account and save.</p>
         </div>` : '';
 
       const messageSection = message ? `
