@@ -582,6 +582,12 @@ app.post('/api/get-upload-url', async (req, res) => {
       return res.status(400).json({ error: 'fileName is required.' });
     }
 
+    if (!process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(500).json({ 
+        error: 'Database Configuration Error: VITE_SUPABASE_SERVICE_ROLE_KEY is missing on Render. Please add it to your Render dashboard Environment Variables.' 
+      });
+    }
+
     const { data, error } = await supabaseAdmin.storage
       .from('hrta-files')
       .createSignedUploadUrl(fileName);
