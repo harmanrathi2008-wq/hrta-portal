@@ -16,6 +16,9 @@ const AdminDashboard = () => {
   });
 
   const [pendingResults, setPendingResults] = useState([]);
+  const [allResults, setAllResults] = useState([]);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [publishingId, setPublishingId] = useState(null);
   const [loginLogs, setLoginLogs] = useState([]);
   const [logsError, setLogsError] = useState(false);
   const [lateRequests, setLateRequests] = useState([]);
@@ -96,7 +99,69 @@ const AdminDashboard = () => {
     };
 
     fetchDashboardData();
+    loadAllResults();
   }, [navigate]);
+
+  const loadAllResults = async () => {
+    setResultsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('exam_results')
+        .select('id, status, total_score, total_marks, percentage, submitted_at, published_at, students(full_name, application_id), exams(title, subject)')
+        .order('submitted_at', { ascending: false })
+        .limit(30);
+      if (!error && data) {
+        // Compute attempt numbers
+        const tracker = {};
+        const sorted = [...data].sort((a,b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+        const withAttempts = sorted.map(r => {
+          const k = `${r.student_id}_${r.exam_id}`;
+          tracker[k] = (tracker[k] || 0) + 1;
+          return { ...r, attempt_number: tracker[k] };
+        });
+        withAttempts.sort((a,b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+        setAllResults(withAttempts);
+      }
+    } catch(e) {
+      console.error('Error loading results:', e);
+    } finally {
+      setResultsLoading(false);
+    }
+  };
+
+  const handleQuickPublish = async (resultId, studentName) => {
+    if (!window.confirm(`Publish result for ${studentName}? They will immediately see their scorecard.`)) return;
+    setPublishingId(resultId);
+    try {
+      const { error } = await supabase
+        .from('exam_results')
+        .update({ status: 'published', published_at: new Date().toISOString() })
+        .eq('id', resultId);
+      if (error) throw error;
+      await loadAllResults();
+    } catch(e) {
+      alert('Failed to publish: ' + e.message);
+    } finally {
+      setPublishingId(null);
+    }
+  };
+
+  const handleQuickUnpublish = async (resultId, studentName) => {
+    if (!window.confirm(`Unpublish result for ${studentName}? They will no longer see their scorecard.`)) return;
+    setPublishingId(resultId);
+    try {
+      const { error } = await supabase
+        .from('exam_results')
+        .update({ status: 'reviewed', published_at: null })
+        .eq('id', resultId);
+      if (error) throw error;
+      await loadAllResults();
+    } catch(e) {
+      alert('Failed to unpublish: ' + e.message);
+    } finally {
+      setPublishingId(null);
+    }
+  };
 
   const fetchSecurityLogs = async () => {
     try {
@@ -582,6 +647,172 @@ CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests
               </div>
             </div>
 
+          </div>
+        </div>
+
+        {/* ===== RESULTS PUBLISHING CONTROL CENTER ===== */}
+        <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+          {/* Animated rainbow top border */}
+          <div className="h-0.5 w-full bg-gradient-to-r from-cyan-500 via-purple-500 via-pink-500 via-yellow-400 to-emerald-500 animate-pulse" />
+
+          <div className="bg-transparent border-b border-white/5 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div>
+              <h2 className="font-bold uppercase tracking-wider text-sm text-white flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
+                </span>
+                📢 Results Publishing Control Center
+              </h2>
+              <p className="text-[10px] text-slate-500 mt-1">Publish, unpublish, or edit marks for any submission. Changes go live instantly to student dashboards.</p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button onClick={loadAllResults} className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-all">↻ Refresh</button>
+              <Link to="/admin/results" className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 px-4 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all shadow-lg">View All Results →</Link>
+            </div>
+          </div>
+
+          {/* Status Filter Tabs */}
+          <div className="px-6 pt-4 flex gap-2 flex-wrap">
+            {['all','submitted','published','reviewed','blocked'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => {
+                  const el = document.getElementById('results-table-body');
+                  if (el) {
+                    const rows = el.querySelectorAll('tr[data-status]');
+                    rows.forEach(r => {
+                      r.style.display = (tab === 'all' || r.dataset.status === tab) ? '' : 'none';
+                    });
+                  }
+                }}
+                className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
+                  tab === 'all' ? 'bg-white/10 border-white/20 text-white' :
+                  tab === 'submitted' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' :
+                  tab === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' :
+                  tab === 'reviewed' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20' :
+                  'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
+                }`}
+              >
+                {tab === 'submitted' ? '⏳ Pending' : tab === 'published' ? '✅ Published' : tab === 'reviewed' ? '🔒 Unpublished' : tab === 'blocked' ? '🚫 Blocked' : '📋 All'}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-0 overflow-x-auto mt-3">
+            {resultsLoading ? (
+              <div className="p-12 text-center text-cyan-400 font-bold">Loading results...</div>
+            ) : allResults.length === 0 ? (
+              <div className="p-12 text-center text-slate-500 font-bold">No submissions yet.</div>
+            ) : (
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="border-b border-white/5">
+                  <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                    <th className="px-6 py-3">Candidate</th>
+                    <th className="px-6 py-3">Exam</th>
+                    <th className="px-6 py-3">Score</th>
+                    <th className="px-6 py-3">Submitted</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3 text-center">Quick Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="results-table-body" className="divide-y divide-white/5 font-semibold text-slate-300">
+                  {allResults.map(result => {
+                    const studentName = result.students?.full_name || 'Student';
+                    const appId = result.students?.application_id || 'N/A';
+                    const examTitle = result.exams?.title || 'Exam';
+                    const isPublished = result.status === 'published';
+                    const isPending = result.status === 'submitted';
+                    const isBlocked = result.status === 'blocked';
+                    const isUnpublished = result.status === 'reviewed';
+                    const isProcessing = publishingId === result.id;
+
+                    return (
+                      <tr key={result.id} data-status={result.status} className="hover:bg-white/[0.025] transition-colors group">
+                        <td className="px-6 py-3.5">
+                          <p className="font-bold text-cyan-400">{studentName}</p>
+                          <p className="text-[10px] text-slate-500 font-mono mt-0.5">{appId}</p>
+                        </td>
+                        <td className="px-6 py-3.5">
+                          <p className="font-bold text-white">{examTitle}</p>
+                          <span className="text-[9px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-black uppercase">
+                            Attempt #{result.attempt_number || 1}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3.5">
+                          {result.total_score !== null && result.total_score !== undefined ? (
+                            <div>
+                              <p className="font-black text-white">{result.total_score} <span className="text-slate-500 font-normal">/ {result.total_marks}</span></p>
+                              <div className="w-16 bg-white/5 rounded-full h-1 mt-1">
+                                <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-1 rounded-full" style={{ width: `${Math.min(100,Math.max(0,result.percentage||0))}%` }} />
+                              </div>
+                              <p className="text-[10px] text-cyan-400 mt-0.5 font-bold">{result.percentage}%</p>
+                            </div>
+                          ) : <span className="text-slate-600">Not scored</span>}
+                        </td>
+                        <td className="px-6 py-3.5">
+                          <p className="text-slate-300">{result.submitted_at ? new Date(result.submitted_at).toLocaleDateString() : '-'}</p>
+                          <p className="text-[10px] text-slate-500">{result.submitted_at ? new Date(result.submitted_at).toLocaleTimeString() : ''}</p>
+                        </td>
+                        <td className="px-6 py-3.5">
+                          {isPublished && (
+                            <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black px-2 py-0.5 rounded w-fit uppercase">
+                              <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span></span>
+                              Live
+                            </span>
+                          )}
+                          {isPending && <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">⏳ Pending</span>}
+                          {isUnpublished && <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🔒 Unpublished</span>}
+                          {isBlocked && <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🚫 Blocked</span>}
+                        </td>
+                        <td className="px-6 py-3.5">
+                          <div className="flex items-center justify-center gap-1.5">
+                            {/* Review / Edit button */}
+                            <Link to={`/admin/results/${result.id}`}>
+                              <button className="bg-white/5 hover:bg-cyan-500/15 border border-white/10 hover:border-cyan-500/25 text-slate-300 hover:text-cyan-300 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer" title="Review & Edit">
+                                ✏️ Review
+                              </button>
+                            </Link>
+
+                            {/* Quick Publish */}
+                            {(isPending || isUnpublished) && (
+                              <button
+                                onClick={() => handleQuickPublish(result.id, studentName)}
+                                disabled={isProcessing}
+                                className="bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                title="Publish Result"
+                              >
+                                {isProcessing ? '...' : '📢 Publish'}
+                              </button>
+                            )}
+
+                            {/* Quick Unpublish */}
+                            {isPublished && (
+                              <button
+                                onClick={() => handleQuickUnpublish(result.id, studentName)}
+                                disabled={isProcessing}
+                                className="bg-orange-500/10 hover:bg-orange-500/25 border border-orange-500/20 text-orange-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                title="Unpublish Result"
+                              >
+                                {isProcessing ? '...' : '🔒 Unpublish'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Summary Footer */}
+          <div className="px-6 py-3 border-t border-white/5 flex gap-4 text-[10px] font-bold">
+            <span className="text-emerald-400">✅ Published: {allResults.filter(r => r.status === 'published').length}</span>
+            <span className="text-amber-400">⏳ Pending: {allResults.filter(r => r.status === 'submitted').length}</span>
+            <span className="text-blue-400">🔒 Unpublished: {allResults.filter(r => r.status === 'reviewed').length}</span>
+            <span className="text-red-400">🚫 Blocked: {allResults.filter(r => r.status === 'blocked').length}</span>
           </div>
         </div>
 
