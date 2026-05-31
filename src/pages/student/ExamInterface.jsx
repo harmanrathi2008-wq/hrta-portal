@@ -16,7 +16,7 @@ export default function ExamInterface() {
   const [responses, setResponses] = useState({});
   const [status, setStatus] = useState({});
   const [timeLeft, setTimeLeft] = useState(0);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [zoomedImage, setZoomedImage] = useState(null);
@@ -591,13 +591,13 @@ export default function ExamInterface() {
 
     if (qType === "single" || qType === "mcq_single" || qType === "true_false") {
       return current.options.map((opt, i) => (
-        <label key={i} className="flex items-center gap-3 text-sm font-semibold cursor-pointer my-3 p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
+        <label key={i} className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold cursor-pointer my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
           <input
             type="radio"
             name={`q-${current.id}`}
             checked={responses[current.id] === opt}
             onChange={() => setResponses({ ...responses, [current.id]: opt })}
-            className="w-4.5 h-4.5 text-[#1f497d] cursor-pointer"
+            className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
           />
           <span className="text-gray-800">{opt}</span>
         </label>
@@ -606,7 +606,7 @@ export default function ExamInterface() {
 
     if (qType === "multiple" || qType === "mcq_multiple") {
       return current.options.map((opt, i) => (
-        <label key={i} className="flex items-center gap-3 text-sm font-semibold cursor-pointer my-3 p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
+        <label key={i} className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold cursor-pointer my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
           <input
             type="checkbox"
             checked={(responses[current.id] || []).includes(opt)}
@@ -618,7 +618,7 @@ export default function ExamInterface() {
               arr = arr.includes(opt) ? arr.filter((o) => o !== opt) : [...arr, opt];
               setResponses({ ...responses, [current.id]: arr });
             }}
-            className="w-4.5 h-4.5 text-[#1f497d] cursor-pointer rounded"
+            className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
           />
           <span className="text-gray-800">{opt}</span>
         </label>
@@ -676,9 +676,16 @@ export default function ExamInterface() {
           </p>
           <button
             onClick={enterFullscreen}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 font-bold rounded uppercase transition-all shadow-md tracking-wider cursor-pointer"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 font-bold rounded uppercase transition-all shadow-md tracking-wider cursor-pointer mb-3"
           >
             Enter Fullscreen
+          </button>
+          
+          <button
+            onClick={() => setIsFullscreen(true)}
+            className="text-xs text-gray-500 hover:text-blue-400 font-semibold underline mt-2 block mx-auto uppercase cursor-pointer"
+          >
+            Bypass / Fullscreen not supported
           </button>
         </div>
       </div>
@@ -761,17 +768,17 @@ export default function ExamInterface() {
       </div>
 
       {/* 2. MAIN LOGO HEADER BANNER */}
-      <div className="bg-white px-6 py-2.5 flex justify-between items-center border-b border-gray-300 shadow-sm shrink-0">
+      <div className="bg-white px-4 md:px-6 py-2 flex justify-between items-center border-b border-gray-300 shadow-sm shrink-0">
         {/* Left: Mahatma Gandhi Logo */}
-        <div className="flex items-center">
+        <div className="hidden md:flex items-center">
           <img src="/assets/gandhi.png" alt="Gandhi 150 Years" className="h-12 w-auto object-contain" />
         </div>
 
         {/* Center-Left: Branding */}
-        <div className="flex-1 px-6 flex flex-col items-start leading-none justify-center">
-          <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-1">राष्ट्रीय परीक्षा एजेंसी</span>
-          <span className="text-[#1f497d] text-lg font-extrabold tracking-tight">Harman Rathi Testing Agency</span>
-          <span className="text-[8px] font-bold text-white bg-[#28a745] px-2 py-0.5 rounded tracking-widest uppercase inline-block mt-1">
+        <div className="flex-1 px-1 md:px-6 flex flex-col items-start leading-none justify-center">
+          <span className="text-[8px] md:text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-0.5">राष्ट्रीय परीक्षा एजेंसी</span>
+          <span className="text-[#1f497d] text-base md:text-lg font-extrabold tracking-tight">Harman Rathi Testing Agency</span>
+          <span className="text-[7px] md:text-[8px] font-bold text-white bg-[#28a745] px-1.5 py-0.5 rounded tracking-widest uppercase inline-block mt-1">
             Excellence in Assessment
           </span>
         </div>
@@ -786,26 +793,26 @@ export default function ExamInterface() {
         </div>
 
         {/* Right: Azadi ka Amrit Mahotsav Logo */}
-        <div className="flex items-center border-l border-gray-300 pl-6 ml-6">
-          <img src="/assets/amrit.png" alt="Azadi Ka Amrit Mahotsav" className="h-11 w-auto object-contain" />
+        <div className="hidden sm:flex items-center border-l border-gray-300 pl-4 md:pl-6 ml-4 md:ml-6">
+          <img src="/assets/amrit.png" alt="Azadi Ka Amrit Mahotsav" className="h-10 md:h-11 w-auto object-contain" />
         </div>
       </div>
 
       {/* 3. CANDIDATE PROFILE & EXAM SPEC DETAILS BAR */}
-      <div className="bg-[#f9f9f9] border border-gray-300 m-2 p-3 rounded flex flex-col md:flex-row justify-between gap-4 shadow-sm items-center shrink-0">
+      <div className="bg-[#f9f9f9] border border-gray-300 m-2 p-3 rounded flex flex-col sm:flex-row justify-between gap-4 shadow-sm items-center shrink-0">
         {/* Profile photo and specs */}
-        <div className="flex items-center gap-4 flex-1">
-          <div className="w-16 h-20 bg-white border border-gray-400 p-0.5 rounded shadow-sm overflow-hidden flex items-center justify-center shrink-0">
+        <div className="flex items-center gap-4 w-full sm:w-auto flex-1">
+          <div className="w-12 h-16 sm:w-16 sm:h-20 bg-white border border-gray-400 p-0.5 rounded shadow-sm overflow-hidden flex items-center justify-center shrink-0">
             {student?.photo_url ? (
               <img src={student.photo_url} alt="Candidate" className="w-full h-full object-cover" />
             ) : (
-              <svg className="w-10 h-12 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="w-8 h-10 text-gray-400" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
               </svg>
             )}
           </div>
           
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-xs font-semibold text-gray-700">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-[11px] sm:text-xs font-semibold text-gray-700 flex-1">
             <div>
               <span className="text-gray-500">Candidate Name :</span>{" "}
               <span className="text-[#e0533c] font-bold uppercase">{student?.full_name || "STUDENT NAME"}</span>
@@ -818,9 +825,9 @@ export default function ExamInterface() {
               <span className="text-gray-500">Subject Name :</span>{" "}
               <span className="text-gray-900 font-bold">{exam?.subject || "Core Course"}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 mt-1 sm:mt-0">
               <span className="text-gray-500">Remaining Time :</span>{" "}
-              <span className="bg-[#029bc4] text-white font-mono font-bold px-3 py-0.5 rounded text-xs tracking-widest shadow-sm">
+              <span className="bg-[#029bc4] text-white font-mono font-bold px-2.5 py-0.5 rounded text-[11px] sm:text-xs tracking-widest shadow-sm">
                 {formatTime(timeLeft)}
               </span>
             </div>
@@ -828,9 +835,9 @@ export default function ExamInterface() {
         </div>
 
         {/* Language select dropdown */}
-        <div className="flex items-center gap-2 text-xs font-bold text-gray-700 border-l border-gray-300 pl-4">
+        <div className="flex items-center gap-2 text-xs font-bold text-gray-700 border-t sm:border-t-0 sm:border-l border-gray-300 pt-2.5 sm:pt-0 pl-0 sm:pl-4 w-full sm:w-auto shrink-0">
           <span>View In:</span>
-          <select className="border border-gray-400 rounded px-3 py-1 bg-white text-xs font-bold outline-none focus:border-[#1f497d] shadow-sm">
+          <select className="border border-gray-400 rounded px-3 py-1 bg-white text-xs font-bold outline-none focus:border-[#1f497d] shadow-sm flex-1 sm:flex-none">
             <option value="english">English</option>
           </select>
         </div>
@@ -840,18 +847,18 @@ export default function ExamInterface() {
       <div className="flex flex-1 overflow-hidden px-2 pb-2 gap-2 relative">
         
         {/* Left Column: Question Area */}
-        <div className={`bg-white border border-gray-400 flex flex-col rounded shadow-sm overflow-hidden transition-all duration-300 ${
-          isSidebarOpen ? "flex-1 md:w-2/3 lg:w-3/4" : "w-full"
+        <div className={`bg-white border border-gray-400 flex flex-col rounded shadow-sm overflow-hidden transition-all duration-300 w-full ${
+          isSidebarOpen ? "md:w-2/3 lg:w-3/4" : ""
         }`}>
           
           {/* Section Selector Tabs - NTA style */}
           {sections.length > 1 && (
-            <div className="flex bg-gray-100 border-b border-gray-300 text-xs font-bold shrink-0">
+            <div className="flex bg-gray-100 border-b border-gray-300 text-[10px] md:text-xs font-bold shrink-0 overflow-x-auto">
               {sections.map((sec) => (
                 <button
                   key={sec}
                   onClick={() => handleSectionSelect(sec)}
-                  className={`px-5 py-2.5 border-r border-gray-300 transition-colors uppercase tracking-wider cursor-pointer ${
+                  className={`px-3.5 md:px-5 py-2 md:py-2.5 border-r border-gray-300 transition-colors uppercase tracking-wider cursor-pointer whitespace-nowrap ${
                     activeSection === sec
                       ? "bg-[#1f497d] text-white border-b-2 border-b-yellow-500"
                       : "bg-gray-55 hover:bg-gray-200 text-gray-700"
@@ -863,11 +870,20 @@ export default function ExamInterface() {
             </div>
           )}
 
-          <div className="bg-[#1f497d] text-white p-2 font-bold text-xs uppercase flex justify-between items-center shrink-0">
-            <span>Question Paper Section: <span className="text-yellow-450">{activeSection}</span></span>
-            <span className="bg-yellow-500 text-gray-900 text-[10px] px-2 py-0.5 rounded font-black">
-              Q. {currentIdx + 1} of {questions.length}
-            </span>
+          <div className="bg-[#1f497d] text-white p-2.5 font-bold text-[10px] md:text-xs uppercase flex justify-between items-center shrink-0">
+            <span>Section: <span className="text-yellow-400">{activeSection}</span></span>
+            <div className="flex items-center gap-2">
+              <span className="bg-yellow-500 text-gray-900 text-[9px] md:text-[10px] px-2 py-0.5 rounded font-black">
+                Q. {currentIdx + 1} of {questions.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="block md:hidden bg-white/10 hover:bg-white/20 border border-white/20 px-2 py-0.5 rounded text-[9px] uppercase tracking-wider transition-colors cursor-pointer"
+              >
+                {isSidebarOpen ? "Close Grid" : "Open Grid"}
+              </button>
+            </div>
           </div>
 
           {/* Question Text Area */}
@@ -999,9 +1015,9 @@ export default function ExamInterface() {
           </div>
 
           {/* Bottom Action Button Matrix */}
-          <div className="bg-gray-100 p-4 border-t border-gray-300 flex flex-col gap-3 shrink-0">
+          <div className="bg-gray-100 p-3 md:p-4 border-t border-gray-300 flex flex-col gap-2.5 md:gap-3 shrink-0">
             {/* Row 1: Save & Mark Options */}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 md:gap-2">
               {currentIdx === questions.length - 1 ? (
                 <button
                   onClick={() => {
@@ -1011,52 +1027,55 @@ export default function ExamInterface() {
                     setStatus((prev) => ({ ...prev, [current.id]: isAnswered ? "answered" : "notAnswered" }));
                     setSubmitModalOpen(true);
                   }}
-                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 text-xs font-black rounded shadow-md uppercase transition-colors animate-pulse cursor-pointer tracking-wide"
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-2 text-[10px] md:text-xs font-black rounded shadow-md uppercase transition-all animate-pulse cursor-pointer tracking-wide flex-1 sm:flex-none text-center"
                 >
-                  Save & Submit Exam
+                  <span className="hidden sm:inline">Save & Submit Exam</span>
+                  <span className="inline sm:hidden">Save & Submit</span>
                 </button>
               ) : (
                 <button
                   onClick={handleSaveNext}
-                  className="bg-[#28a745] hover:bg-[#218838] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+                  className="bg-[#28a745] hover:bg-[#218838] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   Save & Next
                 </button>
               )}
               <button
                 onClick={handleClear}
-                className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+                className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
               >
                 Clear
               </button>
               <button
                 onClick={handleSaveMarkReview}
-                className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+                className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
               >
-                Save & Mark For Review
+                <span className="hidden sm:inline">Save & Mark For Review</span>
+                <span className="inline sm:hidden">Save & Review</span>
               </button>
               <button
                 onClick={handleMarkReviewNext}
-                className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer"
+                className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
               >
-                Mark For Review & Next
+                <span className="hidden sm:inline">Mark For Review & Next</span>
+                <span className="inline sm:hidden">Review & Next</span>
               </button>
             </div>
 
             {/* Row 2: Standard Navigation + Submit */}
-            <div className="flex justify-between items-center border-t border-gray-300 pt-3">
-              <div className="flex gap-2">
+            <div className="flex justify-between items-center border-t border-gray-300 pt-2.5 md:pt-3">
+              <div className="flex gap-1.5 md:gap-2 flex-1 sm:flex-none">
                 <button
                   onClick={handleBack}
                   disabled={currentIdx === 0}
-                  className="bg-white border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   &lt;&lt; Back
                 </button>
                 <button
                   onClick={handleNext}
                   disabled={currentIdx === questions.length - 1}
-                  className="bg-white border border-gray-400 text-gray-700 px-5 py-2 text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   Next &gt;&gt;
                 </button>
@@ -1064,16 +1083,25 @@ export default function ExamInterface() {
               
               <button
                 onClick={() => setSubmitModalOpen(true)}
-                className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-8 py-2.5 text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider"
+                className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-4 md:px-8 py-2 md:py-2.5 text-[10px] md:text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider"
               >
-                Submit Exam
+                <span className="hidden sm:inline">Submit Exam</span>
+                <span className="inline sm:hidden">Submit</span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Collapsible Sidebar Toggle handle */}
-        <div className="flex items-center justify-center shrink-0">
+        {/* Mobile Sidebar Backdrop Overlay */}
+        {isSidebarOpen && (
+          <div 
+            className="block md:hidden fixed inset-0 bg-black/50 z-30 transition-opacity"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        {/* Collapsible Sidebar Toggle handle (Desktop only) */}
+        <div className="hidden md:flex items-center justify-center shrink-0 z-10">
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             className="bg-[#333] hover:bg-black text-white w-5 h-16 rounded flex items-center justify-center shadow-md cursor-pointer transition-colors"
@@ -1091,14 +1119,25 @@ export default function ExamInterface() {
           </button>
         </div>
 
-        {/* Right Column: Legend counts & Questions Palette Grid */}
-        <div className={`bg-white border border-gray-400 rounded shadow-sm p-4 flex flex-col shrink-0 transition-all duration-300 ${
-          isSidebarOpen ? "w-80 opacity-100" : "w-0 opacity-0 hidden"
+        {/* Right Column: Legend counts & Questions Palette Grid (Overlay on mobile, sidebar on desktop) */}
+        <div className={`bg-white border-l border-gray-400 md:rounded p-4 flex flex-col shrink-0 transition-all duration-300 fixed md:relative top-0 right-0 bottom-0 z-40 md:z-auto shadow-2xl md:shadow-none h-full md:h-auto ${
+          isSidebarOpen 
+            ? "w-80 translate-x-0 opacity-100" 
+            : "w-0 translate-x-full opacity-0 pointer-events-none md:hidden"
         }`}>
           
-          <h4 className="font-bold text-xs uppercase text-gray-700 border-b pb-2 mb-3 tracking-wide">
-            Question Palette
-          </h4>
+          <div className="flex justify-between items-center border-b pb-2 mb-3">
+            <h4 className="font-bold text-xs uppercase text-gray-700 tracking-wide">
+              Question Palette
+            </h4>
+            <button 
+              onClick={() => setIsSidebarOpen(false)}
+              className="block md:hidden text-gray-400 hover:text-red-500 text-sm font-black p-1 cursor-pointer"
+              title="Close Panel"
+            >
+              ✕
+            </button>
+          </div>
 
           {/* NTA Status Legend Grid */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-2 border border-gray-300 border-dashed p-2.5 rounded mb-4 text-[10px] font-bold text-gray-650 bg-gray-50">
