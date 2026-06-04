@@ -138,96 +138,80 @@ function normalizeDateOfBirth(dob) {
   return clean;
 }
 
-// Robust email dispatch helper with Resend first (with fallback to main Resend), falling back to Gmail SMTP rotation
+// Robust, self-healing email dispatch helper that tries all configured Resend keys in order of preference, falling back to Gmail SMTP rotation
 async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student' }) {
   // Always use FROM_EMAIL (e.g. notifications@harmanrathitportal.nxtdev.xyz) to ensure the domain matches Resend's verified single sender or domain records
   const fromDomain = FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
 
-  // 1. Try Resend
-  try {
-    let resendClient = type === 'admin' ? (resendAdmin || resend) : (resendStudent || resend);
-    
-    console.log(`[Resend] Attempting to send to ${to} using primary Resend client...`);
-    let response = await resendClient.emails.send({
-      from: fromAddress,
-      to: to,
-      subject: subject,
-      html: html
-    });
-    
-    // If the specific Resend client failed, fallback to main Resend client (if they are different)
-    if (response.error && resendClient !== resend) {
-      console.warn(`[Resend] Primary Resend client failed: ${response.error.message}. Trying main Resend client fallback...`);
-      response = await resend.emails.send({
+  // Build the list of clients to try in order of preference
+  const clientsToTry = [];
+  
+  if (type === 'admin') {
+    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
+    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
+    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
+  } else {
+    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
+    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
+    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
+  }
+
+  let lastResendError = null;
+
+  // Try each Resend client until one succeeds
+  for (const { name, client } of clientsToTry) {
+    try {
+      console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
+      const response = await client.emails.send({
         from: fromAddress,
         to: to,
         subject: subject,
         html: html
       });
-    }
 
-    if (response.error) {
-      throw new Error(response.error.message || 'Resend error response');
-    }
-    
-    console.log(`Email sent successfully via Resend to ${to}`);
-    return { success: true, provider: 'resend', data: response };
-  } catch (resendError) {
-    console.warn(`Resend failed to send email to ${to}: ${resendError.message}.`);
+      if (response.error) {
+        throw new Error(response.error.message || `Resend ${name} returned error`);
+      }
 
-    // 1b. Fallback to main Resend client in case primary client threw an exception
-    const primaryClient = type === 'admin' ? (resendAdmin || resend) : (resendStudent || resend);
-    if (primaryClient !== resend) {
-      try {
-        console.log(`[Resend] Exception fallback: attempting send using main Resend client...`);
-        const response = await resend.emails.send({
-          from: fromAddress,
-          to: to,
-          subject: subject,
-          html: html
-        });
-        if (!response.error) {
-          console.log(`Email sent successfully via fallback Resend client to ${to}`);
-          return { success: true, provider: 'resend_fallback', data: response };
-        }
-        console.warn(`[Resend] Fallback Resend client also failed: ${response.error.message}`);
-      } catch (fallbackErr) {
-        console.warn(`[Resend] Fallback Resend client threw exception: ${fallbackErr.message}`);
-      }
+      console.log(`[Resend] Email sent successfully via ${name} to ${to}`);
+      return { success: true, provider: `resend_${name}`, data: response };
+    } catch (err) {
+      console.warn(`[Resend] Client ${name} failed to send to ${to}: ${err.message}`);
+      lastResendError = err;
     }
-    
-    // 2. Gmail SMTP rotation fallback
-    console.log(`Initiating SMTP rotation fallback for ${to}...`);
-    if (transporters.length === 0) {
-      throw new Error(`Resend failed, and no Gmail SMTP accounts are configured as fallback. Original error: ${resendError.message}`);
-    }
-    
-    let lastError = null;
-    for (let attempt = 0; attempt < transporters.length; attempt++) {
-      const idx = (currentTransporterIndex + attempt) % transporters.length;
-      const { email, transporter } = transporters[idx];
-      
-      try {
-        console.log(`Attempting to send email via Gmail SMTP: ${email}`);
-        await transporter.sendMail({
-          from: `"${fromName}" <${email}>`,
-          to: to,
-          subject: subject,
-          html: html
-        });
-        
-        currentTransporterIndex = (idx + 1) % transporters.length;
-        console.log(`Email sent successfully via Gmail SMTP [${email}] to ${to}`);
-        return { success: true, provider: 'gmail_smtp', email: email };
-      } catch (smtpError) {
-        console.warn(`Gmail SMTP [${email}] failed: ${smtpError.message}`);
-        lastError = smtpError;
-      }
-    }
-    
-    throw new Error(`All Gmail SMTP transporters failed. Last error: ${lastError ? lastError.message : 'Unknown'}. Resend error: ${resendError.message}`);
   }
+
+  // 2. Gmail SMTP rotation fallback
+  console.log(`[SMTP] Initiating SMTP rotation fallback for ${to} (Resend failed)...`);
+  if (transporters.length === 0) {
+    throw new Error(`Resend failed (Last error: ${lastResendError ? lastResendError.message : 'No key working'}), and no Gmail SMTP accounts are configured as fallback.`);
+  }
+
+  let lastSmtpError = null;
+  for (let attempt = 0; attempt < transporters.length; attempt++) {
+    const idx = (currentTransporterIndex + attempt) % transporters.length;
+    const { email, transporter } = transporters[idx];
+    
+    try {
+      console.log(`[SMTP] Attempting to send email via Gmail SMTP: ${email}`);
+      await transporter.sendMail({
+        from: `"${fromName}" <${email}>`,
+        to: to,
+        subject: subject,
+        html: html
+      });
+      
+      currentTransporterIndex = (idx + 1) % transporters.length;
+      console.log(`[SMTP] Email sent successfully via Gmail SMTP [${email}] to ${to}`);
+      return { success: true, provider: 'gmail_smtp', email: email };
+    } catch (smtpError) {
+      console.warn(`[SMTP] Gmail SMTP [${email}] failed: ${smtpError.message}`);
+      lastSmtpError = smtpError;
+    }
+  }
+
+  throw new Error(`All email sending channels failed. Resend error: ${lastResendError ? lastResendError.message : 'Unknown'}. SMTP error: ${lastSmtpError ? lastSmtpError.message : 'Unknown'}`);
 }
 
 // Resolve geo-location in the background and write to DB
