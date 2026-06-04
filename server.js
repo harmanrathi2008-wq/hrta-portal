@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import nodemailer from 'nodemailer'
 import axios from 'axios'
+import { existsSync } from 'fs'
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -767,11 +768,16 @@ app.post('/api/admin-message', async (req, res) => {
 });
 
 // ============ SERVE STATIC FILES ============
-app.use(express.static(join(__dirname, 'dist')))
-
-app.get('*', (req, res) => {
-  res.sendFile(join(__dirname, 'dist', 'index.html'))
-})
+if (existsSync(join(__dirname, 'dist'))) {
+  app.use(express.static(join(__dirname, 'dist')))
+  app.get('*', (req, res) => {
+    res.sendFile(join(__dirname, 'dist', 'index.html'))
+  })
+} else {
+  app.get('*', (req, res) => {
+    res.json({ message: "HRTA API Server is running" })
+  })
+}
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
