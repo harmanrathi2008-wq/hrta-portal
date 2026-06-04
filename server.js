@@ -36,10 +36,19 @@ const supabaseAdmin = createClient(
   process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
 )
 
-// Resend - Use RESEND_API_KEY (not VITE_)
-const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy')
-const resendAdmin = process.env.RESEND_API_KEY_ADMIN ? new Resend(process.env.RESEND_API_KEY_ADMIN) : null
-const resendStudent = process.env.RESEND_API_KEY_STUDENT ? new Resend(process.env.RESEND_API_KEY_STUDENT) : null
+// Resend - Robust initialization supporting VITE_ fallback and filtering out bad environment strings ("undefined", "null")
+const mainResendKey = (process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || '').trim();
+const resend = new Resend(mainResendKey && mainResendKey !== 'undefined' && mainResendKey !== 'null' ? mainResendKey : 're_dummy');
+
+const adminResendKey = (process.env.RESEND_API_KEY_ADMIN || '').trim();
+const resendAdmin = (adminResendKey && adminResendKey !== 'undefined' && adminResendKey !== 'null') 
+  ? new Resend(adminResendKey) 
+  : null;
+
+const studentResendKey = (process.env.RESEND_API_KEY_STUDENT || '').trim();
+const resendStudent = (studentResendKey && studentResendKey !== 'undefined' && studentResendKey !== 'null') 
+  ? new Resend(studentResendKey) 
+  : null;
 
 // Cloudinary
 cloudinary.config({
@@ -129,19 +138,35 @@ function normalizeDateOfBirth(dob) {
   return clean;
 }
 
-// Robust email dispatch helper with Resend first, falling back to Gmail SMTP rotation
+// Robust email dispatch helper with Resend first (with fallback to main Resend), falling back to Gmail SMTP rotation
 async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student' }) {
-  // Try Resend first
+  // Always use FROM_EMAIL (e.g. notifications@harmanrathitportal.nxtdev.xyz) to ensure the domain matches Resend's verified single sender or domain records
+  const fromDomain = FROM_EMAIL;
+  const fromAddress = `${fromName} <${fromDomain}>`;
+
+  // 1. Try Resend
   try {
-    const resendClient = type === 'admin' ? (resendAdmin || resend) : (resendStudent || resend);
-    const fromDomain = fromName === 'HRTA Admin' ? ADMIN_FROM_EMAIL : FROM_EMAIL;
-    const response = await resendClient.emails.send({
-      from: `${fromName} <${fromDomain}>`,
+    let resendClient = type === 'admin' ? (resendAdmin || resend) : (resendStudent || resend);
+    
+    console.log(`[Resend] Attempting to send to ${to} using primary Resend client...`);
+    let response = await resendClient.emails.send({
+      from: fromAddress,
       to: to,
       subject: subject,
       html: html
     });
     
+    // If the specific Resend client failed, fallback to main Resend client (if they are different)
+    if (response.error && resendClient !== resend) {
+      console.warn(`[Resend] Primary Resend client failed: ${response.error.message}. Trying main Resend client fallback...`);
+      response = await resend.emails.send({
+        from: fromAddress,
+        to: to,
+        subject: subject,
+        html: html
+      });
+    }
+
     if (response.error) {
       throw new Error(response.error.message || 'Resend error response');
     }
@@ -149,8 +174,31 @@ async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student
     console.log(`Email sent successfully via Resend to ${to}`);
     return { success: true, provider: 'resend', data: response };
   } catch (resendError) {
-    console.warn(`Resend failed to send email to ${to}: ${resendError.message}. Initiating SMTP rotation fallback...`);
+    console.warn(`Resend failed to send email to ${to}: ${resendError.message}.`);
+
+    // 1b. Fallback to main Resend client in case primary client threw an exception
+    const primaryClient = type === 'admin' ? (resendAdmin || resend) : (resendStudent || resend);
+    if (primaryClient !== resend) {
+      try {
+        console.log(`[Resend] Exception fallback: attempting send using main Resend client...`);
+        const response = await resend.emails.send({
+          from: fromAddress,
+          to: to,
+          subject: subject,
+          html: html
+        });
+        if (!response.error) {
+          console.log(`Email sent successfully via fallback Resend client to ${to}`);
+          return { success: true, provider: 'resend_fallback', data: response };
+        }
+        console.warn(`[Resend] Fallback Resend client also failed: ${response.error.message}`);
+      } catch (fallbackErr) {
+        console.warn(`[Resend] Fallback Resend client threw exception: ${fallbackErr.message}`);
+      }
+    }
     
+    // 2. Gmail SMTP rotation fallback
+    console.log(`Initiating SMTP rotation fallback for ${to}...`);
     if (transporters.length === 0) {
       throw new Error(`Resend failed, and no Gmail SMTP accounts are configured as fallback. Original error: ${resendError.message}`);
     }
@@ -273,7 +321,7 @@ app.post('/api/send-admin-otp', async (req, res) => {
           <p>This OTP is valid for 5 minutes.</p>
         </div>
       `,
-      fromName: 'HRTA',
+      fromName: 'HRTA Admin',
       type: 'admin'
     });
     res.json({ message: 'OTP sent successfully' })
