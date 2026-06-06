@@ -37,8 +37,9 @@ app.use(cors({
     }
     const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
     const isNxtDev = origin.endsWith('.nxtdev.xyz') || origin === 'https://nxtdev.xyz';
+    const isCloudflarePages = origin === 'https://hrta-portal.pages.dev' || origin.endsWith('.hrta-portal.pages.dev');
     
-    if (isLocalhost || isNxtDev) {
+    if (isLocalhost || isNxtDev || isCloudflarePages) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by secure CORS policy'));
