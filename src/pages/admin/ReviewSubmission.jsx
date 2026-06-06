@@ -28,23 +28,58 @@ const areOptionsEqual = (optA, optB) => {
   return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
 };
 
-const formatResponse = (ans) => {
+const formatResponse = (ans, options) => {
   if (!ans) return 'Not Attempted';
-  if (Array.isArray(ans)) {
-    return ans.map(item => parseOption(item).text).join(', ');
+  const list = Array.isArray(ans) ? ans : [ans];
+  
+  if (options && Array.isArray(options)) {
+    const labels = [];
+    list.forEach(item => {
+      const idx = options.findIndex(opt => areOptionsEqual(opt, item));
+      if (idx !== -1) {
+        labels.push(String.fromCharCode(65 + idx)); // 'A', 'B', etc.
+      } else {
+        const text = parseOption(item).text;
+        if (text) labels.push(text);
+      }
+    });
+    if (labels.length > 0) return labels.join(', ');
   }
-  return parseOption(ans).text;
+
+  return list.map(item => {
+    const parsed = parseOption(item);
+    return parsed.text || (parsed.image_url ? '[Image]' : '');
+  }).filter(Boolean).join(', ') || 'Attempted';
 };
 
-const formatKey = (keyStr) => {
+const formatKey = (keyStr, options) => {
   if (!keyStr) return 'N/A';
+  let list = [];
   try {
     const parsed = JSON.parse(keyStr);
-    const list = Array.isArray(parsed) ? parsed : [parsed];
-    return list.map(item => parseOption(item).text).join(', ');
+    list = Array.isArray(parsed) ? parsed : [parsed];
   } catch (e) {
-    return parseOption(keyStr).text;
+    list = [keyStr];
   }
+
+  if (options && Array.isArray(options)) {
+    const labels = [];
+    list.forEach(item => {
+      const idx = options.findIndex(opt => areOptionsEqual(opt, item));
+      if (idx !== -1) {
+        labels.push(String.fromCharCode(65 + idx)); // 'A', 'B', etc.
+      } else {
+        const text = parseOption(item).text;
+        if (text) labels.push(text);
+      }
+    });
+    if (labels.length > 0) return labels.join(', ');
+  }
+
+  return list.map(item => {
+    const parsed = parseOption(item);
+    return parsed.text || (parsed.image_url ? '[Image]' : '');
+  }).filter(Boolean).join(', ') || 'N/A';
 };
 
 const ReviewSubmission = () => {
@@ -673,13 +708,13 @@ const ReviewSubmission = () => {
                   <div>
                     <span className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Student's Answer</span>
                     <span className={`font-mono text-base font-bold ${!hasAnswered ? 'text-gray-400 italic' : 'text-gray-800'}`}>
-                      {formatResponse(studentAnswer)}
+                      {formatResponse(studentAnswer, q.options)}
                     </span>
                   </div>
                   <div>
                     <span className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Provisional Key</span>
                     <span className="font-mono text-base font-bold text-green-700">
-                      {formatKey(q.correct_answer)}
+                      {formatKey(q.correct_answer, q.options)}
                     </span>
                   </div>
                 </div>
