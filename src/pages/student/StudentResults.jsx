@@ -772,12 +772,14 @@ const StudentResults = () => {
                                 return (
                                   <div 
                                     key={i} 
-                                    className={`p-3 rounded border flex flex-col gap-2 ${
-                                      isCorrect 
-                                        ? 'bg-green-50 border-green-300 text-green-800' 
-                                        : isSelected 
-                                        ? 'bg-red-50 border-red-200 text-red-800' 
-                                        : 'bg-gray-50 border-gray-200 text-gray-700'
+                                    className={`p-3 rounded border flex flex-col gap-2 transition-all ${
+                                      isCorrect && isSelected
+                                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950 font-bold ring-2 ring-emerald-300'
+                                        : isCorrect
+                                        ? 'bg-green-50/50 border-green-200 text-green-700/85 border-dashed'
+                                        : isSelected
+                                        ? 'bg-red-50 border-red-300 text-red-900 font-bold'
+                                        : 'bg-gray-50 border-gray-200 text-gray-400'
                                     }`}
                                   >
                                     <div className="flex items-center gap-2 text-[11px] font-semibold">
@@ -785,8 +787,21 @@ const StudentResults = () => {
                                         {isSelected ? '☑' : '☐'}
                                       </span>
                                       <span>{parsed.text}</span>
-                                      {isCorrect && <span className="ml-auto text-[9px] font-bold bg-green-200 text-green-800 px-1.5 py-0.5 rounded">Correct Option</span>}
-                                      {!isCorrect && isSelected && <span className="ml-auto text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">Selected Wrong</span>}
+                                      {isCorrect && isSelected && (
+                                        <span className="ml-auto text-[9px] font-bold bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
+                                          Correct & Selected
+                                        </span>
+                                      )}
+                                      {isCorrect && !isSelected && (
+                                        <span className="ml-auto text-[9px] font-medium bg-green-150 text-green-700 px-1.5 py-0.5 rounded">
+                                          Correct (Not Selected)
+                                        </span>
+                                      )}
+                                      {!isCorrect && isSelected && (
+                                        <span className="ml-auto text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">
+                                          Selected Wrong
+                                        </span>
+                                      )}
                                     </div>
                                     {parsed.image_url && (
                                       <div style={{ paddingLeft: '18px' }} className="mt-1">
