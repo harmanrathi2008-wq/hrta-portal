@@ -8,6 +8,9 @@ import { dirname, join } from 'path'
 import nodemailer from 'nodemailer'
 import axios from 'axios'
 import { existsSync } from 'fs'
+import { configureSecurityHeaders } from './middleware/securityHeaders.js'
+import { apiLimiter, authLimiter, heavyRequestLimiter } from './middleware/rateLimiters.js'
+import { validateEmailInput } from './middleware/validator.js'
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -23,8 +26,41 @@ const __dirname = dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 8080
 
-app.use(cors())
-app.use(express.json({ limit: '50mb' }))
+// Global security headers via Helmet
+app.use(configureSecurityHeaders);
+
+// Restrict CORS origins securely
+const allowedOrigins = [
+  'http://localhost:5173', // Vite local development server
+  'https://harmanrathitportal.nxtdev.xyz', // Candidate portal
+  'https://admin.harmanrathitestingagency.nxtdev.xyz' // Admin dashboard
+];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Blocked by secure CORS policy'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
+
+// Global Request Timeout (15 seconds)
+app.use((req, res, next) => {
+  res.setTimeout(15000, () => {
+    res.status(408).send({ error: 'Request Timeout' });
+  });
+  next();
+});
+
+// Configure JSON limits and URL encoding
+app.use(express.json({ limit: '10mb' })); // Lowered from 50mb to prevent memory exhaustion attacks
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// General Rate Limiter for all API endpoints
+app.use('/api/', apiLimiter);
 
 // Supabase Clients
 const supabase = createClient(
@@ -255,7 +291,7 @@ app.get('/api/health', (req, res) => {
 })
 
 // ============ ADMIN OTP ============
-app.post('/api/send-admin-otp', async (req, res) => {
+app.post('/api/send-admin-otp', authLimiter, validateEmailInput, async (req, res) => {
   const { email } = req.body
 
   if (!email) {
@@ -317,7 +353,7 @@ app.post('/api/send-admin-otp', async (req, res) => {
 })
 
 // ============ SUPER ADMIN OTP ============
-app.post('/api/send-superadmin-otp', async (req, res) => {
+app.post('/api/send-superadmin-otp', authLimiter, validateEmailInput, async (req, res) => {
   const { email, secretKey } = req.body
 
   if (!email || !secretKey) {
@@ -383,7 +419,7 @@ app.post('/api/send-superadmin-otp', async (req, res) => {
 })
 
 // ============ STUDENT OTP ============
-app.post('/api/send-student-otp', async (req, res) => {
+app.post('/api/send-student-otp', authLimiter, async (req, res) => {
   const { applicationId, dateOfBirth } = req.body
 
   if (!applicationId || !dateOfBirth) {
@@ -452,7 +488,7 @@ app.post('/api/send-student-otp', async (req, res) => {
 })
 
 // ============ VERIFY OTP (BULLETPROOF) ============
-app.post('/api/verify-otp', async (req, res) => {
+app.post('/api/verify-otp', authLimiter, async (req, res) => {
   // Support both 'identifier' and legacy 'email' from frontend payload
   const incomingIdentifier = req.body.identifier || req.body.email;
   const otp = req.body.otp;
@@ -561,7 +597,7 @@ app.post('/api/session-heartbeat', async (req, res) => {
 })
 
 // ============ CLOUDINARY IMAGE UPLOAD ============
-app.post('/api/upload-image', async (req, res) => {
+app.post('/api/upload-image', heavyRequestLimiter, async (req, res) => {
   const { image } = req.body
 
   if (!image) {
@@ -778,6 +814,15 @@ if (existsSync(join(__dirname, 'dist'))) {
     res.json({ message: "HRTA API Server is running" })
   })
 }
+
+// Clean global error handler middleware (does not leak internals to clients)
+app.use((err, req, res, next) => {
+  console.error('[Error Audit Log]:', err.stack || err.message || err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({ error: 'An internal server error occurred. Please contact the administrator.' });
+});
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
