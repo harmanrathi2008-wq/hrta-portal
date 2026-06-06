@@ -2,6 +2,36 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 
+const parseOption = (opt) => {
+  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  const trimmed = opt.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return {
+        text: parsed.text || '',
+        image_url: parsed.image_url || '',
+        image_public_id: parsed.image_public_id || ''
+      };
+    } catch (e) {}
+  }
+  return { text: opt, image_url: '', image_public_id: '' };
+};
+
+const formatCorrectAnswerString = (correctAnswerField, questionType) => {
+  if (!correctAnswerField) return 'N/A';
+  if (questionType === 'mcq_single' || questionType === 'mcq_multiple' || questionType === 'true_false' || questionType === 'subjective') {
+    try {
+      const parsed = JSON.parse(correctAnswerField);
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      return list.map(item => parseOption(item).text).join(', ');
+    } catch (e) {
+      return correctAnswerField;
+    }
+  }
+  return correctAnswerField;
+};
+
 const ExamQuestions = () => {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -12,6 +42,7 @@ const ExamQuestions = () => {
   const [exam, setExam] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [editingQuestion, setEditingQuestion] = useState(null);
+  const [deletedOptionPublicIds, setDeletedOptionPublicIds] = useState([]);
 
   // Form State
   const [questionType, setQuestionType] = useState('mcq_single');
@@ -90,6 +121,7 @@ const ExamQuestions = () => {
     setImageFile(null);
     setImagePreview('');
     setEditingQuestion(null);
+    setDeletedOptionPublicIds([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -102,9 +134,10 @@ const ExamQuestions = () => {
     setScoringPolicy(q.scoring_policy || 'exact_match');
     setPositiveMarks(q.positive_marks || 4);
     setNegativeMarks(q.negative_marks || 1);
+    setDeletedOptionPublicIds([]);
     
     // Parse correct answer
-    if (q.question_type === 'mcq_single' || q.question_type === 'mcq_multiple' || q.question_type === 'true_false') {
+    if (q.question_type === 'mcq_single' || q.question_type === 'mcq_multiple' || q.question_type === 'true_false' || q.question_type === 'subjective') {
       try {
         const parsed = JSON.parse(q.correct_answer);
         setCorrectAnswers(Array.isArray(parsed) ? parsed : [parsed]);
@@ -152,13 +185,38 @@ const ExamQuestions = () => {
       let finalOptions = null;
       let finalCorrectAnswer = null;
 
-      if (questionType === 'mcq_single' || questionType === 'mcq_multiple') {
-        const validOptions = options.filter(opt => opt.trim() !== '');
-        if (validOptions.length < 2) throw new Error("At least 2 options required for MCQ.");
-        if (correctAnswers.length === 0) throw new Error("Select at least one correct answer.");
-        finalOptions = validOptions;
-        // Store as array stringified or JSONB natively
-        finalCorrectAnswer = JSON.stringify(correctAnswers); 
+      if (questionType === 'mcq_single' || questionType === 'mcq_multiple' || questionType === 'subjective') {
+        if (questionType === 'subjective') {
+          let finalOpts = [];
+          let finalCorrects = [...correctAnswers];
+          for (let i = 0; i < options.length; i++) {
+            const opt = options[i];
+            const parsed = parseOption(opt);
+            if (parsed.tempFile) {
+              const uploadResult = await uploadImageToCloudinary(parsed.tempFile);
+              parsed.image_url = uploadResult.secure_url || uploadResult.url;
+              parsed.image_public_id = uploadResult.public_id;
+              delete parsed.tempFile;
+            }
+            const serialized = JSON.stringify(parsed);
+            finalOpts.push(serialized);
+            finalCorrects = finalCorrects.map(c => c === opt ? serialized : c);
+          }
+          const validOptions = finalOpts.filter(opt => {
+            const parsed = parseOption(opt);
+            return parsed.text.trim() !== '' || parsed.image_url !== '';
+          });
+          if (validOptions.length < 2) throw new Error("At least 2 options required.");
+          if (finalCorrects.length === 0) throw new Error("Select at least one correct answer.");
+          finalOptions = validOptions;
+          finalCorrectAnswer = JSON.stringify(finalCorrects);
+        } else {
+          const validOptions = options.filter(opt => opt.trim() !== '');
+          if (validOptions.length < 2) throw new Error("At least 2 options required for MCQ.");
+          if (correctAnswers.length === 0) throw new Error("Select at least one correct answer.");
+          finalOptions = validOptions;
+          finalCorrectAnswer = JSON.stringify(correctAnswers); 
+        }
       } else if (questionType.includes('numerical')) {
         if (!numericalAnswer) throw new Error("Numerical answer is required.");
         finalCorrectAnswer = numericalAnswer;
@@ -168,18 +226,16 @@ const ExamQuestions = () => {
         finalCorrectAnswer = JSON.stringify(correctAnswers);
       }
 
-      // 2. Image upload / update logic
+      // 2. Image upload / update logic for the main question image
       let imageUrl = editingQuestion ? editingQuestion.image_url : null;
       let imagePublicId = editingQuestion ? editingQuestion.image_public_id : null;
 
       if (imagePreview) {
-        // If imagePreview is a new file (base64 data), upload to Cloudinary
         if (imagePreview.startsWith('data:image')) {
           const uploadResult = await uploadImageToCloudinary(imagePreview);
           imageUrl = uploadResult.secure_url || uploadResult.url;
           imagePublicId = uploadResult.public_id;
 
-          // Delete old image from Cloudinary if existed
           if (editingQuestion && editingQuestion.image_public_id) {
             try {
               const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -194,8 +250,6 @@ const ExamQuestions = () => {
           }
         }
       } else {
-        // If imagePreview is empty, it means the user deleted the image.
-        // Delete old image from Cloudinary if existed.
         if (editingQuestion && editingQuestion.image_public_id) {
           try {
             const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -236,10 +290,7 @@ const ExamQuestions = () => {
           .single();
 
         if (error) throw error;
-
         setQuestions(questions.map(q => q.id === editingQuestion.id ? data : q));
-        resetForm();
-        alert("Question Updated Successfully!");
       } else {
         // Create mode
         const newQuestion = {
@@ -260,13 +311,28 @@ const ExamQuestions = () => {
         };
 
         const { data, error } = await supabase.from('questions').insert([newQuestion]).select().single();
-        
         if (error) throw error;
-
         setQuestions([...questions, data]);
-        resetForm();
-        alert("Question Added Successfully!");
       }
+
+      // Purge deleted option images from Cloudinary on successful save
+      if (deletedOptionPublicIds.length > 0) {
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        for (const pubId of deletedOptionPublicIds) {
+          try {
+            await fetch(`${apiBaseUrl}/api/delete-image`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ public_id: pubId })
+            });
+          } catch (e) {
+            console.error("Failed to delete option image:", e);
+          }
+        }
+      }
+
+      resetForm();
+      alert(editingQuestion ? "Question Updated Successfully!" : "Question Added Successfully!");
 
     } catch (err) {
       alert(err.message);
@@ -278,10 +344,32 @@ const ExamQuestions = () => {
   const handleDeleteQuestion = async (id, imagePublicId) => {
     if (!window.confirm("Delete this question permanently?")) return;
 
+    const questionToDelete = questions.find(q => q.id === id);
+    if (!questionToDelete) return;
+
     try {
-      // 1. Delete image from Cloudinary if exists
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      // 1. Delete option images if subjective
+      if (questionToDelete.question_type === 'subjective' && questionToDelete.options) {
+        for (const optStr of questionToDelete.options) {
+          const parsed = parseOption(optStr);
+          if (parsed.image_public_id) {
+            try {
+              await fetch(`${apiBaseUrl}/api/delete-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ public_id: parsed.image_public_id })
+              });
+            } catch (e) {
+              console.error("Failed to delete option image:", e);
+            }
+          }
+        }
+      }
+
+      // 2. Delete main question image from Cloudinary if exists
       if (imagePublicId) {
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
         await fetch(`${apiBaseUrl}/api/delete-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -289,7 +377,7 @@ const ExamQuestions = () => {
         });
       }
 
-      // 2. Delete from DB
+      // 3. Delete from DB
       const { error } = await supabase.from('questions').delete().eq('id', id);
       if (error) throw error;
 
@@ -343,6 +431,7 @@ const ExamQuestions = () => {
                 >
                   <option value="mcq_single">MCQ (Single Correct)</option>
                   <option value="mcq_multiple">MCQ (Multiple Correct)</option>
+                  <option value="subjective">Subjective (Multiple Correct with Option Images)</option>
                   <option value="numerical_integer">Numerical (Integer)</option>
                   <option value="numerical_decimal">Numerical (Decimal)</option>
                   <option value="true_false">True / False</option>
@@ -395,43 +484,119 @@ const ExamQuestions = () => {
             <div className="bg-blue-50 p-4 rounded border border-blue-100">
               <h3 className="text-sm font-bold text-[#005fa7] mb-3 uppercase tracking-wide">Options & Answer Key</h3>
               
-              {(questionType === 'mcq_single' || questionType === 'mcq_multiple') && (
-                <div className="space-y-3">
-                  {options.map((opt, i) => (
-                    <div key={i} className="flex items-center space-x-3">
-                      <input 
-                        type={questionType === 'mcq_single' ? 'radio' : 'checkbox'}
-                        name="correct_ans"
-                        checked={correctAnswers.includes(opt) && opt !== ''}
-                        onChange={(e) => {
-                          if (!opt) return alert("Fill the option text first!");
-                          if (questionType === 'mcq_single') {
-                            setCorrectAnswers([opt]);
-                          } else {
-                            if (e.target.checked) setCorrectAnswers([...correctAnswers, opt]);
-                            else setCorrectAnswers(correctAnswers.filter(a => a !== opt));
-                          }
-                        }}
-                        className="w-5 h-5 text-[#005fa7]"
-                      />
-                      <input 
-                        type="text"
-                        value={opt}
-                        onChange={(e) => {
-                          const newOpts = [...options];
-                          newOpts[i] = e.target.value;
-                          setOptions(newOpts);
-                          // Sync correct answers if option text changes
-                          if (correctAnswers.includes(opt)) {
-                            setCorrectAnswers(correctAnswers.filter(a => a !== opt));
-                          }
-                        }}
-                        placeholder={`Option ${i + 1}`}
-                        className="flex-1 border border-gray-300 p-2 rounded focus:ring-[#005fa7]"
-                      />
-                    </div>
-                  ))}
-                  <button type="button" onClick={() => setOptions([...options, ''])} className="text-sm text-[#005fa7] font-bold hover:underline">+ Add Option</button>
+              {(questionType === 'mcq_single' || questionType === 'mcq_multiple' || questionType === 'subjective') && (
+                <div className="space-y-4">
+                  {options.map((opt, i) => {
+                    const isSubjective = questionType === 'subjective';
+                    const parsed = isSubjective ? parseOption(opt) : { text: opt, image_url: '' };
+                    
+                    return (
+                      <div key={i} className="flex flex-col p-3 bg-white rounded border border-gray-200 gap-3">
+                        <div className="flex items-center space-x-3">
+                          <input 
+                            type={questionType === 'mcq_single' ? 'radio' : 'checkbox'}
+                            name="correct_ans"
+                            checked={correctAnswers.includes(opt) && opt !== ''}
+                            onChange={(e) => {
+                              if (!opt) return alert("Fill the option text or add image first!");
+                              if (questionType === 'mcq_single') {
+                                setCorrectAnswers([opt]);
+                              } else {
+                                if (e.target.checked) setCorrectAnswers([...correctAnswers, opt]);
+                                else setCorrectAnswers(correctAnswers.filter(a => a !== opt));
+                              }
+                            }}
+                            className="w-5 h-5 text-[#005fa7] cursor-pointer"
+                          />
+                          <input 
+                            type="text"
+                            value={parsed.text}
+                            onChange={(e) => {
+                              const newOpts = [...options];
+                              let newVal;
+                              if (isSubjective) {
+                                newVal = JSON.stringify({ ...parsed, text: e.target.value });
+                              } else {
+                                newVal = e.target.value;
+                              }
+                              newOpts[i] = newVal;
+                              setOptions(newOpts);
+                              if (correctAnswers.includes(opt)) {
+                                setCorrectAnswers(correctAnswers.map(a => a === opt ? newVal : a));
+                              }
+                            }}
+                            placeholder={`Option ${i + 1} Text`}
+                            className="flex-1 border border-gray-300 p-2 rounded focus:ring-[#005fa7]"
+                          />
+                        </div>
+
+                        {isSubjective && (
+                          <div className="pl-8 flex flex-col sm:flex-row sm:items-center gap-3">
+                            <div className="flex-1">
+                              <label className="block text-xs font-bold text-gray-500 mb-1">Option Image</label>
+                              <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    if (file.size > 2 * 1024 * 1024) {
+                                      return alert("Image size must be less than 2MB");
+                                    }
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      const newOpts = [...options];
+                                      const newVal = JSON.stringify({ ...parsed, tempFile: reader.result, image_url: reader.result });
+                                      newOpts[i] = newVal;
+                                      setOptions(newOpts);
+                                      if (correctAnswers.includes(opt)) {
+                                        setCorrectAnswers(correctAnswers.map(a => a === opt ? newVal : a));
+                                      }
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                                className="text-xs text-gray-500 file:mr-3 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                              />
+                            </div>
+                            {parsed.image_url && (
+                              <div className="relative inline-block border rounded p-1 bg-gray-50">
+                                <img src={parsed.image_url} alt={`Option ${i+1} Graphic`} className="h-16 object-contain" />
+                                <button 
+                                  type="button" 
+                                  onClick={() => {
+                                    if (parsed.image_public_id) {
+                                      setDeletedOptionPublicIds([...deletedOptionPublicIds, parsed.image_public_id]);
+                                    }
+                                    const newOpts = [...options];
+                                    const newVal = JSON.stringify({ text: parsed.text, image_url: '', image_public_id: '' });
+                                    newOpts[i] = newVal;
+                                    setOptions(newOpts);
+                                    if (correctAnswers.includes(opt)) {
+                                      setCorrectAnswers(correctAnswers.map(a => a === opt ? newVal : a));
+                                    }
+                                  }} 
+                                  className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] shadow hover:bg-red-600"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      const newVal = questionType === 'subjective' ? JSON.stringify({ text: '', image_url: '', image_public_id: '' }) : '';
+                      setOptions([...options, newVal]);
+                    }} 
+                    className="text-sm text-[#005fa7] font-bold hover:underline"
+                  >
+                    + Add Option
+                  </button>
                 </div>
               )}
 
@@ -475,8 +640,8 @@ const ExamQuestions = () => {
                 <label className="block text-xs font-bold text-gray-500 uppercase">Scoring Policy</label>
                 <select value={scoringPolicy} onChange={(e) => setScoringPolicy(e.target.value)} className="w-full mt-1 border-gray-300 rounded text-sm bg-gray-50">
                   <option value="exact_match">Exact Match</option>
-                  {questionType === 'mcq_multiple' && <option value="partial_positive">Partial (Positive Only)</option>}
-                  {questionType === 'mcq_multiple' && <option value="partial_negative">Partial (+ Negative)</option>}
+                  {(questionType === 'mcq_multiple' || questionType === 'subjective') && <option value="partial_positive">Partial (Positive Only)</option>}
+                  {(questionType === 'mcq_multiple' || questionType === 'subjective') && <option value="partial_negative">Partial (+ Negative)</option>}
                 </select>
               </div>
               <div>
@@ -527,7 +692,7 @@ const ExamQuestions = () => {
                 )}
                 
                 <div className="bg-gray-50 p-2 rounded text-xs border border-gray-200 flex justify-between">
-                  <span className="font-semibold text-gray-600">Key: <span className="text-green-700">{q.correct_answer}</span></span>
+                  <span className="font-semibold text-gray-600">Key: <span className="text-green-700">{formatCorrectAnswerString(q.correct_answer, q.question_type)}</span></span>
                   <span className="font-semibold text-gray-500">[{q.positive_marks} / -{q.negative_marks}]</span>
                 </div>
               </div>

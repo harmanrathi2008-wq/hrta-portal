@@ -3,6 +3,41 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+const parseOption = (opt) => {
+  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  const trimmed = opt.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return {
+        text: parsed.text || '',
+        image_url: parsed.image_url || '',
+        image_public_id: parsed.image_public_id || ''
+      };
+    } catch (e) {}
+  }
+  return { text: opt, image_url: '', image_public_id: '' };
+};
+
+const formatResponse = (ans) => {
+  if (!ans) return 'Not Attempted';
+  if (Array.isArray(ans)) {
+    return ans.map(item => parseOption(item).text).join(', ');
+  }
+  return parseOption(ans).text;
+};
+
+const formatKey = (keyStr) => {
+  if (!keyStr) return 'N/A';
+  try {
+    const parsed = JSON.parse(keyStr);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.map(item => parseOption(item).text).join(', ');
+  } catch (e) {
+    return parseOption(keyStr).text;
+  }
+};
+
 const StudentResults = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -172,7 +207,7 @@ const StudentResults = () => {
     }
 
     // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
-    if (qType === 'mcq_multiple' || qType === 'multiple') {
+    if (qType === 'mcq_multiple' || qType === 'multiple' || qType === 'subjective') {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       if (hasIncorrectSelected) {
         const penalty = negMarks > 0 ? negMarks : 2;
@@ -314,7 +349,7 @@ const StudentResults = () => {
               stats[subject].incorrect++;
               stats[subject].gained_marks -= negMarks;
             }
-          } else if (qType === "mcq_multiple" || qType === "multiple") {
+          } else if (qType === "mcq_multiple" || qType === "multiple" || qType === "subjective") {
             const hasIncorrect = selectedList.some(item => !correctList.includes(item));
             if (hasIncorrect) {
               stats[subject].incorrect++;
@@ -668,17 +703,65 @@ const StudentResults = () => {
                           <img src={q.image_url} alt={`Question ${idx + 1} Visual`} className="max-w-md h-auto mb-3 border rounded shadow-sm" />
                         )}
 
+                        {q.options && Array.isArray(q.options) && (q.question_type === 'subjective' || q.question_type === 'mcq_single' || q.question_type === 'mcq_multiple') && (
+                          <div className="mb-4 space-y-2">
+                            <span className="text-gray-550 block text-[9px] uppercase font-bold tracking-wide">Options & Selected Choices:</span>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                              {q.options.map((opt, i) => {
+                                const parsed = parseOption(opt);
+                                const isSelected = hasAnswered && (Array.isArray(studentAnswer) ? studentAnswer.includes(opt) : studentAnswer === opt);
+                                
+                                let correctList = [];
+                                try {
+                                  correctList = JSON.parse(q.correct_answer);
+                                  if (!Array.isArray(correctList)) correctList = [correctList];
+                                } catch (e) {
+                                  if (q.correct_answer) correctList = [q.correct_answer];
+                                }
+                                const isCorrect = correctList.includes(opt);
+
+                                return (
+                                  <div 
+                                    key={i} 
+                                    className={`p-3 rounded border flex flex-col gap-2 ${
+                                      isCorrect 
+                                        ? 'bg-green-50 border-green-300 text-green-800' 
+                                        : isSelected 
+                                        ? 'bg-red-50 border-red-200 text-red-800' 
+                                        : 'bg-gray-50 border-gray-200 text-gray-700'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 text-[11px] font-semibold">
+                                      <span className="text-sm">
+                                        {isSelected ? '☑' : '☐'}
+                                      </span>
+                                      <span>{parsed.text}</span>
+                                      {isCorrect && <span className="ml-auto text-[9px] font-bold bg-green-200 text-green-800 px-1.5 py-0.5 rounded">Correct Option</span>}
+                                      {!isCorrect && isSelected && <span className="ml-auto text-[9px] font-bold bg-red-200 text-red-800 px-1.5 py-0.5 rounded">Selected Wrong</span>}
+                                    </div>
+                                    {parsed.image_url && (
+                                      <div style={{ paddingLeft: '18px' }} className="mt-1">
+                                        <img src={parsed.image_url} alt={`Option ${i+1}`} className="max-h-28 object-contain rounded border bg-white p-0.5" />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-4 bg-gray-50 p-2.5 border border-gray-200 rounded">
                           <div>
                             <span className="text-gray-550 block text-[9px] uppercase font-bold tracking-wide">Your Response:</span>
                             <span className={`font-bold ${hasAnswered ? 'text-gray-900' : 'text-gray-400 italic'}`}>
-                              {hasAnswered ? (Array.isArray(studentAnswer) ? studentAnswer.join(', ') : studentAnswer) : 'Not Attempted'}
+                              {formatResponse(studentAnswer)}
                             </span>
                           </div>
                           <div>
                             <span className="text-gray-550 block text-[9px] uppercase font-bold tracking-wide">Provisional Answer Key:</span>
                             <span className="text-green-700 font-bold">
-                              {q.correct_answer}
+                              {formatKey(q.correct_answer)}
                             </span>
                           </div>
                         </div>

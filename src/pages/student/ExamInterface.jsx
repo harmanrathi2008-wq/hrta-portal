@@ -2,6 +2,22 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 
+const parseOption = (opt) => {
+  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  const trimmed = opt.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return {
+        text: parsed.text || '',
+        image_url: parsed.image_url || '',
+        image_public_id: parsed.image_public_id || ''
+      };
+    } catch (e) {}
+  }
+  return { text: opt, image_url: '', image_public_id: '' };
+};
+
 export default function ExamInterface() {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -477,7 +493,7 @@ export default function ExamInterface() {
             }
           }
           // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
-          else if (qType === "mcq_multiple" || qType === "multiple") {
+          else if (qType === "mcq_multiple" || qType === "multiple" || qType === "subjective") {
             const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
             if (hasIncorrect) {
               wrongCount++;
@@ -633,39 +649,59 @@ export default function ExamInterface() {
     if (!current.options || !Array.isArray(current.options)) return null;
 
     if (qType === "single" || qType === "mcq_single" || qType === "true_false") {
-      return current.options.map((opt, i) => (
-        <label key={i} className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold cursor-pointer my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
-          <input
-            type="radio"
-            name={`q-${current.id}`}
-            checked={responses[current.id] === opt}
-            onChange={() => setResponses({ ...responses, [current.id]: opt })}
-            className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
-          />
-          <span className="text-gray-800">{opt}</span>
-        </label>
-      ));
+      return current.options.map((opt, i) => {
+        const parsed = parseOption(opt);
+        return (
+          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
+            <div className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold">
+              <input
+                type="radio"
+                name={`q-${current.id}`}
+                checked={responses[current.id] === opt}
+                onChange={() => setResponses({ ...responses, [current.id]: opt })}
+                className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
+              />
+              <span className="text-gray-800">{parsed.text}</span>
+            </div>
+            {parsed.image_url && (
+              <div style={{ paddingLeft: '28px' }} className="mt-1">
+                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-h-40 rounded border bg-white p-1 object-contain" />
+              </div>
+            )}
+          </label>
+        );
+      });
     }
 
-    if (qType === "multiple" || qType === "mcq_multiple") {
-      return current.options.map((opt, i) => (
-        <label key={i} className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold cursor-pointer my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 transition-colors">
-          <input
-            type="checkbox"
-            checked={(responses[current.id] || []).includes(opt)}
-            onChange={() => {
-              let arr = responses[current.id] || [];
-              if (!Array.isArray(arr)) {
-                arr = arr ? [arr] : [];
-              }
-              arr = arr.includes(opt) ? arr.filter((o) => o !== opt) : [...arr, opt];
-              setResponses({ ...responses, [current.id]: arr });
-            }}
-            className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
-          />
-          <span className="text-gray-800">{opt}</span>
-        </label>
-      ));
+    if (qType === "multiple" || qType === "mcq_multiple" || qType === "subjective") {
+      return current.options.map((opt, i) => {
+        const parsed = parseOption(opt);
+        return (
+          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
+            <div className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold">
+              <input
+                type="checkbox"
+                checked={(responses[current.id] || []).includes(opt)}
+                onChange={() => {
+                  let arr = responses[current.id] || [];
+                  if (!Array.isArray(arr)) {
+                    arr = arr ? [arr] : [];
+                  }
+                  arr = arr.includes(opt) ? arr.filter((o) => o !== opt) : [...arr, opt];
+                  setResponses({ ...responses, [current.id]: arr });
+                }}
+                className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
+              />
+              <span className="text-gray-800">{parsed.text}</span>
+            </div>
+            {parsed.image_url && (
+              <div style={{ paddingLeft: '28px' }} className="mt-1">
+                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-h-40 rounded border bg-white p-1 object-contain" />
+              </div>
+            )}
+          </label>
+        );
+      });
     }
 
     return (
