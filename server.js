@@ -29,17 +29,16 @@ const PORT = process.env.PORT || 8080
 // Global security headers via Helmet
 app.use(configureSecurityHeaders);
 
-// Restrict CORS origins securely (allowing localhost and any subdomain under nxtdev.xyz)
+// Restrict CORS origins securely (allowing localhost and Cloudflare Pages domains)
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) {
       return callback(null, true);
     }
     const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
-    const isNxtDev = origin.endsWith('.nxtdev.xyz') || origin === 'https://nxtdev.xyz';
     const isCloudflarePages = origin === 'https://hrta-portal.pages.dev' || origin.endsWith('.hrta-portal.pages.dev');
     
-    if (isLocalhost || isNxtDev || isCloudflarePages) {
+    if (isLocalhost || isCloudflarePages) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by secure CORS policy'));
