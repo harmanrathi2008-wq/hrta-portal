@@ -671,7 +671,26 @@ export default function ExamInterface() {
             </div>
             {parsed.image_url && (
               <div style={{ paddingLeft: '28px' }} className="mt-1">
-                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded border bg-white p-1 object-contain" />
+                <div 
+                  className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setZoomedImage(parsed.image_url);
+                    setZoomScale(1);
+                  }}
+                  title="Click to zoom option image"
+                >
+                  <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded block object-contain" style={{ imageRendering: 'auto' }} />
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 rounded flex items-center justify-center">
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black bg-opacity-65 text-white text-[10px] font-bold px-2 py-1 rounded shadow flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                      </svg>
+                      Click to Zoom
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </label>
@@ -702,7 +721,26 @@ export default function ExamInterface() {
             </div>
             {parsed.image_url && (
               <div style={{ paddingLeft: '28px' }} className="mt-1">
-                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded border bg-white p-1 object-contain" />
+                <div 
+                  className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setZoomedImage(parsed.image_url);
+                    setZoomScale(1);
+                  }}
+                  title="Click to zoom option image"
+                >
+                  <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded block object-contain" style={{ imageRendering: 'auto' }} />
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 rounded flex items-center justify-center">
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black bg-opacity-65 text-white text-[10px] font-bold px-2 py-1 rounded shadow flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                      </svg>
+                      Click to Zoom
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </label>
