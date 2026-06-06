@@ -42,7 +42,7 @@ const queryClient = new QueryClient()
 
 function App() {
   useEffect(() => {
-    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
     
     const sendHeartbeat = async () => {
       const loginLogId = sessionStorage.getItem('loginLogId');

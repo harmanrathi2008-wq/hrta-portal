@@ -29,15 +29,16 @@ const PORT = process.env.PORT || 8080
 // Global security headers via Helmet
 app.use(configureSecurityHeaders);
 
-// Restrict CORS origins securely
-const allowedOrigins = [
-  'http://localhost:5173', // Vite local development server
-  'https://harmanrathitportal.nxtdev.xyz', // Candidate portal
-  'https://admin.harmanrathitestingagency.nxtdev.xyz' // Admin dashboard
-];
+// Restrict CORS origins securely (allowing localhost and any subdomain under nxtdev.xyz)
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+    const isNxtDev = origin.endsWith('.nxtdev.xyz') || origin === 'https://nxtdev.xyz';
+    
+    if (isLocalhost || isNxtDev) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by secure CORS policy'));

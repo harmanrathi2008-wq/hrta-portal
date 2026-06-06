@@ -141,7 +141,7 @@ const MainLogin = () => {
             secretKey: secretKey.trim() 
           };
 
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -171,7 +171,7 @@ const MainLogin = () => {
     try {
       const identifier = activeTab === 'student' ? applicationId.trim() : email.trim();
       
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/verify-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

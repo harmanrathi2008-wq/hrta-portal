@@ -126,7 +126,7 @@ const ExamQuestions = () => {
 
   const uploadImageToCloudinary = async (base64Image) => {
     try {
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -182,7 +182,7 @@ const ExamQuestions = () => {
           // Delete old image from Cloudinary if existed
           if (editingQuestion && editingQuestion.image_public_id) {
             try {
-              const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+              const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
               await fetch(`${apiBaseUrl}/api/delete-image`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -198,7 +198,7 @@ const ExamQuestions = () => {
         // Delete old image from Cloudinary if existed.
         if (editingQuestion && editingQuestion.image_public_id) {
           try {
-            const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+            const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
             await fetch(`${apiBaseUrl}/api/delete-image`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -281,7 +281,7 @@ const ExamQuestions = () => {
     try {
       // 1. Delete image from Cloudinary if exists
       if (imagePublicId) {
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
         await fetch(`${apiBaseUrl}/api/delete-image`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

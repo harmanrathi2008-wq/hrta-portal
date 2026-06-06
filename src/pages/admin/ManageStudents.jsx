@@ -72,7 +72,7 @@ const ManageStudents = () => {
 
   const uploadImageToCloudinary = async (base64Image) => {
     try {
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-production.up.railway.app';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
