@@ -18,6 +18,12 @@ const parseOption = (opt) => {
   return { text: opt, image_url: '', image_public_id: '' };
 };
 
+const normalizeOptionForComparison = (opt) => {
+  const parsed = parseOption(opt);
+  const val = parsed.text.trim() || parsed.image_url.trim();
+  return val.toLowerCase();
+};
+
 export default function ExamInterface() {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -441,14 +447,14 @@ export default function ExamInterface() {
           } catch (e) {
             if (q.correct_answer) correctList = [q.correct_answer];
           }
-          correctList = correctList.map((item) => String(item).trim().toLowerCase());
+          correctList = correctList.map((item) => normalizeOptionForComparison(item));
 
           // Parse selected list
           let selectedList = [];
           if (Array.isArray(studentAnswer)) {
-            selectedList = studentAnswer.map((item) => String(item).trim().toLowerCase());
+            selectedList = studentAnswer.map((item) => normalizeOptionForComparison(item));
           } else {
-            selectedList = [String(studentAnswer).trim().toLowerCase()];
+            selectedList = [normalizeOptionForComparison(studentAnswer)];
           }
 
           // 1. Numerical comparison (NAT Marking Scheme with Range Support)
@@ -665,7 +671,7 @@ export default function ExamInterface() {
             </div>
             {parsed.image_url && (
               <div style={{ paddingLeft: '28px' }} className="mt-1">
-                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-h-40 rounded border bg-white p-1 object-contain" />
+                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded border bg-white p-1 object-contain" />
               </div>
             )}
           </label>
@@ -696,7 +702,7 @@ export default function ExamInterface() {
             </div>
             {parsed.image_url && (
               <div style={{ paddingLeft: '28px' }} className="mt-1">
-                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-h-40 rounded border bg-white p-1 object-contain" />
+                <img src={parsed.image_url} alt={`Option ${i+1} Visual`} className="max-w-full md:max-w-2xl h-auto rounded border bg-white p-1 object-contain" />
               </div>
             )}
           </label>

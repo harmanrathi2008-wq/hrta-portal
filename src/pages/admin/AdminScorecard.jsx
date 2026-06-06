@@ -19,6 +19,16 @@ const parseOption = (opt) => {
   return { text: opt, image_url: '', image_public_id: '' };
 };
 
+const normalizeOptionForComparison = (opt) => {
+  const parsed = parseOption(opt);
+  const val = parsed.text.trim() || parsed.image_url.trim();
+  return val.toLowerCase();
+};
+
+const areOptionsEqual = (optA, optB) => {
+  return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
+};
+
 const formatResponse = (ans) => {
   if (!ans) return 'Not Attempted';
   if (Array.isArray(ans)) {
@@ -221,14 +231,14 @@ const AdminScorecard = () => {
     } catch (e) {
       if (q.correct_answer) correctList = [q.correct_answer];
     }
-    correctList = correctList.map(item => String(item).trim().toLowerCase());
+    correctList = correctList.map(item => normalizeOptionForComparison(item));
 
     // Parse student answers
     let selectedList = [];
     if (Array.isArray(studentAnswer)) {
-      selectedList = studentAnswer.map(item => String(item).trim().toLowerCase());
+      selectedList = studentAnswer.map(item => normalizeOptionForComparison(item));
     } else {
-      selectedList = [String(studentAnswer).trim().toLowerCase()];
+      selectedList = [normalizeOptionForComparison(studentAnswer)];
     }
 
     // 1. Numerical evaluation (NAT Marking Scheme with Range Support)
@@ -518,7 +528,11 @@ const AdminScorecard = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {q.options.map((opt, i) => {
                           const parsed = parseOption(opt);
-                          const isSelected = hasAnswered && (Array.isArray(studentAnswer) ? studentAnswer.includes(opt) : studentAnswer === opt);
+                          const isSelected = hasAnswered && (
+                            Array.isArray(studentAnswer)
+                              ? studentAnswer.some(ans => areOptionsEqual(ans, opt))
+                              : areOptionsEqual(studentAnswer, opt)
+                          );
                           
                           let correctList = [];
                           try {
@@ -527,7 +541,7 @@ const AdminScorecard = () => {
                           } catch (e) {
                             if (q.correct_answer) correctList = [q.correct_answer];
                           }
-                          const isCorrect = correctList.includes(opt);
+                          const isCorrect = correctList.some(c => areOptionsEqual(c, opt));
 
                           return (
                             <div 
@@ -550,7 +564,7 @@ const AdminScorecard = () => {
                               </div>
                               {parsed.image_url && (
                                 <div style={{ paddingLeft: '18px' }} className="mt-1">
-                                  <img src={parsed.image_url} alt={`Option ${i+1}`} className="max-h-28 object-contain rounded border bg-white p-0.5" />
+                                  <img src={parsed.image_url} alt={`Option ${i+1}`} className="max-w-full md:max-w-xl h-auto rounded border bg-white p-1 object-contain block" />
                                 </div>
                               )}
                             </div>

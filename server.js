@@ -605,12 +605,7 @@ app.post('/api/upload-image', heavyRequestLimiter, async (req, res) => {
   try {
     const result = await cloudinary.uploader.upload(image, {
       folder: 'hrta_questions',
-      upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET,
-      transformation: [
-        { width: 800, crop: 'limit' },
-        { quality: 'auto:best' },
-        { fetch_format: 'webp' }
-      ]
+      upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET
     })
 
     res.json({
