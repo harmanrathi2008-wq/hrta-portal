@@ -134,11 +134,12 @@ const StudentResults = () => {
       return correctList.includes(selectedList[0]) ? posMarks : -negMarks;
     }
 
-    // 3. MCQ Multiple
+    // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
     if (qType === 'mcq_multiple' || qType === 'multiple') {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       if (hasIncorrectSelected) {
-        return policy === 'partial_positive' ? 0 : -negMarks;
+        const penalty = negMarks > 0 ? negMarks : 2;
+        return -penalty;
       }
 
       const numSelected = selectedList.length;
@@ -147,10 +148,20 @@ const StudentResults = () => {
       if (numSelected === numCorrect) {
         return posMarks;
       } else if (numSelected < numCorrect && numSelected > 0) {
-        if (policy === 'partial_positive' || policy === 'partial_negative') {
-          return numSelected; // +1 per correct choice
+        let partialScore = 0;
+        if (numCorrect === 2) {
+          if (numSelected === 1) partialScore = 2;
+        } else if (numCorrect === 3) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 3;
+        } else if (numCorrect === 4) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 2;
+          if (numSelected === 3) partialScore = 3;
+        } else {
+          partialScore = numSelected;
         }
-        return 0;
+        return partialScore;
       }
       return 0;
     }
@@ -264,7 +275,8 @@ const StudentResults = () => {
             const hasIncorrect = selectedList.some(item => !correctList.includes(item));
             if (hasIncorrect) {
               stats[subject].incorrect++;
-              stats[subject].gained_marks -= policy === "partial_positive" ? 0 : negMarks;
+              const penalty = negMarks > 0 ? negMarks : 2;
+              stats[subject].gained_marks -= penalty;
             } else {
               const numSel = selectedList.length;
               const numCor = correctList.length;
@@ -273,13 +285,21 @@ const StudentResults = () => {
                 stats[subject].correct++;
                 stats[subject].gained_marks += posMarks;
               } else if (numSel < numCor && numSel > 0) {
-                if (policy === "partial_positive" || policy === "partial_negative") {
-                  stats[subject].partial++;
-                  stats[subject].gained_marks += numSel;
+                stats[subject].partial++;
+                let partialScore = 0;
+                if (numCor === 2) {
+                  if (numSel === 1) partialScore = 2;
+                } else if (numCor === 3) {
+                  if (numSel === 1) partialScore = 1;
+                  if (numSel === 2) partialScore = 3;
+                } else if (numCor === 4) {
+                  if (numSel === 1) partialScore = 1;
+                  if (numSel === 2) partialScore = 2;
+                  if (numSel === 3) partialScore = 3;
                 } else {
-                  stats[subject].incorrect++;
-                  stats[subject].gained_marks -= negMarks;
+                  partialScore = numSel;
                 }
+                stats[subject].gained_marks += partialScore;
               } else {
                 stats[subject].unattempted++;
               }

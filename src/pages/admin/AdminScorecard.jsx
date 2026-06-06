@@ -184,11 +184,12 @@ const AdminScorecard = () => {
       return correctList.includes(selectedList[0]) ? posMarks : -negMarks;
     }
 
-    // 3. MCQ Multiple
+    // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
     if (qType === 'mcq_multiple' || qType === 'multiple') {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       if (hasIncorrectSelected) {
-        return policy === 'partial_positive' ? 0 : -negMarks;
+        const penalty = negMarks > 0 ? negMarks : 2;
+        return -penalty;
       }
 
       const numSelected = selectedList.length;
@@ -197,10 +198,20 @@ const AdminScorecard = () => {
       if (numSelected === numCorrect) {
         return posMarks;
       } else if (numSelected < numCorrect && numSelected > 0) {
-        if (policy === 'partial_positive' || policy === 'partial_negative') {
-          return numSelected; // +1 per correct choice
+        let partialScore = 0;
+        if (numCorrect === 2) {
+          if (numSelected === 1) partialScore = 2;
+        } else if (numCorrect === 3) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 3;
+        } else if (numCorrect === 4) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 2;
+          if (numSelected === 3) partialScore = 3;
+        } else {
+          partialScore = numSelected;
         }
-        return 0;
+        return partialScore;
       }
       return 0;
     }

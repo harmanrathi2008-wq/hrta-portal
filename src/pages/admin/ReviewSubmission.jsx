@@ -151,15 +151,13 @@ const ReviewSubmission = () => {
       return isCorrect ? posMarks : -negMarks;
     }
 
-    // 3. Multiple Correct MCQ
+    // 3. Multiple Correct MCQ (JEE Advanced Marking Scheme)
     if (qType === 'mcq_multiple' || qType === 'multiple') {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       
       if (hasIncorrectSelected) {
-        if (policy === 'partial_positive') {
-          return 0;
-        }
-        return -negMarks;
+        const penalty = negMarks > 0 ? negMarks : 2;
+        return -penalty;
       }
 
       const numSelected = selectedList.length;
@@ -168,11 +166,20 @@ const ReviewSubmission = () => {
       if (numSelected === numCorrect) {
         return posMarks;
       } else if (numSelected < numCorrect && numSelected > 0) {
-        if (policy === 'partial_positive' || policy === 'partial_negative') {
-          // Standard NTA/JEE Advanced partial marking: +1 mark per correct option selected
-          return numSelected; 
+        let partialScore = 0;
+        if (numCorrect === 2) {
+          if (numSelected === 1) partialScore = 2;
+        } else if (numCorrect === 3) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 3;
+        } else if (numCorrect === 4) {
+          if (numSelected === 1) partialScore = 1;
+          if (numSelected === 2) partialScore = 2;
+          if (numSelected === 3) partialScore = 3;
+        } else {
+          partialScore = numSelected;
         }
-        return 0;
+        return partialScore;
       }
       return 0;
     }

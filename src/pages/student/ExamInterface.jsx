@@ -441,12 +441,13 @@ export default function ExamInterface() {
               totalScore -= negMarks;
             }
           }
-          // 3. MCQ Multiple Correct
+          // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
           else if (qType === "mcq_multiple" || qType === "multiple") {
             const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
             if (hasIncorrect) {
               wrongCount++;
-              totalScore -= policy === "partial_positive" ? 0 : negMarks;
+              const penalty = negMarks > 0 ? negMarks : 2;
+              totalScore -= penalty;
             } else {
               const numSel = selectedList.length;
               const numCor = correctList.length;
@@ -456,15 +457,22 @@ export default function ExamInterface() {
                 correctCount++;
                 totalScore += posMarks;
               } else if (numSel < numCor && numSel > 0) {
-                // Partial correctness
-                if (policy === "partial_positive" || policy === "partial_negative") {
-                  correctCount++; // Treat as partial correct
-                  totalScore += numSel; // +1 per correct option selected
+                // Partial correctness according to JEE Advanced scheme
+                correctCount++;
+                let partialScore = 0;
+                if (numCor === 2) {
+                  if (numSel === 1) partialScore = 2;
+                } else if (numCor === 3) {
+                  if (numSel === 1) partialScore = 1;
+                  if (numSel === 2) partialScore = 3;
+                } else if (numCor === 4) {
+                  if (numSel === 1) partialScore = 1;
+                  if (numSel === 2) partialScore = 2;
+                  if (numSel === 3) partialScore = 3;
                 } else {
-                  // policy exact match
-                  wrongCount++;
-                  totalScore -= negMarks;
+                  partialScore = numSel; // fallback: +1 per correct choice
                 }
+                totalScore += partialScore;
               } else {
                 unattemptedCount++;
               }
