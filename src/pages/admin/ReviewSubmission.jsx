@@ -88,9 +88,36 @@ const ReviewSubmission = () => {
     fetchSubmissionData();
   }, [submissionId, navigate]);
 
-  // Helper to calculate auto-marks for a single question based on provisional hardcoded logic
-  // (In a full engine, this calls the EvaluationService)
-  // Upgraded professional auto-marks calculator engine
+  const parseNumericalRange = (answerStr) => {
+    if (!answerStr) return null;
+    const clean = String(answerStr).trim();
+
+    if (/\s+to\s+/i.test(clean)) {
+      const parts = clean.split(/\s+to\s+/i);
+      const min = parseFloat(parts[0]);
+      const max = parseFloat(parts[1]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const rangeMatch = clean.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+      const min = parseFloat(rangeMatch[1]);
+      const max = parseFloat(rangeMatch[2]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const val = parseFloat(clean);
+    if (!isNaN(val)) {
+      return { min: val, max: val, isRange: false };
+    }
+
+    return null;
+  };
+
   const calculateAutoMark = (question) => {
     const studentAnswer = submission?.answers?.[question.id];
     
@@ -131,17 +158,23 @@ const ReviewSubmission = () => {
       selectedList = [String(studentAnswer).trim().toLowerCase()];
     }
 
-    // 1. Numerical evaluation
+    // 1. Numerical evaluation (NAT Marking Scheme with Range Support)
     if (qType === 'numerical_integer' || qType === 'numerical_decimal') {
       const sNum = parseFloat(studentAnswer);
-      const cNum = parseFloat(question.correct_answer);
-      if (isNaN(sNum) || isNaN(cNum)) return -negMarks;
+      const penalty = negMarks > 0 ? negMarks : 1;
       
-      if (qType === 'numerical_integer') {
-        return Math.round(sNum) === Math.round(cNum) ? posMarks : -negMarks;
+      if (isNaN(sNum)) return -penalty;
+      
+      const parsedRange = parseNumericalRange(question.correct_answer);
+      if (parsedRange) {
+        const eps = 1e-9;
+        return (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) ? posMarks : -penalty;
       } else {
-        // Decimal comparison (e.g. 2 decimal places window check)
-        return Math.abs(sNum - cNum) < 0.0101 ? posMarks : -negMarks;
+        const cNum = parseFloat(question.correct_answer);
+        if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+          return posMarks;
+        }
+        return -penalty;
       }
     }
 

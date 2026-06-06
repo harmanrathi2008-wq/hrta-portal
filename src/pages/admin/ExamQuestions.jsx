@@ -437,15 +437,17 @@ const ExamQuestions = () => {
 
               {questionType.includes('numerical') && (
                 <div>
-                  <label className="block text-sm font-bold text-gray-700 mb-1">Correct Numerical Value</label>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Correct Numerical Value / Range</label>
                   <input 
-                    type="number"
-                    step={questionType === 'numerical_decimal' ? "any" : "1"}
+                    type="text"
                     value={numericalAnswer}
                     onChange={(e) => setNumericalAnswer(e.target.value)}
                     className="w-full max-w-xs border border-gray-300 p-2 rounded focus:ring-[#005fa7]"
-                    placeholder="e.g. 42"
+                    placeholder="e.g. 25, 9.80-9.82, or -2.50 to -2.40"
                   />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Enter a single number (e.g. 25) or a range (e.g. 9.80-9.82 or -2.50 to -2.40).
+                  </p>
                 </div>
               )}
 

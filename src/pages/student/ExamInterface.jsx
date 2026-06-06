@@ -354,6 +354,36 @@ export default function ExamInterface() {
 
   const counts = getSubmissionStats();
 
+  const parseNumericalRange = (answerStr) => {
+    if (!answerStr) return null;
+    const clean = String(answerStr).trim();
+
+    if (/\s+to\s+/i.test(clean)) {
+      const parts = clean.split(/\s+to\s+/i);
+      const min = parseFloat(parts[0]);
+      const max = parseFloat(parts[1]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const rangeMatch = clean.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+      const min = parseFloat(rangeMatch[1]);
+      const max = parseFloat(rangeMatch[2]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const val = parseFloat(clean);
+    if (!isNaN(val)) {
+      return { min: val, max: val, isRange: false };
+    }
+
+    return null;
+  };
+
   const executeSubmission = async (isAuto = false) => {
     setSubmitting(true);
     try {
@@ -405,29 +435,34 @@ export default function ExamInterface() {
             selectedList = [String(studentAnswer).trim().toLowerCase()];
           }
 
-          // 1. Numerical comparison
+          // 1. Numerical comparison (NAT Marking Scheme with Range Support)
           if (qType === "numerical_integer" || qType === "numerical_decimal") {
             const sNum = parseFloat(studentAnswer);
-            const cNum = parseFloat(q.correct_answer);
-            if (isNaN(sNum) || isNaN(cNum)) {
+            const penalty = negMarks > 0 ? negMarks : 1;
+            
+            if (isNaN(sNum)) {
               wrongCount++;
-              totalScore -= negMarks;
-            } else if (qType === "numerical_integer") {
-              if (Math.round(sNum) === Math.round(cNum)) {
-                correctCount++;
-                totalScore += posMarks;
-              } else {
-                wrongCount++;
-                totalScore -= negMarks;
-              }
+              totalScore -= penalty;
             } else {
-              // Decimal: Compare up to 2 decimal places with absolute window
-              if (Math.abs(sNum - cNum) < 0.0101) {
-                correctCount++;
-                totalScore += posMarks;
+              const parsedRange = parseNumericalRange(q.correct_answer);
+              if (parsedRange) {
+                const eps = 1e-9;
+                if (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) {
+                  correctCount++;
+                  totalScore += posMarks;
+                } else {
+                  wrongCount++;
+                  totalScore -= penalty;
+                }
               } else {
-                wrongCount++;
-                totalScore -= negMarks;
+                const cNum = parseFloat(q.correct_answer);
+                if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+                  correctCount++;
+                  totalScore += posMarks;
+                } else {
+                  wrongCount++;
+                  totalScore -= penalty;
+                }
               }
             }
           }

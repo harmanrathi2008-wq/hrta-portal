@@ -90,6 +90,36 @@ const StudentResults = () => {
     }
   }, [selectedResult]);
 
+  const parseNumericalRange = (answerStr) => {
+    if (!answerStr) return null;
+    const clean = String(answerStr).trim();
+
+    if (/\s+to\s+/i.test(clean)) {
+      const parts = clean.split(/\s+to\s+/i);
+      const min = parseFloat(parts[0]);
+      const max = parseFloat(parts[1]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const rangeMatch = clean.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+      const min = parseFloat(rangeMatch[1]);
+      const max = parseFloat(rangeMatch[2]);
+      if (!isNaN(min) && !isNaN(max)) {
+        return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+      }
+    }
+
+    const val = parseFloat(clean);
+    if (!isNaN(val)) {
+      return { min: val, max: val, isRange: false };
+    }
+
+    return null;
+  };
+
   const calculateAutoMarkForQuestion = (q, studentAnswer, posMarks, negMarks) => {
     if (studentAnswer === undefined || studentAnswer === null || studentAnswer === '' || (Array.isArray(studentAnswer) && studentAnswer.length === 0)) {
       return 0;
@@ -116,16 +146,23 @@ const StudentResults = () => {
       selectedList = [String(studentAnswer).trim().toLowerCase()];
     }
 
-    // 1. Numerical evaluation
+    // 1. Numerical evaluation (NAT Marking Scheme with Range Support)
     if (qType === 'numerical_integer' || qType === 'numerical_decimal') {
       const sNum = parseFloat(studentAnswer);
-      const cNum = parseFloat(q.correct_answer);
-      if (isNaN(sNum) || isNaN(cNum)) return -negMarks;
+      const penalty = negMarks > 0 ? negMarks : 1;
       
-      if (qType === 'numerical_integer') {
-        return Math.round(sNum) === Math.round(cNum) ? posMarks : -negMarks;
+      if (isNaN(sNum)) return -penalty;
+      
+      const parsedRange = parseNumericalRange(q.correct_answer);
+      if (parsedRange) {
+        const eps = 1e-9;
+        return (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) ? posMarks : -penalty;
       } else {
-        return Math.abs(sNum - cNum) < 0.0101 ? posMarks : -negMarks;
+        const cNum = parseFloat(q.correct_answer);
+        if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+          return posMarks;
+        }
+        return -penalty;
       }
     }
 
@@ -242,25 +279,31 @@ const StudentResults = () => {
 
           if (qType === "numerical_integer" || qType === "numerical_decimal") {
             const sNum = parseFloat(studentAnswer);
-            const cNum = parseFloat(q.correct_answer);
-            if (isNaN(sNum) || isNaN(cNum)) {
+            const penalty = negMarks > 0 ? negMarks : 1;
+            
+            if (isNaN(sNum)) {
               stats[subject].incorrect++;
-              stats[subject].gained_marks -= negMarks;
-            } else if (qType === "numerical_integer") {
-              if (Math.round(sNum) === Math.round(cNum)) {
-                stats[subject].correct++;
-                stats[subject].gained_marks += posMarks;
-              } else {
-                stats[subject].incorrect++;
-                stats[subject].gained_marks -= negMarks;
-              }
+              stats[subject].gained_marks -= penalty;
             } else {
-              if (Math.abs(sNum - cNum) < 0.0101) {
-                stats[subject].correct++;
-                stats[subject].gained_marks += posMarks;
+              const parsedRange = parseNumericalRange(q.correct_answer);
+              if (parsedRange) {
+                const eps = 1e-9;
+                if (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) {
+                  stats[subject].correct++;
+                  stats[subject].gained_marks += posMarks;
+                } else {
+                  stats[subject].incorrect++;
+                  stats[subject].gained_marks -= penalty;
+                }
               } else {
-                stats[subject].incorrect++;
-                stats[subject].gained_marks -= negMarks;
+                const cNum = parseFloat(q.correct_answer);
+                if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+                  stats[subject].correct++;
+                  stats[subject].gained_marks += posMarks;
+                } else {
+                  stats[subject].incorrect++;
+                  stats[subject].gained_marks -= penalty;
+                }
               }
             }
           } else if (qType === "mcq_single" || qType === "true_false" || qType === "single") {
