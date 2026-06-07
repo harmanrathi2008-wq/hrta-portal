@@ -754,7 +754,7 @@ const ExamQuestions = () => {
       </div>
 
       {isPrintPreviewOpen && (
-        <div className="fixed inset-0 bg-gray-900 bg-opacity-70 z-50 overflow-y-auto p-4 md:p-8 no-print">
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-70 z-50 overflow-y-auto p-4 md:p-8 print-preview-modal-wrapper">
           {/* Controls Header */}
           <div className="max-w-4xl mx-auto bg-white rounded-t-lg shadow-xl border-b border-gray-200 p-4 sticky top-0 flex flex-wrap justify-between items-center gap-4 z-10 no-print">
             <div className="flex items-center gap-3">
@@ -806,8 +806,21 @@ const ExamQuestions = () => {
             {/* CSS Stylesheet Injector */}
             <style>{`
               @media print {
-                body * {
+                body {
                   visibility: hidden;
+                  background: white !important;
+                }
+                .print-preview-modal-wrapper {
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  height: auto !important;
+                  background: white !important;
+                  padding: 0 !important;
+                  margin: 0 !important;
+                  overflow: visible !important;
+                  display: block !important;
                 }
                 #print-area, #print-area * {
                   visibility: visible;
