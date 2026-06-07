@@ -45,6 +45,12 @@ export default function ExamInterface() {
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomLastDist, setZoomLastDist] = useState(null);
 
+  // Connection & Auto-save states
+  const [draftId, setDraftId] = useState(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+
   // Section Tracking States
   const [sections, setSections] = useState([]);
   const [activeSection, setActiveSection] = useState("");
@@ -98,15 +104,92 @@ export default function ExamInterface() {
           setActiveSection(secs[0]);
         }
 
-        // Initialize status tracker
-        const initialStatus = {};
-        questionsRes.data.forEach((q) => {
-          initialStatus[q.id] = "notVisited";
-        });
-        if (questionsRes.data.length > 0) {
-          initialStatus[questionsRes.data[0].id] = "notAnswered";
+        // Fetch or create database-level in-progress attempt row (draft)
+        let currentDraft = null;
+        const { data: existingDraft } = await supabase
+          .from("exam_results")
+          .select("*")
+          .eq("student_id", userId)
+          .eq("exam_id", examId)
+          .eq("status", "in_progress")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingDraft) {
+          currentDraft = existingDraft;
+          setDraftId(existingDraft.id);
+        } else {
+          // Create a new draft
+          const { data: newDraft, error: draftInsertErr } = await supabase
+            .from("exam_results")
+            .insert([{
+              student_id: userId,
+              exam_id: examId,
+              status: "in_progress",
+              answers: {},
+              started_at: new Date().toISOString()
+            }])
+            .select()
+            .single();
+
+          if (draftInsertErr) {
+            console.error("Failed to initialize draft in database:", draftInsertErr.message);
+          } else {
+            currentDraft = newDraft;
+            setDraftId(newDraft.id);
+          }
         }
-        setStatus(initialStatus);
+
+        // Log audit event: Start Exam
+        try {
+          const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+          await fetch(`${apiBaseUrl}/api/audit-log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: userId,
+              userRole: 'student',
+              displayName: studentRes.data.full_name || 'Student',
+              action: 'START_EXAM',
+              details: {
+                exam_id: examId,
+                exam_title: examRes.data.title,
+                draft_id: currentDraft?.id
+              }
+            })
+          });
+        } catch (auditErr) {
+          console.error("Failed to write audit log for start exam:", auditErr);
+        }
+
+        // Initialize responses and status tracker from local cache or draft
+        const cacheKeyResponses = `exam_responses_${examId}_${userId}`;
+        const cacheKeyStatus = `exam_status_${examId}_${userId}`;
+
+        const localResponsesStr = localStorage.getItem(cacheKeyResponses);
+        if (localResponsesStr) {
+          setResponses(JSON.parse(localResponsesStr));
+        } else if (currentDraft && currentDraft.answers) {
+          setResponses(currentDraft.answers);
+          localStorage.setItem(cacheKeyResponses, JSON.stringify(currentDraft.answers));
+        }
+
+        const localStatusStr = localStorage.getItem(cacheKeyStatus);
+        if (localStatusStr) {
+          setStatus(JSON.parse(localStatusStr));
+        } else {
+          const initialStatus = {};
+          questionsRes.data.forEach((q) => {
+            initialStatus[q.id] = "notVisited";
+          });
+          if (questionsRes.data.length > 0) {
+            initialStatus[questionsRes.data[0].id] = "notAnswered";
+          }
+          setStatus(initialStatus);
+          localStorage.setItem(cacheKeyStatus, JSON.stringify(initialStatus));
+        }
+
       } catch (err) {
         console.error("Error loading exam data:", err);
         alert("Failed to load exam data. Please check connection.");
@@ -117,15 +200,19 @@ export default function ExamInterface() {
     fetchData();
   }, [examId, navigate]);
 
-  // Timer Initialization & Countdown Hook
+  // Timer Initialization & Countdown Hook (Backed up to localStorage for disconnection safety)
   useEffect(() => {
     if (!exam) return;
 
     const timerKey = `exam_start_time_${examId}`;
-    let startTime = sessionStorage.getItem(timerKey);
+    let startTime = sessionStorage.getItem(timerKey) || localStorage.getItem(timerKey);
     if (!startTime) {
       startTime = Date.now().toString();
       sessionStorage.setItem(timerKey, startTime);
+      localStorage.setItem(timerKey, startTime);
+    } else {
+      sessionStorage.setItem(timerKey, startTime);
+      localStorage.setItem(timerKey, startTime);
     }
 
     const startTimestamp = parseInt(startTime, 10);
@@ -147,6 +234,62 @@ export default function ExamInterface() {
 
     return () => clearInterval(timerInterval);
   }, [exam]);
+
+  // Listen to network status change
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // Save changes to localStorage immediately on mutations
+  useEffect(() => {
+    if (examId && student?.id) {
+      localStorage.setItem(`exam_responses_${examId}_${student.id}`, JSON.stringify(responses));
+    }
+  }, [responses, examId, student]);
+
+  useEffect(() => {
+    if (examId && student?.id) {
+      localStorage.setItem(`exam_status_${examId}_${student.id}`, JSON.stringify(status));
+    }
+  }, [status, examId, student]);
+
+  // Sync state to Supabase draft in background when online (debounced)
+  useEffect(() => {
+    if (!draftId || !isOnline) return;
+
+    const syncDraft = async () => {
+      setSyncing(true);
+      try {
+        const { error } = await supabase
+          .from("exam_results")
+          .update({ answers: responses })
+          .eq("id", draftId);
+
+        if (error) throw error;
+        setSyncError(false);
+      } catch (err) {
+        console.warn("Background draft sync failed:", err.message);
+        setSyncError(true);
+      } finally {
+        setSyncing(false);
+      }
+    };
+
+    const delayDebounceFn = setTimeout(() => {
+      syncDraft();
+    }, 2000); // 2 second debounce
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [responses, draftId, isOnline]);
 
   // Active Question Time Tracker
   useEffect(() => {
@@ -586,7 +729,17 @@ export default function ExamInterface() {
         attempt_number: attemptNumber
       };
 
-      const { error } = await supabase.from("exam_results").insert([resultPayload]);
+      let error;
+      if (draftId) {
+        const res = await supabase
+          .from("exam_results")
+          .update(resultPayload)
+          .eq("id", draftId);
+        error = res.error;
+      } else {
+        const res = await supabase.from("exam_results").insert([resultPayload]);
+        error = res.error;
+      }
       if (error) throw error;
 
       // Complete active personal assignment if it exists
@@ -609,7 +762,12 @@ export default function ExamInterface() {
         console.error("Error completing personal assignment:", e);
       }
 
+      // Clear local auto-save cache and timers
       sessionStorage.removeItem(timerKey);
+      localStorage.removeItem(timerKey);
+      localStorage.removeItem(`exam_responses_${examId}_${userId}`);
+      localStorage.removeItem(`exam_status_${examId}_${userId}`);
+
       if (!isAuto) alert("Examination responses saved and submitted successfully!");
       
       // Attempt exiting fullscreen when done
@@ -867,6 +1025,19 @@ export default function ExamInterface() {
 
   return (
     <div className="h-screen flex flex-col bg-[#e6e6e6] font-sans select-none">
+      
+      {!isOnline && (
+        <div className="bg-red-600 text-white font-bold px-4 py-2 text-center text-xs tracking-wider animate-pulse flex items-center justify-center gap-2 z-50 shrink-0 shadow-lg border-b border-red-700">
+          <span className="h-2.5 w-2.5 rounded-full bg-white animate-ping"></span>
+          CONNECTION LOST. YOUR PROGRESS IS SAVED LOCALLY. RECONNECTING...
+        </div>
+      )}
+
+      {isOnline && syncError && (
+        <div className="bg-amber-600 text-white font-bold px-4 py-1.5 text-center text-[10px] tracking-wider flex items-center justify-center gap-2 z-50 shrink-0 shadow-md">
+          ⚠️ BACKGROUND SYNC DELAYED. RETRYING AUTOMATICALLY...
+        </div>
+      )}
       
       {/* 1. TOP NAV BAR */}
       <div className="bg-[#1f497d] text-white py-1 px-6 flex justify-between items-center text-[11px] font-bold border-b border-[#143256] shrink-0">

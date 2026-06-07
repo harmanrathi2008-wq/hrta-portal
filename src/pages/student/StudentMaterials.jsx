@@ -18,7 +18,29 @@ export default function StudentMaterials() {
         .select('*')
         .order('created_at', { ascending: false })
       
-      setMaterials(data || [])
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      // Dynamically sign any Cloudinary asset delivery URLs for access control
+      const signedData = await Promise.all((data || []).map(async (material) => {
+        if (material.file_url && material.file_url.includes('res.cloudinary.com')) {
+          try {
+            const res = await fetch(`${apiBaseUrl}/api/sign-url`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: material.file_url })
+            });
+            const result = await res.json();
+            if (result.signedUrl) {
+              return { ...material, file_url: result.signedUrl };
+            }
+          } catch (e) {
+            console.error("Error signing material URL:", e);
+          }
+        }
+        return material;
+      }));
+
+      setMaterials(signedData)
     } catch (err) {
       console.error("Error loading study materials:", err)
     } finally {

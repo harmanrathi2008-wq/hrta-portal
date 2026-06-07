@@ -101,6 +101,36 @@ const ReviewSubmission = () => {
   // Track manual overrides: { questionId: numericMark }
   const [markOverrides, setMarkOverrides] = useState({});
 
+  // Helper to log audit events
+  const logAuditEvent = async (action, details = {}) => {
+    try {
+      const admin = JSON.parse(sessionStorage.getItem('admin') || '{}');
+      const role = sessionStorage.getItem('role') || 'admin';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      await fetch(`${apiBaseUrl}/api/audit-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: admin.id || 'Unknown',
+          userRole: role,
+          displayName: admin.name || admin.email || 'Admin',
+          action,
+          details: {
+            submission_id: submissionId,
+            student_id: student?.id,
+            student_name: student?.full_name,
+            exam_id: exam?.id,
+            exam_title: exam?.title,
+            ...details
+          }
+        })
+      });
+    } catch (e) {
+      console.error('Failed to log audit event:', e);
+    }
+  };
+
   useEffect(() => {
     const fetchSubmissionData = async () => {
       try {
@@ -363,6 +393,7 @@ const ReviewSubmission = () => {
     setPublishing(true);
     try {
       await calculateAndSave('published');
+      await logAuditEvent('PUBLISH_EXAM_RESULT', { status: 'published' });
       alert('✅ Result Published! Student can now see their scorecard.');
       navigate('/admin/results');
     } catch (err) {
@@ -382,6 +413,7 @@ const ReviewSubmission = () => {
         .update({ status: 'reviewed', published_at: null })
         .eq('id', submissionId);
       if (error) throw error;
+      await logAuditEvent('UNPUBLISH_EXAM_RESULT', { status: 'reviewed' });
       alert('Result unpublished. Student can no longer see this result.');
       navigate('/admin/results');
     } catch (err) {
@@ -397,6 +429,10 @@ const ReviewSubmission = () => {
     setPublishing(true);
     try {
       await calculateAndSave('published');
+      await logAuditEvent('MODIFY_AND_REPUBLISH_EXAM_RESULT', { 
+        status: 'published',
+        manual_overrides: markOverrides
+      });
       setEditMode(false);
       // Refresh submission data
       const { data } = await supabase.from('exam_results').select('*').eq('id', submissionId).single();
@@ -419,6 +455,9 @@ const ReviewSubmission = () => {
     }
     
     try {
+      await logAuditEvent('RESET_EXAM_ATTEMPT', {
+        before_delete_answers: submission?.answers
+      });
       const { error } = await supabase
         .from('exam_results')
         .delete()
@@ -454,6 +493,9 @@ const ReviewSubmission = () => {
         .eq('id', submissionId);
 
       if (error) throw error;
+      await logAuditEvent(isBlocking ? 'REVOKE_STUDENT_EXAM_ACCESS' : 'RESTORE_STUDENT_EXAM_ACCESS', {
+        new_status: newStatus
+      });
       alert(isBlocking ? "Access revoked successfully." : "Access restored successfully.");
       navigate('/admin/dashboard');
     } catch (err) {

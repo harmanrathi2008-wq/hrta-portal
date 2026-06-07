@@ -289,10 +289,15 @@ export default function StudentDashboard() {
         console.warn("exam_late_requests table might not exist yet:", err.message);
       }
 
-      // Group results by exam_id to count previous attempts
+      // Group results by exam_id to count completed/submitted attempts (ignoring in-progress drafts)
       const attemptsCountMap = new Map();
+      const inProgressMap = new Map();
       allResults.forEach(r => {
-        attemptsCountMap.set(r.exam_id, (attemptsCountMap.get(r.exam_id) || 0) + 1);
+        if (r.status === 'in_progress') {
+          inProgressMap.set(r.exam_id, r);
+        } else {
+          attemptsCountMap.set(r.exam_id, (attemptsCountMap.get(r.exam_id) || 0) + 1);
+        }
       });
 
       // Active & Scheduled Exams
@@ -306,11 +311,13 @@ export default function StudentDashboard() {
           const req = requestsMap.get(exam.id);
           const hasPersonal = personalMap.has(exam.id);
           const prevAttempts = attemptsCountMap.get(exam.id) || 0;
+          const hasDraft = inProgressMap.has(exam.id);
           return {
             ...exam,
             lateRequest: req ? req.status : null,
             personalAssignment: hasPersonal ? 'active' : null,
-            nextAttemptNumber: prevAttempts + 1
+            nextAttemptNumber: prevAttempts + 1,
+            hasDraft
           };
         });
       setActiveExams(active);
@@ -821,8 +828,8 @@ export default function StudentDashboard() {
                     <div className="shrink-0 flex items-center">
                       {canStart ? (
                         <Link to={`/student/exam/${exam.id}/login`}>
-                          <button className="bg-[#1f497d] hover:bg-[#15345a] text-white px-8 py-2.5 rounded-xl font-black uppercase transition-colors shadow text-xs tracking-wider">
-                            {exam.nextAttemptNumber > 1 ? `START EXAM (Attempt #${exam.nextAttemptNumber})` : 'START EXAM'}
+                          <button className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#1f497d] hover:bg-[#15345a]'} text-white px-8 py-2.5 rounded-xl font-black uppercase transition-colors shadow text-xs tracking-wider`}>
+                            {exam.hasDraft ? 'RESUME EXAM' : (exam.nextAttemptNumber > 1 ? `START EXAM (Attempt #${exam.nextAttemptNumber})` : 'START EXAM')}
                           </button>
                         </Link>
                       ) : isEarly ? (

@@ -100,10 +100,15 @@ const StudentExams = () => {
           console.warn("exam_late_requests table might not exist yet:", e.message);
         }
 
-        // Group attempts
+        // Group attempts (ignoring in-progress drafts)
         const attemptsCountMap = new Map();
+        const inProgressMap = new Map();
         results?.forEach(r => {
-          attemptsCountMap.set(r.exam_id, (attemptsCountMap.get(r.exam_id) || 0) + 1);
+          if (r.status === 'in_progress') {
+            inProgressMap.set(r.exam_id, r);
+          } else {
+            attemptsCountMap.set(r.exam_id, (attemptsCountMap.get(r.exam_id) || 0) + 1);
+          }
         });
 
         const now = new Date();
@@ -120,12 +125,14 @@ const StudentExams = () => {
           const req = requestsMap.get(exam.id);
           const hasPersonal = personalMap.has(exam.id);
           const prevAttempts = attemptsCountMap.get(exam.id) || 0;
+          const hasDraft = inProgressMap.has(exam.id);
 
           const examWithRequest = {
             ...exam,
             lateRequest: req ? req.status : null,
             personalAssignment: hasPersonal ? 'active' : null,
-            nextAttemptNumber: prevAttempts + 1
+            nextAttemptNumber: prevAttempts + 1,
+            hasDraft
           };
 
           // If student has already attempted (submitted, published, or blocked)
@@ -279,8 +286,8 @@ const StudentExams = () => {
                         <td className="py-4 px-5 text-center">
                           {canStart ? (
                             <Link to={`/student/exam/${exam.id}/login`}>
-                              <button className="bg-[#28a745] hover:bg-[#218838] text-white px-6 py-2 rounded font-bold shadow-sm transition-colors uppercase text-xs tracking-wider">
-                                {exam.nextAttemptNumber > 1 ? `Start (Attempt #${exam.nextAttemptNumber})` : 'Click Here To Start'}
+                              <button className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#28a745] hover:bg-[#218838]'} text-white px-6 py-2 rounded font-bold shadow-sm transition-colors uppercase text-xs tracking-wider`}>
+                                {exam.hasDraft ? 'Resume' : (exam.nextAttemptNumber > 1 ? `Start (Attempt #${exam.nextAttemptNumber})` : 'Click Here To Start')}
                               </button>
                             </Link>
                           ) : isPending ? (

@@ -542,6 +542,24 @@ app.post('/api/verify-otp', authLimiter, async (req, res) => {
       // Resolve geo-location in background (non-blocking)
       resolveGeoLocationAndUpdate(logData.id, ip);
     }
+
+    // Write to audit_logs if admin/super_admin logs in
+    if (stored.role === 'admin' || stored.role === 'super_admin') {
+      try {
+        await supabaseAdmin
+          .from('audit_logs')
+          .insert({
+            user_id: stored.userId,
+            user_role: stored.role,
+            display_name: stored.displayName || stored.userEmail || 'Admin',
+            action: 'ADMIN_LOGIN',
+            details: { email: stored.userEmail, login_log_id: logId },
+            ip_address: ip
+          });
+      } catch (auditErr) {
+        console.error("Failed to insert admin login audit log:", auditErr.message);
+      }
+    }
   } catch (dbErr) {
     console.error("Exception inserting login log:", dbErr.message);
   }
@@ -664,6 +682,100 @@ app.post('/api/get-upload-url', async (req, res) => {
   } catch (error) {
     console.error('Error generating signed upload URL:', error);
     res.status(500).json({ error: error.message || 'Failed to generate upload URL' });
+  }
+})
+
+// ============ COMPREHENSIVE AUDIT LOGGING ============
+app.post('/api/audit-log', async (req, res) => {
+  try {
+    const { userId, userRole, displayName, action, details } = req.body;
+    if (!action) {
+      return res.status(400).json({ error: 'Action is required' });
+    }
+
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+
+    const { error } = await supabaseAdmin
+      .from('audit_logs')
+      .insert({
+        user_id: userId || 'Unknown',
+        user_role: userRole || 'Anonymous',
+        display_name: displayName || 'Anonymous',
+        action: action,
+        details: details || {},
+        ip_address: ip
+      });
+
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error writing audit log:', error);
+    res.status(500).json({ error: error.message || 'Failed to write audit log' });
+  }
+})
+
+// ============ SIGN CLOUDINARY DELIVERY URL ============
+app.post('/api/sign-url', async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    if (!url.includes('res.cloudinary.com')) {
+      return res.json({ signedUrl: url });
+    }
+
+    const urlParts = url.split('/');
+    const uploadIdx = urlParts.indexOf('upload');
+    const authIdx = urlParts.indexOf('authenticated');
+    const privateIdx = urlParts.indexOf('private');
+
+    let type = 'upload';
+    let idx = uploadIdx;
+
+    if (authIdx !== -1) {
+      type = 'authenticated';
+      idx = authIdx;
+    } else if (privateIdx !== -1) {
+      type = 'private';
+      idx = privateIdx;
+    }
+
+    if (idx === -1) {
+      return res.json({ signedUrl: url });
+    }
+
+    let remaining = urlParts.slice(idx + 1);
+    if (remaining[0].startsWith('v') && !isNaN(remaining[0].substring(1))) {
+      remaining = remaining.slice(1);
+    }
+
+    const publicIdWithExt = remaining.join('/');
+    const ext = publicIdWithExt.split('.').pop().toLowerCase();
+    
+    let resource_type = 'raw';
+    if (['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+      resource_type = 'image';
+    } else if (['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) {
+      resource_type = 'video';
+    }
+
+    const expiresAt = Math.floor(Date.now() / 1000) + 20 * 60; // 20 minutes
+
+    const signedUrl = cloudinary.url(publicIdWithExt, {
+      sign_url: true,
+      type: type === 'upload' ? 'upload' : type,
+      expires_at: expiresAt,
+      secure: true,
+      resource_type: resource_type
+    });
+
+    res.json({ signedUrl });
+  } catch (error) {
+    console.error('Error signing URL:', error);
+    res.status(500).json({ error: error.message || 'Failed to sign URL' });
   }
 })
 
