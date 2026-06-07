@@ -4,13 +4,16 @@ import { supabase } from '../../lib/supabase';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const parseOption = (opt) => {
-  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
+  if (typeof opt !== 'string') {
+    return { text: String(opt), image_url: '', image_public_id: '' };
+  }
   const trimmed = opt.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {
       const parsed = JSON.parse(trimmed);
       return {
-        text: parsed.text || '',
+        text: parsed.text !== undefined && parsed.text !== null ? String(parsed.text) : '',
         image_url: parsed.image_url || '',
         image_public_id: parsed.image_public_id || ''
       };
@@ -29,11 +32,20 @@ const areOptionsEqual = (optA, optB) => {
   return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
 };
 
-const formatResponse = (ans, options) => {
+const formatResponse = (ans, options, questionType) => {
   if (!ans) return 'Not Attempted';
+  
+  const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
+  if (isNumerical) {
+    if (Array.isArray(ans)) {
+      return ans.map(item => parseOption(item).text).filter(Boolean).join(', ') || 'Attempted';
+    }
+    return parseOption(ans).text || 'Attempted';
+  }
+
   const list = Array.isArray(ans) ? ans : [ans];
   
-  if (options && Array.isArray(options)) {
+  if (options && Array.isArray(options) && options.length > 0) {
     const labels = [];
     list.forEach(item => {
       const idx = options.findIndex(opt => areOptionsEqual(opt, item));
@@ -53,8 +65,21 @@ const formatResponse = (ans, options) => {
   }).filter(Boolean).join(', ') || 'Attempted';
 };
 
-const formatKey = (keyStr, options) => {
+const formatKey = (keyStr, options, questionType) => {
   if (!keyStr) return 'N/A';
+  
+  const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
+  if (isNumerical) {
+    let list = [];
+    try {
+      const parsed = JSON.parse(keyStr);
+      list = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+      list = [keyStr];
+    }
+    return list.map(item => parseOption(item).text).filter(Boolean).join(', ') || keyStr;
+  }
+
   let list = [];
   try {
     const parsed = JSON.parse(keyStr);
@@ -63,7 +88,7 @@ const formatKey = (keyStr, options) => {
     list = [keyStr];
   }
 
-  if (options && Array.isArray(options)) {
+  if (options && Array.isArray(options) && options.length > 0) {
     const labels = [];
     list.forEach(item => {
       const idx = options.findIndex(opt => areOptionsEqual(opt, item));
@@ -229,7 +254,7 @@ const StudentResults = () => {
     // 1. Numerical evaluation (NAT Marking Scheme with Range Support)
     if (qType === 'numerical_integer' || qType === 'numerical_decimal') {
       const sNum = parseFloat(studentAnswer);
-      const penalty = negMarks > 0 ? negMarks : 1;
+      const penalty = negMarks;
       
       if (isNaN(sNum)) return -penalty;
       
@@ -255,7 +280,7 @@ const StudentResults = () => {
     if (qType === 'mcq_multiple' || qType === 'multiple' || qType === 'subjective') {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       if (hasIncorrectSelected) {
-        const penalty = negMarks > 0 ? negMarks : 2;
+        const penalty = negMarks;
         return -penalty;
       }
 
@@ -327,8 +352,17 @@ const StudentResults = () => {
         const studentAnswer = answers[q.id];
         const hasAnswered = studentAnswer !== undefined && studentAnswer !== null && studentAnswer !== "" && (!Array.isArray(studentAnswer) || studentAnswer.length > 0);
 
-        const posMarks = parseFloat(q.positive_marks) || 4;
-        const negMarks = parseFloat(q.negative_marks) || 0;
+        const posMarks = q.positive_marks !== null && q.positive_marks !== undefined && q.positive_marks !== '' 
+          ? parseFloat(q.positive_marks) 
+          : (selectedResult.exams?.correct_marks !== null && selectedResult.exams?.correct_marks !== undefined && selectedResult.exams?.correct_marks !== '' 
+            ? parseFloat(selectedResult.exams.correct_marks) 
+            : 4);
+            
+        const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
+          ? parseFloat(q.negative_marks) 
+          : (selectedResult.exams?.negative_marks !== null && selectedResult.exams?.negative_marks !== undefined && selectedResult.exams?.negative_marks !== '' 
+            ? parseFloat(selectedResult.exams.negative_marks) 
+            : 0);
         stats[subject].total_marks += posMarks;
 
         // Sum time spent
@@ -717,8 +751,17 @@ const StudentResults = () => {
                     const studentAnswer = selectedResult.answers?.[q.id];
                     const overrides = selectedResult.marks_adjustments || {};
                     
-                    const posMarks = parseFloat(q.positive_marks) || 4;
-                    const negMarks = parseFloat(q.negative_marks) || 0;
+                    const posMarks = q.positive_marks !== null && q.positive_marks !== undefined && q.positive_marks !== '' 
+                      ? parseFloat(q.positive_marks) 
+                      : (selectedResult.exams?.correct_marks !== null && selectedResult.exams?.correct_marks !== undefined && selectedResult.exams?.correct_marks !== '' 
+                        ? parseFloat(selectedResult.exams.correct_marks) 
+                        : 4);
+                        
+                    const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
+                      ? parseFloat(q.negative_marks) 
+                      : (selectedResult.exams?.negative_marks !== null && selectedResult.exams?.negative_marks !== undefined && selectedResult.exams?.negative_marks !== '' 
+                        ? parseFloat(selectedResult.exams.negative_marks) 
+                        : 0);
                     
                     const autoMark = calculateAutoMarkForQuestion(q, studentAnswer, posMarks, negMarks);
                     const finalMark = overrides[q.id] !== undefined ? parseFloat(overrides[q.id]) : autoMark;
@@ -819,13 +862,13 @@ const StudentResults = () => {
                           <div>
                             <span className="text-gray-550 block text-[9px] uppercase font-bold tracking-wide">Your Response:</span>
                             <span className={`font-bold ${hasAnswered ? 'text-gray-900' : 'text-gray-400 italic'}`}>
-                              {formatResponse(studentAnswer, q.options)}
+                              {formatResponse(studentAnswer, q.options, q.question_type || q.type)}
                             </span>
                           </div>
                           <div>
                             <span className="text-gray-550 block text-[9px] uppercase font-bold tracking-wide">Provisional Answer Key:</span>
                             <span className="text-green-700 font-bold">
-                              {formatKey(q.correct_answer, q.options)}
+                              {formatKey(q.correct_answer, q.options, q.question_type || q.type)}
                             </span>
                           </div>
                         </div>

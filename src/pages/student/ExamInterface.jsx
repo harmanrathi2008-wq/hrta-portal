@@ -3,13 +3,16 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 
 const parseOption = (opt) => {
-  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
+  if (typeof opt !== 'string') {
+    return { text: String(opt), image_url: '', image_public_id: '' };
+  }
   const trimmed = opt.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {
       const parsed = JSON.parse(trimmed);
       return {
-        text: parsed.text || '',
+        text: parsed.text !== undefined && parsed.text !== null ? String(parsed.text) : '',
         image_url: parsed.image_url || '',
         image_public_id: parsed.image_public_id || ''
       };
@@ -36,6 +39,7 @@ export default function ExamInterface() {
   const [loading, setLoading] = useState(true);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [responses, setResponses] = useState({});
+  const [committedResponses, setCommittedResponses] = useState({});
   const [status, setStatus] = useState({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
@@ -168,12 +172,15 @@ export default function ExamInterface() {
         const cacheKeyStatus = `exam_status_${examId}_${userId}`;
 
         const localResponsesStr = localStorage.getItem(cacheKeyResponses);
+        let loadedResponses = {};
         if (localResponsesStr) {
-          setResponses(JSON.parse(localResponsesStr));
+          loadedResponses = JSON.parse(localResponsesStr);
         } else if (currentDraft && currentDraft.answers) {
-          setResponses(currentDraft.answers);
+          loadedResponses = currentDraft.answers;
           localStorage.setItem(cacheKeyResponses, JSON.stringify(currentDraft.answers));
         }
+        setResponses(loadedResponses);
+        setCommittedResponses(loadedResponses);
 
         const localStatusStr = localStorage.getItem(cacheKeyStatus);
         if (localStatusStr) {
@@ -181,9 +188,10 @@ export default function ExamInterface() {
         } else {
           const initialStatus = {};
           questionsRes.data.forEach((q) => {
-            initialStatus[q.id] = "notVisited";
+            const hasAns = loadedResponses[q.id] !== undefined && loadedResponses[q.id] !== null && loadedResponses[q.id] !== "";
+            initialStatus[q.id] = hasAns ? "answered" : "notVisited";
           });
-          if (questionsRes.data.length > 0) {
+          if (questionsRes.data.length > 0 && initialStatus[questionsRes.data[0].id] === "notVisited") {
             initialStatus[questionsRes.data[0].id] = "notAnswered";
           }
           setStatus(initialStatus);
@@ -252,9 +260,9 @@ export default function ExamInterface() {
   // Save changes to localStorage immediately on mutations
   useEffect(() => {
     if (examId && student?.id) {
-      localStorage.setItem(`exam_responses_${examId}_${student.id}`, JSON.stringify(responses));
+      localStorage.setItem(`exam_responses_${examId}_${student.id}`, JSON.stringify(committedResponses));
     }
-  }, [responses, examId, student]);
+  }, [committedResponses, examId, student]);
 
   useEffect(() => {
     if (examId && student?.id) {
@@ -271,7 +279,7 @@ export default function ExamInterface() {
       try {
         const { error } = await supabase
           .from("exam_results")
-          .update({ answers: responses })
+          .update({ answers: committedResponses })
           .eq("id", draftId);
 
         if (error) throw error;
@@ -289,7 +297,7 @@ export default function ExamInterface() {
     }, 2000); // 2 second debounce
 
     return () => clearTimeout(delayDebounceFn);
-  }, [responses, draftId, isOnline]);
+  }, [committedResponses, draftId, isOnline]);
 
   // Active Question Time Tracker
   useEffect(() => {
@@ -393,6 +401,21 @@ export default function ExamInterface() {
   // Navigates to a specific question safely
   const handleQuestionSelect = (idx) => {
     if (idx < 0 || idx >= questions.length) return;
+
+    // Revert unsaved changes on the question we are leaving
+    const prevQ = questions[currentIdx];
+    if (prevQ) {
+      setResponses((prev) => {
+        const committedVal = committedResponses[prevQ.id];
+        if (committedVal === undefined || committedVal === null || committedVal === "") {
+          const { [prevQ.id]: _, ...rest } = prev;
+          return rest;
+        } else {
+          return { ...prev, [prevQ.id]: committedVal };
+        }
+      });
+    }
+
     setCurrentIdx(idx);
     const targetQId = questions[idx].id;
     if (status[targetQId] === "notVisited") {
@@ -425,6 +448,15 @@ export default function ExamInterface() {
       [current.id]: isAnswered ? "answered" : "notAnswered",
     }));
 
+    setCommittedResponses((prev) => {
+      if (isAnswered) {
+        return { ...prev, [current.id]: ans };
+      } else {
+        const { [current.id]: _, ...rest } = prev;
+        return rest;
+      }
+    });
+
     advanceNext();
   };
 
@@ -454,6 +486,10 @@ export default function ExamInterface() {
 
   const handleClear = () => {
     setResponses((prev) => ({ ...prev, [current.id]: null }));
+    setCommittedResponses((prev) => {
+      const { [current.id]: _, ...rest } = prev;
+      return rest;
+    });
     setStatus((prev) => ({ ...prev, [current.id]: "notAnswered" }));
   };
 
@@ -470,6 +506,15 @@ export default function ExamInterface() {
       [current.id]: isAnswered ? "answeredAndMarkedForReview" : "markedForReview",
     }));
 
+    setCommittedResponses((prev) => {
+      if (isAnswered) {
+        return { ...prev, [current.id]: ans };
+      } else {
+        const { [current.id]: _, ...rest } = prev;
+        return rest;
+      }
+    });
+
     advanceNext();
   };
 
@@ -485,6 +530,15 @@ export default function ExamInterface() {
       ...prev,
       [current.id]: isAnswered ? "answeredAndMarkedForReview" : "markedForReview",
     }));
+
+    setCommittedResponses((prev) => {
+      if (isAnswered) {
+        return { ...prev, [current.id]: ans };
+      } else {
+        const { [current.id]: _, ...rest } = prev;
+        return rest;
+      }
+    });
 
     advanceNext();
   };
@@ -567,7 +621,7 @@ export default function ExamInterface() {
           totalMarks += q.positive_marks || exam.correct_marks || 4;
         }
 
-        const studentAnswer = responses[q.id];
+        const studentAnswer = committedResponses[q.id];
         const hasAnswered =
           studentAnswer !== undefined &&
           studentAnswer !== null &&
@@ -579,7 +633,11 @@ export default function ExamInterface() {
         } else {
           const qType = q.question_type || q.type;
           const posMarks = parseFloat(q.positive_marks) || parseFloat(exam.correct_marks) || 4;
-          const negMarks = parseFloat(q.negative_marks) || parseFloat(exam.negative_marks) || 0;
+          const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
+            ? parseFloat(q.negative_marks) 
+            : (exam?.negative_marks !== null && exam?.negative_marks !== undefined && exam?.negative_marks !== '' 
+              ? parseFloat(exam.negative_marks) 
+              : 0);
           const policy = q.scoring_policy || "exact_match";
 
           // Parse correct list
@@ -603,7 +661,7 @@ export default function ExamInterface() {
           // 1. Numerical comparison (NAT Marking Scheme with Range Support)
           if (qType === "numerical_integer" || qType === "numerical_decimal") {
             const sNum = parseFloat(studentAnswer);
-            const penalty = negMarks > 0 ? negMarks : 1;
+            const penalty = negMarks;
             
             if (isNaN(sNum)) {
               wrongCount++;
@@ -646,7 +704,7 @@ export default function ExamInterface() {
             const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
             if (hasIncorrect) {
               wrongCount++;
-              const penalty = negMarks > 0 ? negMarks : 2;
+              const penalty = negMarks;
               totalScore -= penalty;
             } else {
               const numSel = selectedList.length;
@@ -715,7 +773,7 @@ export default function ExamInterface() {
       const resultPayload = {
         student_id: userId,
         exam_id: examId,
-        answers: responses,
+        answers: committedResponses,
         status: "submitted",
         total_score: totalScore,
         total_marks: finalTotalMarks,
@@ -1319,6 +1377,14 @@ export default function ExamInterface() {
                     const ans = responses[current.id];
                     const isAnswered = ans !== undefined && ans !== null && ans !== "" && (!Array.isArray(ans) || ans.length > 0);
                     setStatus((prev) => ({ ...prev, [current.id]: isAnswered ? "answered" : "notAnswered" }));
+                    setCommittedResponses((prev) => {
+                      if (isAnswered) {
+                        return { ...prev, [current.id]: ans };
+                      } else {
+                        const { [current.id]: _, ...rest } = prev;
+                        return rest;
+                      }
+                    });
                     setSubmitModalOpen(true);
                   }}
                   className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-2 text-[10px] md:text-xs font-black rounded shadow-md uppercase transition-all animate-pulse cursor-pointer tracking-wide flex-1 sm:flex-none text-center"

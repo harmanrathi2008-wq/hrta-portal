@@ -3,13 +3,16 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 
 const parseOption = (opt) => {
-  if (typeof opt !== 'string') return { text: '', image_url: '', image_public_id: '' };
+  if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
+  if (typeof opt !== 'string') {
+    return { text: String(opt), image_url: '', image_public_id: '' };
+  }
   const trimmed = opt.trim();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
     try {
       const parsed = JSON.parse(trimmed);
       return {
-        text: parsed.text || '',
+        text: parsed.text !== undefined && parsed.text !== null ? String(parsed.text) : '',
         image_url: parsed.image_url || '',
         image_public_id: parsed.image_public_id || ''
       };
@@ -28,11 +31,20 @@ const areOptionsEqual = (optA, optB) => {
   return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
 };
 
-const formatResponse = (ans, options) => {
+const formatResponse = (ans, options, questionType) => {
   if (!ans) return 'Not Attempted';
+  
+  const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
+  if (isNumerical) {
+    if (Array.isArray(ans)) {
+      return ans.map(item => parseOption(item).text).filter(Boolean).join(', ') || 'Attempted';
+    }
+    return parseOption(ans).text || 'Attempted';
+  }
+
   const list = Array.isArray(ans) ? ans : [ans];
   
-  if (options && Array.isArray(options)) {
+  if (options && Array.isArray(options) && options.length > 0) {
     const labels = [];
     list.forEach(item => {
       const idx = options.findIndex(opt => areOptionsEqual(opt, item));
@@ -52,8 +64,21 @@ const formatResponse = (ans, options) => {
   }).filter(Boolean).join(', ') || 'Attempted';
 };
 
-const formatKey = (keyStr, options) => {
+const formatKey = (keyStr, options, questionType) => {
   if (!keyStr) return 'N/A';
+  
+  const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
+  if (isNumerical) {
+    let list = [];
+    try {
+      const parsed = JSON.parse(keyStr);
+      list = Array.isArray(parsed) ? parsed : [parsed];
+    } catch (e) {
+      list = [keyStr];
+    }
+    return list.map(item => parseOption(item).text).filter(Boolean).join(', ') || keyStr;
+  }
+
   let list = [];
   try {
     const parsed = JSON.parse(keyStr);
@@ -62,7 +87,7 @@ const formatKey = (keyStr, options) => {
     list = [keyStr];
   }
 
-  if (options && Array.isArray(options)) {
+  if (options && Array.isArray(options) && options.length > 0) {
     const labels = [];
     list.forEach(item => {
       const idx = options.findIndex(opt => areOptionsEqual(opt, item));
@@ -243,7 +268,11 @@ const ReviewSubmission = () => {
 
     const qType = question.question_type || question.type;
     const posMarks = parseFloat(question.positive_marks) || parseFloat(exam?.correct_marks) || 4;
-    const negMarks = parseFloat(question.negative_marks) || parseFloat(exam?.negative_marks) || 0;
+    const negMarks = question.negative_marks !== null && question.negative_marks !== undefined && question.negative_marks !== '' 
+      ? parseFloat(question.negative_marks) 
+      : (exam?.negative_marks !== null && exam?.negative_marks !== undefined && exam?.negative_marks !== '' 
+        ? parseFloat(exam.negative_marks) 
+        : 0);
     const policy = question.scoring_policy || 'exact_match';
 
     // Parse correct answers
@@ -271,7 +300,7 @@ const ReviewSubmission = () => {
     // 1. Numerical evaluation (NAT Marking Scheme with Range Support)
     if (qType === 'numerical_integer' || qType === 'numerical_decimal') {
       const sNum = parseFloat(studentAnswer);
-      const penalty = negMarks > 0 ? negMarks : 1;
+      const penalty = negMarks;
       
       if (isNaN(sNum)) return -penalty;
       
@@ -299,7 +328,7 @@ const ReviewSubmission = () => {
       const hasIncorrectSelected = selectedList.some(item => !correctList.includes(item));
       
       if (hasIncorrectSelected) {
-        const penalty = negMarks > 0 ? negMarks : 2;
+        const penalty = negMarks;
         return -penalty;
       }
 
@@ -765,13 +794,13 @@ const ReviewSubmission = () => {
                   <div>
                     <span className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Student's Answer</span>
                     <span className={`font-mono text-base font-bold ${!hasAnswered ? 'text-gray-400 italic' : 'text-gray-800'}`}>
-                      {formatResponse(studentAnswer, q.options)}
+                      {formatResponse(studentAnswer, q.options, q.question_type || q.type)}
                     </span>
                   </div>
                   <div>
                     <span className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Provisional Key</span>
                     <span className="font-mono text-base font-bold text-green-700">
-                      {formatKey(q.correct_answer, q.options)}
+                      {formatKey(q.correct_answer, q.options, q.question_type || q.type)}
                     </span>
                   </div>
                 </div>
