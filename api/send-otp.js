@@ -23,7 +23,7 @@ export default async function handler(req, res) {
 
   try {
     await resend.emails.send({
-      from: 'HRTA <noreply@hrta.com>',
+      from: 'HRTA <notifications@harmanrathitportal.nxtdev.xyz>',
       to: email,
       subject: 'Your Login OTP',
       html: `
