@@ -32,6 +32,40 @@ const formatCorrectAnswerString = (correctAnswerField, questionType) => {
   return correctAnswerField;
 };
 
+const getCorrectAnswerLabel = (q) => {
+  if (!q.correct_answer) return 'N/A';
+  if (q.question_type === 'numerical_integer' || q.question_type === 'numerical_decimal') {
+    return q.correct_answer;
+  }
+  try {
+    const parsed = JSON.parse(q.correct_answer);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    if (q.options && Array.isArray(q.options) && q.options.length > 0) {
+      const labels = [];
+      list.forEach(item => {
+        const idx = q.options.findIndex(opt => {
+          const normOpt = (parseOption(opt).text || '').trim().toLowerCase() || (parseOption(opt).image_url || '').trim().toLowerCase();
+          const normItem = (parseOption(item).text || '').trim().toLowerCase() || (parseOption(item).image_url || '').trim().toLowerCase();
+          return normOpt === normItem;
+        });
+        if (idx !== -1) {
+          labels.push(String.fromCharCode(65 + idx));
+        } else {
+          const text = parseOption(item).text;
+          if (text) labels.push(text);
+        }
+      });
+      if (labels.length > 0) {
+        const textDetails = list.map(item => parseOption(item).text).filter(Boolean).join(', ');
+        return `${labels.join(', ')} ${textDetails ? `(${textDetails})` : ''}`;
+      }
+    }
+    return list.map(item => parseOption(item).text).join(', ');
+  } catch (e) {
+    return q.correct_answer;
+  }
+};
+
 const ExamQuestions = () => {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -43,6 +77,9 @@ const ExamQuestions = () => {
   const [questions, setQuestions] = useState([]);
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [deletedOptionPublicIds, setDeletedOptionPublicIds] = useState([]);
+  const [isPrintPreviewOpen, setIsPrintPreviewOpen] = useState(false);
+  const [showAnswerKey, setShowAnswerKey] = useState(true);
+  const [showMarks, setShowMarks] = useState(true);
 
   // Form State
   const [questionType, setQuestionType] = useState('mcq_single');
@@ -394,14 +431,28 @@ const ExamQuestions = () => {
     <div className="min-h-screen bg-gray-50 font-sans p-6">
       
       {/* Header */}
-      <div className="max-w-7xl mx-auto mb-6 flex justify-between items-center bg-white p-4 rounded shadow-sm border-l-4 border-[#005fa7]">
+      <div className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-4 rounded shadow-sm border-l-4 border-[#005fa7] gap-4">
         <div>
           <Link to="/admin/dashboard" className="text-[#005fa7] hover:underline text-sm font-semibold">&larr; Back</Link>
           <h1 className="text-2xl font-bold text-gray-800 mt-1">Manage Questions: {exam?.title}</h1>
         </div>
-        <div className="text-right">
-          <span className="block text-sm text-gray-500 font-bold">Total Questions</span>
-          <span className="text-xl font-black text-[#005fa7]">{questions.length}</span>
+        <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
+          {questions.length > 0 && (
+            <button 
+              type="button"
+              onClick={() => setIsPrintPreviewOpen(true)}
+              className="bg-[#005fa7] hover:bg-[#004b87] text-white px-4 py-2 rounded font-bold shadow-sm transition-colors text-sm uppercase flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              Download PDF
+            </button>
+          )}
+          <div className="text-right">
+            <span className="block text-sm text-gray-500 font-bold">Total Questions</span>
+            <span className="text-xl font-black text-[#005fa7]">{questions.length}</span>
+          </div>
         </div>
       </div>
 
@@ -701,6 +752,211 @@ const ExamQuestions = () => {
         </div>
 
       </div>
+
+      {isPrintPreviewOpen && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-70 z-50 overflow-y-auto p-4 md:p-8 no-print">
+          {/* Controls Header */}
+          <div className="max-w-4xl mx-auto bg-white rounded-t-lg shadow-xl border-b border-gray-200 p-4 sticky top-0 flex flex-wrap justify-between items-center gap-4 z-10 no-print">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-bold text-gray-800">Print Preview</h2>
+              <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-bold uppercase">A4 Format</span>
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <input 
+                  type="checkbox" 
+                  checked={showAnswerKey} 
+                  onChange={(e) => setShowAnswerKey(e.target.checked)}
+                  className="rounded text-[#005fa7] focus:ring-[#005fa7] w-4 h-4 cursor-pointer"
+                />
+                Show Answer Key
+              </label>
+              <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <input 
+                  type="checkbox" 
+                  checked={showMarks} 
+                  onChange={(e) => setShowMarks(e.target.checked)}
+                  className="rounded text-[#005fa7] focus:ring-[#005fa7] w-4 h-4 cursor-pointer"
+                />
+                Show Marking Scheme
+              </label>
+              <button 
+                type="button"
+                onClick={() => window.print()} 
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold text-sm uppercase shadow transition-colors flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                Print / Save PDF
+              </button>
+              <button 
+                type="button"
+                onClick={() => setIsPrintPreviewOpen(false)} 
+                className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded font-bold text-sm uppercase transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {/* Printable Page Layout */}
+          <div id="print-area" className="max-w-4xl mx-auto bg-white shadow-2xl p-8 md:p-12 min-h-[29.7cm] border border-gray-200 print:shadow-none print:border-none print:p-0">
+            
+            {/* CSS Stylesheet Injector */}
+            <style>{`
+              @media print {
+                body * {
+                  visibility: hidden;
+                }
+                #print-area, #print-area * {
+                  visibility: visible;
+                }
+                #print-area {
+                  position: absolute;
+                  left: 0;
+                  top: 0;
+                  width: 100%;
+                  margin: 0;
+                  padding: 0 !important;
+                  box-shadow: none !important;
+                  border: none !important;
+                  background: white !important;
+                }
+                .no-print {
+                  display: none !important;
+                }
+              }
+              .print-no-break {
+                page-break-inside: avoid;
+                break-inside: avoid;
+              }
+            `}</style>
+
+            {/* Header Banner - HRTA style */}
+            <div className="border-b-2 border-black pb-4 mb-6 flex justify-between items-center">
+              <img src="/assets/emblem.png" alt="Emblem" className="h-16 w-auto object-contain" />
+              <div className="text-center flex-1 px-4">
+                <h2 className="text-[#005fa7] text-2xl font-black uppercase tracking-wide">Harman Rathi Testing Agency</h2>
+                <p className="text-gray-700 font-bold text-xs mt-0.5 uppercase tracking-wider">Excellence in Assessment</p>
+                <div className="text-sm font-bold text-gray-800 mt-2.5 uppercase tracking-wide">
+                  {exam?.title} — Question Paper
+                </div>
+                <div className="flex justify-center items-center gap-4 text-xs font-bold text-gray-500 mt-1">
+                  <span>Subject: {exam?.subject}</span>
+                  <span>•</span>
+                  <span>Duration: {exam?.duration_minutes} Mins</span>
+                  <span>•</span>
+                  <span>Total Questions: {questions.length}</span>
+                </div>
+              </div>
+              <img src="/assets/nta_logo.png" alt="Logo" className="h-12 w-auto object-contain" />
+            </div>
+
+            {/* General Instructions */}
+            <div className="border border-gray-300 p-3 rounded mb-6 text-xs text-gray-750 bg-gray-50 print:bg-white print:border-black">
+              <h3 className="font-bold uppercase mb-1 text-gray-800">General Instructions:</h3>
+              <ol className="list-decimal list-inside space-y-0.5 font-semibold">
+                <li>This question paper contains {questions.length} questions.</li>
+                <li>All questions are compulsory.</li>
+                <li>Read each question carefully before attempting.</li>
+              </ol>
+            </div>
+
+            {/* Questions List */}
+            <div className="space-y-6">
+              {questions.map((q, idx) => {
+                const isNumerical = q.question_type === 'numerical_integer' || q.question_type === 'numerical_decimal';
+                const isTrueFalse = q.question_type === 'true_false';
+                
+                return (
+                  <div key={q.id} className="print-no-break border-b border-gray-200 pb-4 last:border-b-0">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="font-bold text-sm text-gray-900 mr-2">Q.{idx + 1}</span>
+                      {showMarks && (
+                        <span className="text-[10px] font-bold text-gray-500 bg-gray-150 px-2 py-0.5 rounded print:bg-transparent print:border print:border-gray-300">
+                          Marks: +{q.positive_marks} / -{q.negative_marks}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Question Text */}
+                    <div className="text-sm font-semibold text-gray-800 mb-3 leading-relaxed whitespace-pre-wrap">
+                      {q.question_text}
+                    </div>
+
+                    {/* Question Image */}
+                    {q.image_url && (
+                      <div className="mb-4 max-w-md">
+                        <img 
+                          src={q.image_url} 
+                          alt={`Question ${idx + 1} graphic`} 
+                          className="max-h-64 object-contain rounded border p-1 bg-white"
+                        />
+                      </div>
+                    )}
+
+                    {/* Options Section */}
+                    {!isNumerical && q.options && q.options.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        {q.options.map((opt, oIdx) => {
+                          const parsed = parseOption(opt);
+                          return (
+                            <div key={oIdx} className="flex items-start gap-2 p-1.5 border border-transparent">
+                              <span className="font-bold text-sm text-gray-700">({String.fromCharCode(65 + oIdx)})</span>
+                              <div className="flex-1">
+                                {parsed.text && (
+                                  <span className="text-sm text-gray-800 font-semibold">{parsed.text}</span>
+                                )}
+                                {parsed.image_url && (
+                                  <div className="mt-1.5">
+                                    <img 
+                                      src={parsed.image_url} 
+                                      alt={`Option ${String.fromCharCode(65 + oIdx)} graphic`} 
+                                      className="max-h-32 object-contain rounded border p-1 bg-white"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* True/False option rendering */}
+                    {isTrueFalse && (
+                      <div className="flex gap-6 mb-3 font-semibold text-sm">
+                        <div>(A) True</div>
+                        <div>(B) False</div>
+                      </div>
+                    )}
+
+                    {/* Numerical line rendering */}
+                    {isNumerical && (
+                      <div className="mb-3">
+                        <span className="text-xs font-bold text-gray-400 uppercase">Answer Box:</span>
+                        <div className="w-48 h-8 border border-dashed border-gray-400 mt-1 rounded bg-white"></div>
+                      </div>
+                    )}
+
+                    {/* Answer Key */}
+                    {showAnswerKey && (
+                      <div className="mt-2 bg-green-50 border border-green-200 p-2 rounded text-xs text-green-800 font-bold flex items-center gap-1.5 print:bg-transparent print:border-green-300">
+                        <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Correct Answer: {getCorrectAnswerLabel(q)}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
