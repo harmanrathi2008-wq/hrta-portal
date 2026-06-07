@@ -398,24 +398,22 @@ export default function ExamInterface() {
       .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Reverts unsaved answers to the last committed response
+  const revertUnsavedChanges = (qId) => {
+    setResponses((prev) => {
+      const committedVal = committedResponses[qId];
+      if (committedVal === undefined || committedVal === null || committedVal === "") {
+        const { [qId]: _, ...rest } = prev;
+        return rest;
+      } else {
+        return { ...prev, [qId]: committedVal };
+      }
+    });
+  };
+
   // Navigates to a specific question safely
   const handleQuestionSelect = (idx) => {
     if (idx < 0 || idx >= questions.length) return;
-
-    // Revert unsaved changes on the question we are leaving
-    const prevQ = questions[currentIdx];
-    if (prevQ) {
-      setResponses((prev) => {
-        const committedVal = committedResponses[prevQ.id];
-        if (committedVal === undefined || committedVal === null || committedVal === "") {
-          const { [prevQ.id]: _, ...rest } = prev;
-          return rest;
-        } else {
-          return { ...prev, [prevQ.id]: committedVal };
-        }
-      });
-    }
-
     setCurrentIdx(idx);
     const targetQId = questions[idx].id;
     if (status[targetQId] === "notVisited") {
@@ -423,8 +421,8 @@ export default function ExamInterface() {
     }
   };
 
-  // Handles clicking a Section Tab
-  const handleSectionSelect = (secName) => {
+  // Internal section selector used for auto-advancing (does not revert answers)
+  const advanceSectionSelect = (secName) => {
     setActiveSection(secName);
     const firstQIdx = questions.findIndex(
       (q) => (q.topic || exam.subject || "Section A").toUpperCase().trim() === secName
@@ -432,6 +430,12 @@ export default function ExamInterface() {
     if (firstQIdx !== -1) {
       handleQuestionSelect(firstQIdx);
     }
+  };
+
+  // Handles clicking a Section Tab manually (reverts unsaved answers first)
+  const handleSectionSelect = (secName) => {
+    revertUnsavedChanges(current.id);
+    advanceSectionSelect(secName);
   };
 
   // Actions
@@ -473,7 +477,7 @@ export default function ExamInterface() {
       if (curSecIdx !== -1 && curSecIdx < sections.length - 1) {
         const nextSec = sections[curSecIdx + 1];
         alert(`You have completed the [${currentQSec}] section. Moving to the next section: [${nextSec}]`);
-        handleSectionSelect(nextSec);
+        advanceSectionSelect(nextSec);
       }
     } else {
       // Standard next question in same section
@@ -545,12 +549,14 @@ export default function ExamInterface() {
 
   const handleBack = () => {
     if (currentIdx > 0) {
+      revertUnsavedChanges(current.id);
       handleQuestionSelect(currentIdx - 1);
     }
   };
 
   const handleNext = () => {
     if (currentIdx < questions.length - 1) {
+      revertUnsavedChanges(current.id);
       handleQuestionSelect(currentIdx + 1);
     }
   };
@@ -1542,7 +1548,10 @@ export default function ExamInterface() {
                 return (
                   <button
                     key={q.id}
-                    onClick={() => handleQuestionSelect(i)}
+                    onClick={() => {
+                      revertUnsavedChanges(current.id);
+                      handleQuestionSelect(i);
+                    }}
                     className={getButtonClass(q.id, i)}
                   >
                     {String(i + 1).padStart(2, "0")}

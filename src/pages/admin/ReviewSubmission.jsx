@@ -36,10 +36,7 @@ const formatResponse = (ans, options, questionType) => {
   
   const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
   if (isNumerical) {
-    if (Array.isArray(ans)) {
-      return ans.map(item => parseOption(item).text).filter(Boolean).join(', ') || 'Attempted';
-    }
-    return parseOption(ans).text || 'Attempted';
+    return String(ans);
   }
 
   const list = Array.isArray(ans) ? ans : [ans];
@@ -69,14 +66,7 @@ const formatKey = (keyStr, options, questionType) => {
   
   const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
   if (isNumerical) {
-    let list = [];
-    try {
-      const parsed = JSON.parse(keyStr);
-      list = Array.isArray(parsed) ? parsed : [parsed];
-    } catch (e) {
-      list = [keyStr];
-    }
-    return list.map(item => parseOption(item).text).filter(Boolean).join(', ') || keyStr;
+    return String(keyStr);
   }
 
   let list = [];
