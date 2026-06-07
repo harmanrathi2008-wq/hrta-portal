@@ -27,6 +27,11 @@ const normalizeOptionForComparison = (opt) => {
   return val.toLowerCase();
 };
 
+const areOptionsEqual = (optA, optB) => {
+  if (optA === optB) return true;
+  return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
+};
+
 export default function ExamInterface() {
   const { examId } = useParams();
   const navigate = useNavigate();
@@ -885,7 +890,7 @@ export default function ExamInterface() {
               <input
                 type="radio"
                 name={`q-${current.id}`}
-                checked={responses[current.id] === opt}
+                checked={areOptionsEqual(responses[current.id], opt)}
                 onChange={() => setResponses({ ...responses, [current.id]: opt })}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
               />
@@ -928,13 +933,14 @@ export default function ExamInterface() {
             <div className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold">
               <input
                 type="checkbox"
-                checked={(responses[current.id] || []).includes(opt)}
+                checked={Array.isArray(responses[current.id]) ? responses[current.id].some(a => areOptionsEqual(a, opt)) : areOptionsEqual(responses[current.id], opt)}
                 onChange={() => {
                   let arr = responses[current.id] || [];
                   if (!Array.isArray(arr)) {
                     arr = arr ? [arr] : [];
                   }
-                  arr = arr.includes(opt) ? arr.filter((o) => o !== opt) : [...arr, opt];
+                  const alreadySelected = arr.some(a => areOptionsEqual(a, opt));
+                  arr = alreadySelected ? arr.filter((o) => !areOptionsEqual(o, opt)) : [...arr, opt];
                   setResponses({ ...responses, [current.id]: arr });
                 }}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"

@@ -22,15 +22,9 @@ envContent.split('\n').forEach(line => {
 const supabaseUrl = env.VITE_SUPABASE_URL;
 const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("Missing Supabase credentials in .env");
-  process.exit(1);
-}
-
 async function run() {
   try {
-    // Query questions using fetch
-    const url = `${supabaseUrl}/rest/v1/questions?question_type=in.%28numerical_integer,numerical_decimal%29&limit=10`;
+    const url = `${supabaseUrl}/rest/v1/exams?select=id,title,subject`;
     const res = await fetch(url, {
       headers: {
         'apikey': supabaseAnonKey,
@@ -44,34 +38,30 @@ async function run() {
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
 
-    const questions = await res.json();
-    console.log("Found numerical questions count:", questions ? questions.length : 0);
-    if (questions && questions.length > 0) {
-      console.log("Sample question columns:", Object.keys(questions[0]));
-      questions.forEach((q, idx) => {
-        console.log(`\n[${idx + 1}] ID: ${q.id}`);
-        console.log(`Type: ${q.question_type || q.type}`);
-        console.log(`Content: ${q.question_text || q.text || q.content}`);
-        console.log(`Correct Answer: "${q.correct_answer}"`);
-        console.log(`Options:`, q.options);
-      });
-    } else {
-      console.log("No numerical questions found, querying all types of questions instead...");
-      const urlAll = `${supabaseUrl}/rest/v1/questions?limit=5`;
-      const resAll = await fetch(urlAll, {
+    const exams = await res.json();
+    console.log(`Found ${exams.length} exams:`);
+    for (const exam of exams) {
+      // Count questions of each type for this exam
+      const qUrl = `${supabaseUrl}/rest/v1/questions?exam_id=eq.${exam.id}&select=id,question_type,correct_answer`;
+      const qRes = await fetch(qUrl, {
         headers: {
           'apikey': supabaseAnonKey,
           'Authorization': `Bearer ${supabaseAnonKey}`,
           'Content-Type': 'application/json'
         }
       });
-      if (resAll.ok) {
-        const allQ = await resAll.json();
-        allQ.forEach((q, idx) => {
-          console.log(`\n[${idx + 1}] ID: ${q.id}`);
-          console.log(`Type: ${q.question_type || q.type}`);
-          console.log(`Correct Answer: "${q.correct_answer}"`);
+      if (qRes.ok) {
+        const qs = await qRes.json();
+        const types = {};
+        let nullCorrect = 0;
+        qs.forEach(q => {
+          types[q.question_type] = (types[q.question_type] || 0) + 1;
+          if (q.correct_answer === null || q.correct_answer === undefined || q.correct_answer === '') {
+            nullCorrect++;
+          }
         });
+        console.log(`- Exam ID: ${exam.id} | Title: "${exam.title}" | Subject: "${exam.subject}"`);
+        console.log(`  Total questions: ${qs.length} | Types:`, types, `| Null Correct Answer Count: ${nullCorrect}`);
       }
     }
   } catch (err) {

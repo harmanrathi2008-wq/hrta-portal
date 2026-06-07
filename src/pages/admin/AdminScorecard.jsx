@@ -33,12 +33,14 @@ const areOptionsEqual = (optA, optB) => {
 };
 
 const formatResponse = (ans, options, questionType) => {
-  if (!ans) return 'Not Attempted';
-  
+  // Handle numerical types first — a student answer of 0 is valid, not "Not Attempted"
   const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
   if (isNumerical) {
+    if (ans === null || ans === undefined || ans === '') return 'Not Attempted';
     return String(ans);
   }
+
+  if (!ans) return 'Not Attempted';
 
   const list = Array.isArray(ans) ? ans : [ans];
   
@@ -63,12 +65,15 @@ const formatResponse = (ans, options, questionType) => {
 };
 
 const formatKey = (keyStr, options, questionType) => {
-  if (!keyStr) return 'N/A';
-  
+  // Handle numerical types first — they store plain values, not JSON-wrapped option references
   const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
   if (isNumerical) {
-    return String(keyStr);
+    if (keyStr === null || keyStr === undefined) return 'N/A';
+    const str = String(keyStr).trim();
+    return str.length > 0 ? str : 'N/A';
   }
+
+  if (!keyStr) return 'N/A';
 
   let list = [];
   try {
