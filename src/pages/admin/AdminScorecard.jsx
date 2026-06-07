@@ -32,6 +32,15 @@ const areOptionsEqual = (optA, optB) => {
   return normalizeOptionForComparison(optA) === normalizeOptionForComparison(optB);
 };
 
+const formatTimeSpent = (seconds) => {
+  if (seconds === undefined || seconds === null || isNaN(seconds)) return '0s';
+  const sec = parseInt(seconds, 10);
+  if (sec < 60) return `${sec}s`;
+  const mins = Math.floor(sec / 60);
+  const remainingSecs = sec % 60;
+  return `${mins}m ${remainingSecs}s`;
+};
+
 const formatResponse = (ans, options, questionType) => {
   // Handle numerical types first — a student answer of 0 is valid, not "Not Attempted"
   const isNumerical = questionType === 'numerical_integer' || questionType === 'numerical_decimal';
@@ -406,6 +415,15 @@ const AdminScorecard = () => {
       {/* Printable Scorecard Layout */}
       <div className="max-w-4xl mx-auto bg-white border border-gray-300 rounded shadow-lg p-8 print:shadow-none print:border-none print:p-0">
         
+        <style>{`
+          @media print {
+            .print-no-break {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+          }
+        `}</style>
+
         {/* NTA Scorecard Header */}
         <div className="border-b-2 border-[#005fa7] pb-4 mb-6 text-center flex justify-between items-center">
           <img src="/assets/emblem.png" alt="Emblem" className="h-20 w-12 object-contain" />
@@ -570,11 +588,25 @@ const AdminScorecard = () => {
               const autoMark = calculateAutoMarkForQuestion(q, studentAnswer, posMarks, negMarks, exam);
               const finalMark = overrides[q.id] !== undefined ? parseFloat(overrides[q.id]) : autoMark;
               const hasAnswered = studentAnswer !== undefined && studentAnswer !== null && studentAnswer !== '';
+              const timeSpentSeconds = submission?.question_statuses?.[q.id];
 
               return (
-                <div key={q.id} className="border border-gray-300 rounded p-4 text-xs font-semibold hover:bg-gray-50 transition-colors">
-                  <div className="flex justify-between items-center mb-2 border-b pb-1.5">
-                    <span className="text-gray-700 font-bold">Question {idx + 1} ({q.question_type})</span>
+                <div key={q.id} className="border border-gray-300 rounded p-4 text-xs font-semibold hover:bg-gray-50 transition-colors print-no-break">
+                  <div className="flex flex-wrap justify-between items-start md:items-center mb-2 border-b pb-1.5 gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-gray-750 font-black">Question {idx + 1}</span>
+                      <span className="text-[9px] text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                        {q.question_type}
+                      </span>
+                      <span className="text-[9px] text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                        Marks: +{posMarks} / -{negMarks}
+                      </span>
+                      {timeSpentSeconds !== undefined && timeSpentSeconds !== null && (
+                        <span className="text-[9px] text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
+                          ⏱ Time Spent: {formatTimeSpent(timeSpentSeconds)}
+                        </span>
+                      )}
+                    </div>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       finalMark > 0 
                         ? 'bg-green-100 text-green-700 border border-green-200' 
