@@ -41,6 +41,10 @@ export default function ExamInterface() {
   const peerConnectionRef = React.useRef(null);
   const proctorChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
+  const isSubmittingRef = React.useRef(false);
+  const [cameraAccessLost, setCameraAccessLost] = useState(false);
+  const [cameraRetryLoading, setCameraRetryLoading] = useState(false);
+  const cameraAccessLostRef = React.useRef(false);
 
   // App & Exam States
   const [student, setStudent] = useState(null);
@@ -249,6 +253,8 @@ export default function ExamInterface() {
         stream.getTracks().forEach((track) => {
           track.onended = () => {
             if (!isSubmittedRef.current) {
+              setCameraAccessLost(true);
+              cameraAccessLostRef.current = true;
               fetch(`${apiBaseUrl}/api/audit-log`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -381,6 +387,26 @@ export default function ExamInterface() {
 
       } catch (err) {
         console.error("Proctoring Camera Initialization failed:", err);
+        setCameraAccessLost(true);
+        cameraAccessLostRef.current = true;
+        
+        try {
+          fetch(`${apiBaseUrl}/api/audit-log`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: userId || 'Unknown',
+              userRole: 'student',
+              displayName: student?.full_name || sessionStorage.getItem('userEmail') || 'Student',
+              action: 'PERMISSION_REVOKED',
+              details: {
+                exam_id: examId,
+                reason: 'initialization_failed',
+                error: err.message
+              }
+            })
+          }).catch(e => console.warn("Failed to audit initial camera failure:", e));
+        } catch (logErr) {}
       }
     };
 
@@ -428,6 +454,81 @@ export default function ExamInterface() {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [student, exam, examId, timeLeft]);
+
+  const restoreCameraAccess = async () => {
+    setCameraRetryLoading(true);
+    try {
+      const userId = sessionStorage.getItem("userId");
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, frameRate: 15 },
+        audio: false
+      });
+      localStreamRef.current = stream;
+
+      // Log CAMERA_GRANTED recovery event
+      try {
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userId || 'Unknown',
+            userRole: 'student',
+            displayName: student?.full_name || 'Student',
+            action: 'CAMERA_GRANTED',
+            details: { exam_id: examId, note: 'Camera recovered mid-exam' }
+          })
+        });
+      } catch (logErr) {
+        console.warn("Failed to audit CAMERA_GRANTED recovery:", logErr);
+      }
+
+      // Attach track ended listeners to the new tracks
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (!isSubmittedRef.current) {
+            setCameraAccessLost(true);
+            cameraAccessLostRef.current = true;
+            fetch(`${apiBaseUrl}/api/audit-log`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: userId || 'Unknown',
+                userRole: 'student',
+                displayName: student?.full_name || 'Student',
+                action: 'PERMISSION_REVOKED',
+                details: {
+                  exam_id: examId,
+                  track_label: track.label,
+                  reason: 'track_ended_or_device_removed'
+                }
+              })
+            }).catch(err => console.warn("Failed to audit PERMISSION_REVOKED:", err));
+          }
+        };
+      });
+
+      // If WebRTC peer connection was active, renegotiate by replacing track
+      if (peerConnectionRef.current) {
+        const senders = peerConnectionRef.current.getSenders();
+        senders.forEach((sender) => {
+          if (sender.track && sender.track.kind === "video") {
+            const newVideoTrack = stream.getVideoTracks()[0];
+            if (newVideoTrack) sender.replaceTrack(newVideoTrack).catch(e => console.warn("Error replacing WebRTC video track:", e));
+          }
+        });
+      }
+
+      setCameraAccessLost(false);
+      cameraAccessLostRef.current = false;
+    } catch (err) {
+      console.warn("Failed to restore camera access:", err);
+      alert("Camera access denied. Please grant camera access in browser site settings to resume your exam.");
+    } finally {
+      setCameraRetryLoading(false);
+    }
+  };
 
   // Timer Initialization & Countdown Hook (Backed up to localStorage for disconnection safety)
   useEffect(() => {
@@ -546,6 +647,10 @@ export default function ExamInterface() {
     const preventDefault = (e) => e.preventDefault();
 
     const handleKeyDown = (e) => {
+      if (cameraAccessLostRef.current) {
+        e.preventDefault();
+        return;
+      }
       // Intercept PrintScreen
       if (e.key === "PrintScreen" || e.keyCode === 44) {
         e.preventDefault();
@@ -831,10 +936,19 @@ export default function ExamInterface() {
   };
 
   const executeSubmission = async (isAuto = false) => {
+    if (isSubmittingRef.current || isSubmittedRef.current) return;
+    isSubmittingRef.current = true;
     setSubmitting(true);
     try {
       const userId = sessionStorage.getItem("userId");
       if (!userId) throw new Error("No student session found.");
+
+      // Automatically commit the current question's active selection if it exists in responses but not yet committed
+      const finalCommittedResponses = { ...committedResponses };
+      const currentQ = questions[currentIdx];
+      if (currentQ && currentQ.id && responses[currentQ.id] !== undefined && responses[currentQ.id] !== null && responses[currentQ.id] !== "") {
+        finalCommittedResponses[currentQ.id] = responses[currentQ.id];
+      }
 
       // Advanced JEE evaluation engine
       let totalScore = 0;
@@ -848,7 +962,7 @@ export default function ExamInterface() {
           totalMarks += q.positive_marks || exam.correct_marks || 4;
         }
 
-        const studentAnswer = committedResponses[q.id];
+        const studentAnswer = finalCommittedResponses[q.id];
         const hasAnswered =
           studentAnswer !== undefined &&
           studentAnswer !== null &&
@@ -1000,7 +1114,7 @@ export default function ExamInterface() {
       const resultPayload = {
         student_id: userId,
         exam_id: examId,
-        answers: committedResponses,
+        answers: finalCommittedResponses,
         status: "submitted",
         total_score: totalScore,
         total_marks: finalTotalMarks,
@@ -1107,6 +1221,7 @@ export default function ExamInterface() {
       navigate("/student/dashboard");
     } catch (err) {
       console.error("Submission failed:", err);
+      isSubmittingRef.current = false;
       alert("Failed to submit exam: " + err.message);
     } finally {
       setSubmitting(false);
@@ -1134,6 +1249,7 @@ export default function ExamInterface() {
             placeholder="Type numerical value"
             value={responses[current.id] || ""}
             onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+            disabled={cameraAccessLost}
           />
         </div>
       );
@@ -1145,7 +1261,7 @@ export default function ExamInterface() {
       return current.options.map((opt, i) => {
         const parsed = parseOption(opt);
         return (
-          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
+          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-55 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
             <div className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold">
               <input
                 type="radio"
@@ -1153,6 +1269,7 @@ export default function ExamInterface() {
                 checked={areOptionsEqual(responses[current.id], opt)}
                 onChange={() => setResponses({ ...responses, [current.id]: opt })}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
+                disabled={cameraAccessLost}
               />
               <span className="text-gray-800">{parsed.text}</span>
             </div>
@@ -1161,6 +1278,7 @@ export default function ExamInterface() {
                 <div 
                   className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
                   onClick={(e) => {
+                    if (cameraAccessLost) return;
                     e.preventDefault();
                     e.stopPropagation();
                     setZoomedImage(parsed.image_url);
@@ -1189,7 +1307,7 @@ export default function ExamInterface() {
       return current.options.map((opt, i) => {
         const parsed = parseOption(opt);
         return (
-          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-50 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
+          <label key={i} className="flex flex-col gap-2 my-2 md:my-3 p-2.5 md:p-3 bg-gray-55 hover:bg-blue-50 rounded border border-gray-300 cursor-pointer transition-colors">
             <div className="flex items-center gap-2.5 md:gap-3 text-xs md:text-sm font-semibold">
               <input
                 type="checkbox"
@@ -1204,6 +1322,7 @@ export default function ExamInterface() {
                   setResponses({ ...responses, [current.id]: arr });
                 }}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
+                disabled={cameraAccessLost}
               />
               <span className="text-gray-800">{parsed.text}</span>
             </div>
@@ -1212,6 +1331,7 @@ export default function ExamInterface() {
                 <div 
                   className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
                   onClick={(e) => {
+                    if (cameraAccessLost) return;
                     e.preventDefault();
                     e.stopPropagation();
                     setZoomedImage(parsed.image_url);
@@ -1243,6 +1363,7 @@ export default function ExamInterface() {
         placeholder="Type answer here"
         value={responses[current.id] || ""}
         onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+        disabled={cameraAccessLost}
       />
     );
   };
@@ -1374,6 +1495,7 @@ export default function ExamInterface() {
         <span className="tracking-wide uppercase">Harman Rathi Testing Agency - Candidate Terminal</span>
         <button
           onClick={() => {
+            if (cameraAccessLost) return;
             if (window.confirm("Return to student dashboard? Your current responses will NOT be saved unless submitted.")) {
               sessionStorage.removeItem(`exam_start_time_${examId}`);
               try {
@@ -1382,7 +1504,8 @@ export default function ExamInterface() {
               navigate("/student/dashboard");
             }
           }}
-          className="bg-[#28a745] hover:bg-[#218838] px-3.5 py-1 text-white font-bold flex items-center gap-1 rounded transition-colors text-[10px] uppercase shadow-sm cursor-pointer"
+          disabled={cameraAccessLost}
+          className="bg-[#28a745] hover:bg-[#218838] px-3.5 py-1 text-white font-bold flex items-center gap-1 rounded transition-colors text-[10px] uppercase shadow-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
@@ -1461,7 +1584,10 @@ export default function ExamInterface() {
         {/* Language select dropdown */}
         <div className="flex items-center gap-2 text-xs font-bold text-gray-700 border-t sm:border-t-0 sm:border-l border-gray-300 pt-2.5 sm:pt-0 pl-0 sm:pl-4 w-full sm:w-auto shrink-0">
           <span>View In:</span>
-          <select className="border border-gray-400 rounded px-3 py-1 bg-white text-xs font-bold outline-none focus:border-[#1f497d] shadow-sm flex-1 sm:flex-none">
+          <select 
+            disabled={cameraAccessLost}
+            className="border border-gray-400 rounded px-3 py-1 bg-white text-xs font-bold outline-none focus:border-[#1f497d] shadow-sm flex-1 sm:flex-none disabled:opacity-50"
+          >
             <option value="english">English</option>
           </select>
         </div>
@@ -1481,8 +1607,12 @@ export default function ExamInterface() {
               {sections.map((sec) => (
                 <button
                   key={sec}
-                  onClick={() => handleSectionSelect(sec)}
-                  className={`px-3.5 md:px-5 py-2 md:py-2.5 border-r border-gray-300 transition-colors uppercase tracking-wider cursor-pointer whitespace-nowrap ${
+                  onClick={() => {
+                    if (cameraAccessLost) return;
+                    handleSectionSelect(sec);
+                  }}
+                  disabled={cameraAccessLost}
+                  className={`px-3.5 md:px-5 py-2 md:py-2.5 border-r border-gray-300 transition-colors uppercase tracking-wider cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
                     activeSection === sec
                       ? "bg-[#1f497d] text-white border-b-2 border-b-yellow-500"
                       : "bg-gray-55 hover:bg-gray-200 text-gray-700"
@@ -1659,7 +1789,8 @@ export default function ExamInterface() {
                     });
                     setSubmitModalOpen(true);
                   }}
-                  className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-2 text-[10px] md:text-xs font-black rounded shadow-md uppercase transition-all animate-pulse cursor-pointer tracking-wide flex-1 sm:flex-none text-center"
+                  disabled={cameraAccessLost}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-2 text-[10px] md:text-xs font-black rounded shadow-md uppercase transition-all animate-pulse cursor-pointer tracking-wide flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="hidden sm:inline">Save & Submit Exam</span>
                   <span className="inline sm:hidden">Save & Submit</span>
@@ -1667,27 +1798,31 @@ export default function ExamInterface() {
               ) : (
                 <button
                   onClick={handleSaveNext}
-                  className="bg-[#28a745] hover:bg-[#218838] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
+                  disabled={cameraAccessLost}
+                  className="bg-[#28a745] hover:bg-[#218838] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save & Next
                 </button>
               )}
               <button
                 onClick={handleClear}
-                className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
+                disabled={cameraAccessLost}
+                className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Clear
               </button>
               <button
                 onClick={handleSaveMarkReview}
-                className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
+                disabled={cameraAccessLost}
+                className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Save & Mark For Review</span>
                 <span className="inline sm:hidden">Save & Review</span>
               </button>
               <button
                 onClick={handleMarkReviewNext}
-                className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center"
+                disabled={cameraAccessLost}
+                className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Mark For Review & Next</span>
                 <span className="inline sm:hidden">Review & Next</span>
@@ -1699,14 +1834,14 @@ export default function ExamInterface() {
               <div className="flex gap-1.5 md:gap-2 flex-1 sm:flex-none">
                 <button
                   onClick={handleBack}
-                  disabled={currentIdx === 0}
+                  disabled={currentIdx === 0 || cameraAccessLost}
                   className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   &lt;&lt; Back
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={currentIdx === questions.length - 1}
+                  disabled={currentIdx === questions.length - 1 || cameraAccessLost}
                   className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   Next &gt;&gt;
@@ -1715,7 +1850,8 @@ export default function ExamInterface() {
               
               <button
                 onClick={() => setSubmitModalOpen(true)}
-                className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-4 md:px-8 py-2 md:py-2.5 text-[10px] md:text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider"
+                disabled={cameraAccessLost}
+                className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-4 md:px-8 py-2 md:py-2.5 text-[10px] md:text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Submit Exam</span>
                 <span className="inline sm:hidden">Submit</span>
@@ -1815,10 +1951,12 @@ export default function ExamInterface() {
                   <button
                     key={q.id}
                     onClick={() => {
+                      if (cameraAccessLost) return;
                       revertUnsavedChanges(current.id);
                       handleQuestionSelect(i);
                     }}
-                    className={getButtonClass(q.id, i)}
+                    disabled={cameraAccessLost}
+                    className={`${getButtonClass(q.id, i)} disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     {String(i + 1).padStart(2, "0")}
                     {status[q.id] === "answeredAndMarkedForReview" && (
@@ -1907,6 +2045,45 @@ export default function ExamInterface() {
         </div>
       )}
 
+      {/* 6. CAMERA LOSS LOCKOUT MODAL */}
+      {cameraAccessLost && (
+        <div className="fixed inset-0 bg-slate-950/80 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-white border-2 border-red-600 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center font-sans">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 text-3xl">
+                📷
+              </div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera Connection Lost</h3>
+              <div className="text-sm text-slate-600 font-semibold leading-relaxed mb-6">
+                Proctoring is active for this examination. Your exam has been temporarily locked because camera access was interrupted.
+                <p className="mt-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 p-2.5 rounded-xl font-bold">
+                  ⚠️ Please check your webcam connection, ensure it is enabled in your browser settings, then click "Restore Access" to resume.
+                </p>
+              </div>
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={restoreCameraAccess}
+                  disabled={cameraRetryLoading}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {cameraRetryLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Restoring Access...
+                    </>
+                  ) : (
+                    "Restore Access"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};
