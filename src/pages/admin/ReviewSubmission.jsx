@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { toast } from 'sonner';
 
 const parseOption = (opt) => {
   if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
@@ -120,6 +121,7 @@ const ReviewSubmission = () => {
   
   // Track manual overrides: { questionId: numericMark }
   const [markOverrides, setMarkOverrides] = useState({});
+  const originalOverridesRef = React.useRef(null);
 
   // Helper to log audit events
   const logAuditEvent = async (action, details = {}) => {
@@ -410,6 +412,36 @@ const ReviewSubmission = () => {
       .eq('id', submissionId);
 
     if (updateError) throw updateError;
+
+    // Refresh submission state locally
+    const { data: updatedSub, error: fetchError } = await supabase
+      .from('exam_results')
+      .select('*')
+      .eq('id', submissionId)
+      .single();
+    if (!fetchError && updatedSub) {
+      setSubmission(updatedSub);
+    }
+  };
+
+  const saveOverridesToDatabase = async (newStatus = submission.status) => {
+    try {
+      await calculateAndSave(newStatus);
+      toast.success("Marks auto-saved & score updated in database!");
+    } catch (err) {
+      console.error("Auto-save failed:", err);
+      toast.error("Failed to auto-save adjustments: " + err.message);
+    }
+  };
+
+  const handleOverrideBlur = async () => {
+    await saveOverridesToDatabase();
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.target.blur();
+    }
   };
 
   const handlePublish = async () => {
@@ -579,19 +611,25 @@ const ReviewSubmission = () => {
             </button>
           )}
 
+          {/* ===== SCORECARD BUTTON (Always visible unless blocked) ===== */}
+          {submission.status !== 'blocked' && (
+            <Link
+              to={`/admin/results/${submissionId}/scorecard`}
+              className="px-5 py-3 rounded font-bold text-white shadow-md bg-emerald-600 hover:bg-emerald-700 transition-colors text-sm flex items-center justify-center cursor-pointer"
+            >
+              View Scorecard
+            </Link>
+          )}
+
           {/* ===== PUBLISHED STATE BUTTONS ===== */}
           {submission.status === 'published' && (
             <>
-              <Link
-                to={`/admin/results/${submissionId}/scorecard`}
-                className="px-5 py-3 rounded font-bold text-white shadow-md bg-emerald-600 hover:bg-emerald-700 transition-colors text-sm flex items-center justify-center cursor-pointer"
-              >
-                View Scorecard
-              </Link>
-
               {!editMode ? (
                 <button
-                  onClick={() => setEditMode(true)}
+                  onClick={() => {
+                    originalOverridesRef.current = { ...markOverrides };
+                    setEditMode(true);
+                  }}
                   className="px-5 py-3 rounded font-bold text-white shadow-md bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer text-sm"
                 >
                   ✏️ Edit Marks
@@ -606,7 +644,13 @@ const ReviewSubmission = () => {
                     {publishing ? 'Republishing...' : '🚀 Save & Republish'}
                   </button>
                   <button
-                    onClick={() => { setEditMode(false); setMarkOverrides(submission.marks_adjustments || {}); }}
+                    onClick={async () => {
+                      setEditMode(false);
+                      if (originalOverridesRef.current) {
+                        setMarkOverrides(originalOverridesRef.current);
+                        await saveOverridesToDatabase(originalOverridesRef.current);
+                      }
+                    }}
                     className="px-5 py-3 rounded font-bold text-gray-700 shadow-md bg-gray-200 hover:bg-gray-300 transition-colors cursor-pointer text-sm"
                   >
                     Cancel Edit
@@ -821,6 +865,8 @@ const ReviewSubmission = () => {
                       step="any"
                       value={markOverrides[q.id] !== undefined ? markOverrides[q.id] : ''}
                       onChange={(e) => handleOverrideChange(q.id, e.target.value)}
+                      onBlur={handleOverrideBlur}
+                      onKeyDown={handleKeyDown}
                       placeholder={autoMark.toString()}
                       disabled={submission.status === 'published' && !editMode}
                       className={`w-24 px-3 py-2 border rounded font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 ${
