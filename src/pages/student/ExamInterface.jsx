@@ -36,6 +36,11 @@ export default function ExamInterface() {
   const { examId } = useParams();
   const navigate = useNavigate();
 
+  // Proctoring Refs
+  const localStreamRef = React.useRef(null);
+  const peerConnectionRef = React.useRef(null);
+  const proctorChannelRef = React.useRef(null);
+
   // App & Exam States
   const [student, setStudent] = useState(null);
   const [exam, setExam] = useState(null);
@@ -76,6 +81,12 @@ export default function ExamInterface() {
       try {
         const userId = sessionStorage.getItem("userId");
         const role = sessionStorage.getItem("role");
+
+        const cameraGranted = sessionStorage.getItem("cameraGranted") === "true";
+        if (!cameraGranted) {
+          navigate("/student/exams");
+          return;
+        }
 
         if (!userId || role !== "student") {
           navigate("/");
@@ -212,6 +223,100 @@ export default function ExamInterface() {
     };
     fetchData();
   }, [examId, navigate]);
+
+  // Camera Capture & Live WebRTC Proctoring Signaling System
+  useEffect(() => {
+    const userId = sessionStorage.getItem("userId");
+    if (!userId || !exam) return;
+
+    let stream = null;
+    const channelName = `exam_proctor_${userId}`;
+    const channel = supabase.channel(channelName);
+    proctorChannelRef.current = channel;
+
+    const startCameraAndProctoring = async () => {
+      try {
+        // Capture camera stream silently (not rendering it on student view)
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, frameRate: 15 },
+          audio: false
+        });
+        localStreamRef.current = stream;
+
+        // Subscribe to signaling channel
+        channel
+          .on("broadcast", { event: "signal" }, async ({ payload }) => {
+            const { type, sender, data } = payload;
+            if (sender === "admin") {
+              if (type === "ADMIN_CONNECTED") {
+                // Initialize RTC Peer Connection
+                if (peerConnectionRef.current) {
+                  peerConnectionRef.current.close();
+                }
+
+                const pc = new RTCPeerConnection({
+                  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+                });
+                peerConnectionRef.current = pc;
+
+                // Add local tracks to peer connection
+                stream.getTracks().forEach((track) => {
+                  pc.addTrack(track, stream);
+                });
+
+                // Send ice candidate
+                pc.onicecandidate = (event) => {
+                  if (event.candidate && proctorChannelRef.current) {
+                    proctorChannelRef.current.send({
+                      type: "broadcast",
+                      event: "signal",
+                      payload: { type: "ICE_CANDIDATE", sender: "student", data: event.candidate }
+                    });
+                  }
+                };
+
+                // Create SDP Offer
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                channel.send({
+                  type: "broadcast",
+                  event: "signal",
+                  payload: { type: "SDP_OFFER", sender: "student", data: offer }
+                });
+
+              } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
+                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
+              } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
+                await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+              } else if (type === "ADMIN_DISCONNECTED") {
+                if (peerConnectionRef.current) {
+                  peerConnectionRef.current.close();
+                  peerConnectionRef.current = null;
+                }
+              }
+            }
+          })
+          .subscribe();
+
+      } catch (err) {
+        console.error("Proctoring Camera Initialization failed:", err);
+      }
+    };
+
+    startCameraAndProctoring();
+
+    // Clean up on component unmount
+    return () => {
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      supabase.removeChannel(channel);
+      sessionStorage.removeItem("cameraGranted");
+    };
+  }, [exam]);
 
   // Timer Initialization & Countdown Hook (Backed up to localStorage for disconnection safety)
   useEffect(() => {
@@ -836,6 +941,21 @@ export default function ExamInterface() {
       localStorage.removeItem(timerKey);
       localStorage.removeItem(`exam_responses_${examId}_${userId}`);
       localStorage.removeItem(`exam_status_${examId}_${userId}`);
+
+      // Stop proctoring camera stream immediately
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+        localStreamRef.current = null;
+      }
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+        peerConnectionRef.current = null;
+      }
+      if (proctorChannelRef.current) {
+        supabase.removeChannel(proctorChannelRef.current);
+        proctorChannelRef.current = null;
+      }
+      sessionStorage.removeItem("cameraGranted");
 
       if (!isAuto) alert("Examination responses saved and submitted successfully!");
       

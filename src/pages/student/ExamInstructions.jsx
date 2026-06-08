@@ -17,6 +17,12 @@ const ExamInstructions = () => {
         const userId = sessionStorage.getItem('userId');
         const role = sessionStorage.getItem('role');
 
+        const cameraGranted = sessionStorage.getItem("cameraGranted") === "true";
+        if (!cameraGranted) {
+          navigate("/student/exams");
+          return;
+        }
+
         if (!userId || role !== 'student') {
           navigate('/');
           return;

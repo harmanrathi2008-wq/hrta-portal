@@ -41,6 +41,34 @@ const StudentExams = () => {
   const [activeExams, setActiveExams] = useState([]);
   const [upcomingExams, setUpcomingExams] = useState([]);
   const [completedExams, setCompletedExams] = useState([]);
+  
+  const [checkingCamera, setCheckingCamera] = useState(false);
+  const [cameraDeniedModal, setCameraDeniedModal] = useState(false);
+  const [pendingExamId, setPendingExamId] = useState(null);
+
+  const handleStartExamClick = async (examId) => {
+    setPendingExamId(examId);
+    setCheckingCamera(true);
+    setCameraDeniedModal(false);
+    try {
+      // Prompt for camera permission
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      // Stop all tracks immediately to release the device
+      stream.getTracks().forEach(track => track.stop());
+      
+      // Store flag in sessionStorage
+      sessionStorage.setItem("cameraGranted", "true");
+      
+      // Navigate to the login page of the exam
+      navigate(`/student/exam/${examId}/login`);
+    } catch (err) {
+      console.warn("Camera permission denied:", err);
+      sessionStorage.removeItem("cameraGranted");
+      setCameraDeniedModal(true);
+    } finally {
+      setCheckingCamera(false);
+    }
+  };
 
   useEffect(() => {
     const fetchExams = async () => {
@@ -285,11 +313,13 @@ const StudentExams = () => {
                         </td>
                         <td className="py-4 px-5 text-center">
                           {canStart ? (
-                            <Link to={`/student/exam/${exam.id}/login`}>
-                              <button className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#28a745] hover:bg-[#218838]'} text-white px-6 py-2 rounded font-bold shadow-sm transition-colors uppercase text-xs tracking-wider`}>
-                                {exam.hasDraft ? 'Resume' : (exam.nextAttemptNumber > 1 ? `Start (Attempt #${exam.nextAttemptNumber})` : 'Click Here To Start')}
-                              </button>
-                            </Link>
+                            <button 
+                              onClick={() => handleStartExamClick(exam.id)}
+                              disabled={checkingCamera}
+                              className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#28a745] hover:bg-[#218838]'} text-white px-6 py-2 rounded font-bold shadow-sm transition-colors uppercase text-xs tracking-wider disabled:opacity-50`}
+                            >
+                              {checkingCamera ? 'Checking Camera...' : exam.hasDraft ? 'Resume' : (exam.nextAttemptNumber > 1 ? `Start (Attempt #${exam.nextAttemptNumber})` : 'Click Here To Start')}
+                            </button>
                           ) : isPending ? (
                             <button disabled className="bg-amber-100 border border-amber-300 text-amber-700 px-5 py-2 rounded font-bold text-xs tracking-wider cursor-not-allowed uppercase">
                               Request Pending...
@@ -421,6 +451,44 @@ const StudentExams = () => {
         </div>
 
       </div>
+
+      {cameraDeniedModal && (
+        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white border-2 border-red-500 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 text-3xl">
+                📷
+              </div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera Access Required</h3>
+              <div className="text-sm text-slate-600 font-semibold leading-relaxed mb-6">
+                Proctoring is active for this examination. You cannot proceed further without granting camera access. 
+                <p className="mt-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 p-2.5 rounded-xl font-bold">
+                  ⚠️ Please allow camera permission in your browser's address bar/site settings, then click "Try Again".
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCameraDeniedModal(false)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm uppercase tracking-wide"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (pendingExamId) handleStartExamClick(pendingExamId);
+                    else setCameraDeniedModal(false);
+                  }}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide"
+                >
+                  Try Again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
