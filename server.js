@@ -11,6 +11,7 @@ import { existsSync } from 'fs'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
 import { apiLimiter, authLimiter, heavyRequestLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
+import crypto from 'crypto'
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -696,6 +697,47 @@ app.post('/api/audit-log', async (req, res) => {
     const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
     const ip = rawIp.split(',')[0].trim();
 
+    // 1. Fetch preceding audit log to retrieve the previous hash
+    let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
+    try {
+      const { data: lastLog, error: fetchErr } = await supabaseAdmin
+        .from('audit_logs')
+        .select('details')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!fetchErr && lastLog && lastLog.details && lastLog.details.curr_hash) {
+        prevHash = lastLog.details.curr_hash;
+      }
+    } catch (hashErr) {
+      console.warn("Could not retrieve preceding audit log hash, using genesis seed:", hashErr.message);
+    }
+
+    // 2. Prepare payload and hash with SHA-256 for integrity verification
+    const timestamp = new Date().toISOString();
+    const logDetails = details || {};
+    
+    const hashInput = JSON.stringify({
+      userId: userId || 'Unknown',
+      action: action,
+      ip: ip,
+      prevHash: prevHash,
+      timestamp: timestamp,
+      payload: logDetails
+    });
+    
+    const currHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+
+    // 3. Inject chain metadata into details JSONB
+    const securedDetails = {
+      ...logDetails,
+      prev_hash: prevHash,
+      curr_hash: currHash,
+      hashed_at: timestamp
+    };
+
+    // 4. Save audit log row
     const { error } = await supabaseAdmin
       .from('audit_logs')
       .insert({
@@ -703,12 +745,12 @@ app.post('/api/audit-log', async (req, res) => {
         user_role: userRole || 'Anonymous',
         display_name: displayName || 'Anonymous',
         action: action,
-        details: details || {},
+        details: securedDetails,
         ip_address: ip
       });
 
     if (error) throw error;
-    res.json({ success: true });
+    res.json({ success: true, curr_hash: currHash });
   } catch (error) {
     console.error('Error writing audit log:', error);
     res.status(500).json({ error: error.message || 'Failed to write audit log' });

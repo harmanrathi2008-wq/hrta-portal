@@ -50,6 +50,8 @@ const StudentExams = () => {
     setPendingExamId(examId);
     setCheckingCamera(true);
     setCameraDeniedModal(false);
+    const userId = sessionStorage.getItem("userId");
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
     try {
       // Prompt for camera permission
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -58,6 +60,23 @@ const StudentExams = () => {
       
       // Store flag in sessionStorage
       sessionStorage.setItem("cameraGranted", "true");
+
+      // Log CAMERA_GRANTED
+      try {
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userId || 'Unknown',
+            userRole: 'student',
+            displayName: sessionStorage.getItem('userEmail') || 'Student',
+            action: 'CAMERA_GRANTED',
+            details: { exam_id: examId }
+          })
+        });
+      } catch (logErr) {
+        console.warn("Failed to audit CAMERA_GRANTED:", logErr);
+      }
       
       // Navigate to the login page of the exam
       navigate(`/student/exam/${examId}/login`);
@@ -65,6 +84,23 @@ const StudentExams = () => {
       console.warn("Camera permission denied:", err);
       sessionStorage.removeItem("cameraGranted");
       setCameraDeniedModal(true);
+
+      // Log CAMERA_DENIED
+      try {
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userId || 'Unknown',
+            userRole: 'student',
+            displayName: sessionStorage.getItem('userEmail') || 'Student',
+            action: 'CAMERA_DENIED',
+            details: { exam_id: examId, error: err.message || String(err) }
+          })
+        });
+      } catch (logErr) {
+        console.warn("Failed to audit CAMERA_DENIED:", logErr);
+      }
     } finally {
       setCheckingCamera(false);
     }

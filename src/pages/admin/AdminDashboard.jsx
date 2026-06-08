@@ -37,6 +37,35 @@ const AdminDashboard = () => {
 
   // Stop monitoring and close WebRTC peer connection
   const stopMonitoring = () => {
+    if (monitoringStudent) {
+      // Log audit event: ADMIN_MONITOR_STOP
+      try {
+        const adminId = sessionStorage.getItem('userId');
+        const adminRole = sessionStorage.getItem('role') || 'super_admin';
+        const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+        fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: adminId || 'Unknown',
+            userRole: adminRole,
+            displayName: adminEmail,
+            action: 'ADMIN_MONITOR_STOP',
+            details: {
+              monitored_student_id: monitoringStudent.student_id,
+              monitored_student_name: monitoringStudent.students?.full_name,
+              exam_id: monitoringStudent.exam_id,
+              exam_title: monitoringStudent.exams?.title
+            }
+          })
+        }).catch(err => console.warn("Failed to audit ADMIN_MONITOR_STOP:", err));
+      } catch (logErr) {
+        console.warn("Failed to audit ADMIN_MONITOR_STOP:", logErr);
+      }
+    }
+
     if (proctorChannelRef.current) {
       proctorChannelRef.current.send({
         type: "broadcast",
@@ -64,6 +93,33 @@ const AdminDashboard = () => {
 
     setMonitoringStudent(session);
     setMonitorStatus("Initializing...");
+
+    // Log audit event: ADMIN_MONITOR_START
+    try {
+      const adminId = sessionStorage.getItem('userId');
+      const adminRole = sessionStorage.getItem('role') || 'super_admin';
+      const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      fetch(`${apiBaseUrl}/api/audit-log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: adminId || 'Unknown',
+          userRole: adminRole,
+          displayName: adminEmail,
+          action: 'ADMIN_MONITOR_START',
+          details: {
+            monitored_student_id: session.student_id,
+            monitored_student_name: session.students?.full_name,
+            exam_id: session.exam_id,
+            exam_title: session.exams?.title
+          }
+        })
+      }).catch(err => console.warn("Failed to audit ADMIN_MONITOR_START:", err));
+    } catch (logErr) {
+      console.warn("Failed to audit ADMIN_MONITOR_START:", logErr);
+    }
 
     const studentId = session.student_id;
     const channelName = `exam_proctor_${studentId}`;

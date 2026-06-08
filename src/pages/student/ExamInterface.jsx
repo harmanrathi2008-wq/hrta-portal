@@ -40,6 +40,7 @@ export default function ExamInterface() {
   const localStreamRef = React.useRef(null);
   const peerConnectionRef = React.useRef(null);
   const proctorChannelRef = React.useRef(null);
+  const isSubmittedRef = React.useRef(false);
 
   // App & Exam States
   const [student, setStudent] = useState(null);
@@ -233,6 +234,7 @@ export default function ExamInterface() {
     const channelName = `exam_proctor_${userId}`;
     const channel = supabase.channel(channelName);
     proctorChannelRef.current = channel;
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
     const startCameraAndProctoring = async () => {
       try {
@@ -243,56 +245,135 @@ export default function ExamInterface() {
         });
         localStreamRef.current = stream;
 
+        // Monitor camera track status (Permission Revoked / Webcam Unplugged)
+        stream.getTracks().forEach((track) => {
+          track.onended = () => {
+            if (!isSubmittedRef.current) {
+              fetch(`${apiBaseUrl}/api/audit-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: userId || 'Unknown',
+                  userRole: 'student',
+                  displayName: student?.full_name || 'Student',
+                  action: 'PERMISSION_REVOKED',
+                  details: {
+                    exam_id: examId,
+                    track_label: track.label,
+                    reason: 'track_ended_or_device_removed'
+                  }
+                })
+              }).catch(err => console.warn("Failed to audit PERMISSION_REVOKED:", err));
+            }
+          };
+        });
+
         // Subscribe to signaling channel
         channel
           .on("broadcast", { event: "signal" }, async ({ payload }) => {
             const { type, sender, data } = payload;
-            if (sender === "admin") {
-              if (type === "ADMIN_CONNECTED") {
-                // Initialize RTC Peer Connection
-                if (peerConnectionRef.current) {
-                  peerConnectionRef.current.close();
-                }
-
-                const pc = new RTCPeerConnection({
-                  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-                });
-                peerConnectionRef.current = pc;
-
-                // Add local tracks to peer connection
-                stream.getTracks().forEach((track) => {
-                  pc.addTrack(track, stream);
-                });
-
-                // Send ice candidate
-                pc.onicecandidate = (event) => {
-                  if (event.candidate && proctorChannelRef.current) {
-                    proctorChannelRef.current.send({
-                      type: "broadcast",
-                      event: "signal",
-                      payload: { type: "ICE_CANDIDATE", sender: "student", data: event.candidate }
-                    });
+            
+            // Validate that the request originates from authorized admin
+            if (sender !== "admin") {
+              fetch(`${apiBaseUrl}/api/audit-log`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  userId: userId || 'Unknown',
+                  userRole: 'student',
+                  displayName: student?.full_name || 'Student',
+                  action: 'CHANNEL_AUTH_FAILURE',
+                  details: {
+                    exam_id: examId,
+                    attempted_sender: sender,
+                    payload_received: payload
                   }
-                };
+                })
+              }).catch(err => console.warn("Failed to audit CHANNEL_AUTH_FAILURE:", err));
+              return;
+            }
 
-                // Create SDP Offer
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                channel.send({
-                  type: "broadcast",
-                  event: "signal",
-                  payload: { type: "SDP_OFFER", sender: "student", data: offer }
-                });
+            if (type === "ADMIN_CONNECTED") {
+              // Initialize RTC Peer Connection
+              if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+              }
 
-              } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
-                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
-              } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
-                await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
-              } else if (type === "ADMIN_DISCONNECTED") {
-                if (peerConnectionRef.current) {
-                  peerConnectionRef.current.close();
-                  peerConnectionRef.current = null;
+              const pc = new RTCPeerConnection({
+                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+              });
+              peerConnectionRef.current = pc;
+
+              // Monitor connection state (Signaling Established / Stream Disconnected)
+              pc.onconnectionstatechange = () => {
+                if (pc.connectionState === "connected") {
+                  fetch(`${apiBaseUrl}/api/audit-log`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      userId: userId || 'Unknown',
+                      userRole: 'student',
+                      displayName: student?.full_name || 'Student',
+                      action: 'SIGNALING_ESTABLISHED',
+                      details: {
+                        exam_id: examId,
+                        connection_state: pc.connectionState
+                      }
+                    })
+                  }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
+                } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+                  if (!isSubmittedRef.current) {
+                    fetch(`${apiBaseUrl}/api/audit-log`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        userId: userId || 'Unknown',
+                        userRole: 'student',
+                        displayName: student?.full_name || 'Student',
+                        action: 'STREAM_DISCONNECTED',
+                        details: {
+                          exam_id: examId,
+                          connection_state: pc.connectionState
+                        }
+                      })
+                    }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
+                  }
                 }
+              };
+
+              // Add local tracks to peer connection
+              stream.getTracks().forEach((track) => {
+                pc.addTrack(track, stream);
+              });
+
+              // Send ice candidate
+              pc.onicecandidate = (event) => {
+                if (event.candidate && proctorChannelRef.current) {
+                  proctorChannelRef.current.send({
+                    type: "broadcast",
+                    event: "signal",
+                    payload: { type: "ICE_CANDIDATE", sender: "student", data: event.candidate }
+                  });
+                }
+              };
+
+              // Create SDP Offer
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              channel.send({
+                type: "broadcast",
+                event: "signal",
+                payload: { type: "SDP_OFFER", sender: "student", data: offer }
+              });
+
+            } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
+              await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
+            } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+            } else if (type === "ADMIN_DISCONNECTED") {
+              if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
               }
             }
           })
@@ -316,7 +397,37 @@ export default function ExamInterface() {
       supabase.removeChannel(channel);
       sessionStorage.removeItem("cameraGranted");
     };
-  }, [exam]);
+  }, [exam, student]);
+
+  // Listen to browser lifecycle termination (Unexpected Tab Close)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!isSubmittedRef.current) {
+        const userId = sessionStorage.getItem("userId");
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        
+        const payload = JSON.stringify({
+          userId: userId || 'Unknown',
+          userRole: 'student',
+          displayName: student?.full_name || 'Student',
+          action: 'UNEXPECTED_TAB_CLOSE',
+          details: {
+            exam_id: examId,
+            exam_title: exam?.title,
+            current_time_left: timeLeft
+          }
+        });
+
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(`${apiBaseUrl}/api/audit-log`, blob);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [student, exam, examId, timeLeft]);
 
   // Timer Initialization & Countdown Hook (Backed up to localStorage for disconnection safety)
   useEffect(() => {
@@ -915,6 +1026,35 @@ export default function ExamInterface() {
         error = res.error;
       }
       if (error) throw error;
+
+      // Mark as submitted to prevent UNEXPECTED_TAB_CLOSE logging
+      isSubmittedRef.current = true;
+
+      // Log audit event: EXAM_SUBMITTED or EXAM_AUTO_SUBMITTED
+      try {
+        const action = isAuto ? 'EXAM_AUTO_SUBMITTED' : 'EXAM_SUBMITTED';
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userId || 'Unknown',
+            userRole: 'student',
+            displayName: student?.full_name || 'Student',
+            action: action,
+            details: {
+              exam_id: examId,
+              exam_title: exam?.title,
+              attempt_number: attemptNumber,
+              total_score: totalScore,
+              total_marks: finalTotalMarks,
+              percentage: percentage
+            }
+          })
+        });
+      } catch (logErr) {
+        console.warn("Failed to audit exam submission event:", logErr);
+      }
 
       // Complete active personal assignment if it exists
       try {
