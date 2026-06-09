@@ -213,6 +213,9 @@ const AdminDashboard = () => {
             } catch (err) {
               console.error("Error setting ICE candidate:", err);
             }
+          } else if (type === "STUDENT_CAMERA_RECOVERED") {
+            console.log("Student camera recovered. Re-initializing proctor feed.");
+            startMonitoring(session);
           }
         }
       })

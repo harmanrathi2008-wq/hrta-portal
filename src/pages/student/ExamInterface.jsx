@@ -542,6 +542,15 @@ export default function ExamInterface() {
 
       setCameraAccessLost(false);
       cameraAccessLostRef.current = false;
+
+      // Notify admin that camera is restored so they can re-initialize the proctor feed
+      if (proctorChannelRef.current) {
+        proctorChannelRef.current.send({
+          type: "broadcast",
+          event: "signal",
+          payload: { type: "STUDENT_CAMERA_RECOVERED", sender: "student" }
+        }).catch(err => console.warn("Failed to send STUDENT_CAMERA_RECOVERED:", err));
+      }
     } catch (err) {
       console.warn("Failed to restore camera access:", err);
       alert("Camera access denied. Please grant camera access in browser site settings to resume your exam.");
