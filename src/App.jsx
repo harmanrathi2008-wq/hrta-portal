@@ -77,14 +77,12 @@ function App() {
         });
 
         if (res.status === 401) {
-          const data = await res.json();
-          if (data.error === 'session_expired' || data.error === 'session_invalidated') {
-            console.warn(`Session rejected by backend: ${data.error}. Logging out.`);
-            sessionStorage.clear();
-            await supabase.auth.signOut();
-            const param = data.error === 'session_expired' ? 'expired=true' : 'concurrent=true';
-            window.location.href = `/?${param}`;
-          }
+          const data = await res.json().catch(() => ({}));
+          console.warn(`Session rejected by backend: ${data.error || 'unauthorized'}. Logging out.`);
+          sessionStorage.clear();
+          await supabase.auth.signOut().catch(() => {});
+          const param = data.error === 'session_expired' ? 'expired=true' : 'concurrent=true';
+          window.location.href = `/?${param}`;
         }
       } catch (err) {
         console.warn('Failed to send heartbeat', err);

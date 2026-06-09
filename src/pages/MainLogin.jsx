@@ -300,9 +300,13 @@ const MainLogin = () => {
           email: data.userEmail,
           password: data.dbPassword
         });
-        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+        if (authErr) {
+          console.error("Supabase Auth Sync failed:", authErr.message);
+          throw new Error("Failed to synchronize database session: " + authErr.message);
+        }
       } catch (e) {
         console.error("Supabase Auth Sync error:", e.message);
+        throw e;
       }
 
       if (data.role === 'super_admin' || data.role === 'admin') {
@@ -354,9 +358,13 @@ const MainLogin = () => {
           email: data.userEmail,
           password: data.dbPassword
         });
-        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+        if (authErr) {
+          console.error("Supabase Auth Sync failed:", authErr.message);
+          throw new Error("Failed to synchronize database session: " + authErr.message);
+        }
       } catch (e) {
         console.error("Supabase Auth Sync error:", e.message);
+        throw e;
       }
 
       navigate('/admin/dashboard', { replace: true });
@@ -410,9 +418,13 @@ const MainLogin = () => {
           email: data.userEmail,
           password: data.dbPassword
         });
-        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+        if (authErr) {
+          console.error("Supabase Auth Sync failed:", authErr.message);
+          throw new Error("Failed to synchronize database session: " + authErr.message);
+        }
       } catch (e) {
         console.error("Supabase Auth Sync error:", e.message);
+        throw e;
       }
 
       navigate('/admin/dashboard', { replace: true });

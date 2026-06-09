@@ -380,7 +380,7 @@ const AdminDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('exam_results')
-        .select('id, status, total_score, total_marks, percentage, submitted_at, published_at, students(full_name, application_id), exams(title, subject)')
+        .select('id, student_id, exam_id, status, total_score, total_marks, percentage, submitted_at, published_at, students(full_name, application_id), exams(title, subject)')
         .order('submitted_at', { ascending: false })
         .limit(30);
       if (!error && data) {
