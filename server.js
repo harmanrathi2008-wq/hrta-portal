@@ -1005,8 +1005,12 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
 
   // Self-healing Supabase Auth Sync (Run immediately so auth user exists & matches ID before any early MFA redirects)
   try {
-    const { data: userData, error: getErr } = await supabaseAdmin.auth.admin.getUserByEmail(stored.userEmail);
-    if (getErr || !userData || !userData.user) {
+    const { data: { users }, error: getErr } = await supabaseAdmin.auth.admin.listUsers();
+    if (getErr) throw getErr;
+
+    const matchedUser = users ? users.find(u => u.email.toLowerCase() === stored.userEmail.toLowerCase()) : null;
+
+    if (!matchedUser) {
       const { data: newUserData, error: createErr } = await supabaseAdmin.auth.admin.createUser({
         id: stored.userId,
         email: stored.userEmail,
@@ -1018,10 +1022,10 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
       } else {
         console.log("Created native Supabase Auth user for email:", stored.userEmail);
       }
-    } else if (userData.user.id !== stored.userId) {
-      console.log(`Mismatch detected for ${stored.userEmail}. Auth ID: ${userData.user.id}, Stored ID: ${stored.userId}. Re-aligning...`);
+    } else if (matchedUser.id !== stored.userId) {
+      console.log(`Mismatch detected for ${stored.userEmail}. Auth ID: ${matchedUser.id}, Stored ID: ${stored.userId}. Re-aligning...`);
       // Delete mismatched user
-      const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userData.user.id);
+      const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(matchedUser.id);
       if (deleteErr) {
         console.error("Failed to delete mismatched Supabase Auth user:", deleteErr.message);
       } else {
@@ -1039,7 +1043,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
         }
       }
     } else {
-      const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userData.user.id, {
+      const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(matchedUser.id, {
         password: dbPassword
       });
       if (updateErr) {
