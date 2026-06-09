@@ -10,11 +10,11 @@ export const apiLimiter = rateLimit({
 });
 
 // Stricter limiter for sensitive auth endpoints (Login, Signup, OTP generation)
-// Limits requests to 5 attempts per 5 minutes per IP to prevent OTP spam and brute-force
+// Limits requests to 7 attempts per 1 minute per IP to prevent OTP spam and brute-force
 export const authLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 5,
-  message: { error: 'Too many login or OTP attempts. Please try again in 5 minutes.' },
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 7,
+  message: { error: 'Too many login or OTP attempts. Please try again in 1 minute.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
