@@ -604,7 +604,7 @@ app.post('/api/verify-mfa', authLimiter, [
     const ip = rawIp.split(',')[0].trim();
 
     let logId = null;
-    const { data: logData, error: logErr } = await supabase
+    const { data: logData, error: logErr } = await supabaseAdmin
       .from('login_logs')
       .insert({
         user_id: stored.userId,
@@ -707,7 +707,7 @@ app.post('/api/send-admin-otp', authLimiter, verifyTurnstileToken, validateEmail
   }
 
   const cleanEmail = email.trim();
-  const { data: admins, error } = await supabase
+  const { data: admins, error } = await supabaseAdmin
     .from('admins')
     .select('id, email, role, status')
     .ilike('email', cleanEmail)
@@ -772,7 +772,7 @@ app.post('/api/send-superadmin-otp', authLimiter, verifyTurnstileToken, validate
   }
 
   const cleanEmail = email.trim();
-  const { data: admins, error } = await supabase
+  const { data: admins, error } = await supabaseAdmin
     .from('admins')
     .select('id, email, role, status')
     .ilike('email', cleanEmail)
@@ -835,7 +835,7 @@ app.post('/api/send-student-otp', authLimiter, verifyTurnstileToken, async (req,
   const cleanAppId = applicationId.trim()
   
   // Find student by application_id case-insensitively
-  const { data: students, error: dbError } = await supabase
+  const { data: students, error: dbError } = await supabaseAdmin
     .from('students')
     .select('*')
     .ilike('application_id', cleanAppId)
@@ -1005,7 +1005,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
 
   let logId = null;
   try {
-    const { data: logData, error: logErr } = await supabase
+    const { data: logData, error: logErr } = await supabaseAdmin
       .from('login_logs')
       .insert({
         user_id: stored.userId,
@@ -1088,7 +1088,7 @@ app.post('/api/session-heartbeat', verifyUserJWT, async (req, res) => {
   }
   
   try {
-    const { data: log, error: fetchErr } = await supabase
+    const { data: log, error: fetchErr } = await supabaseAdmin
       .from('login_logs')
       .select('login_at')
       .eq('id', logId)
@@ -1102,7 +1102,7 @@ app.post('/api/session-heartbeat', verifyUserJWT, async (req, res) => {
     const now = Date.now();
     const durationSecs = Math.round((now - loginTime) / 1000);
     
-    const { error: updateErr } = await supabase
+    const { error: updateErr } = await supabaseAdmin
       .from('login_logs')
       .update({
         last_activity_at: new Date().toISOString(),
