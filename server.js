@@ -651,50 +651,99 @@ app.post('/api/verify-mfa', authLimiter, [
   }
 });
 
-// ============ SETUP MFA ============
-app.post('/api/setup-mfa', verifyAdminJWT, [
-  body('secret').isString().isLength({ min: 16, max: 16 }).withMessage('Invalid MFA secret key'),
+app.post('/api/setup-mfa', authLimiter, [
+  body('tempToken').isString().notEmpty().withMessage('Session token is required'),
   body('code').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('Verification code must be 6 digits'),
   handleValidationErrors
 ], async (req, res) => {
-  const { secret, code } = req.body;
+  const { tempToken, code } = req.body;
 
-  const isValid = verifyTOTP(code, secret);
+  const stored = mfaStore.get(tempToken);
+  if (!stored || !stored.isSetup) {
+    return res.status(400).json({ error: 'MFA setup session has expired or is invalid. Please log in again.' });
+  }
+
+  const isValid = verifyTOTP(code, stored.mfaSecret);
   if (!isValid) {
-    return res.status(400).json({ error: 'Invalid verification code. Please check your authenticator app.' });
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+    try {
+      await supabaseAdmin
+        .from('audit_logs')
+        .insert({
+          user_id: stored.userId,
+          user_role: stored.role,
+          display_name: stored.displayName || stored.userEmail || 'Admin',
+          action: 'LOGIN_MFA_FAILED',
+          details: { email: stored.userEmail, reason: 'Invalid TOTP code entered during setup', ip_address: ip },
+          ip_address: ip
+        });
+    } catch (auditErr) {
+      console.error("Failed to insert failed MFA audit log:", auditErr.message);
+    }
+    return res.status(400).json({ error: 'Invalid authenticator code.' });
   }
 
   try {
     const { error: updateErr } = await supabaseAdmin
       .from('admins')
-      .update({ mfa_secret: secret })
-      .eq('id', req.user.id);
+      .update({ mfa_secret: stored.mfaSecret })
+      .eq('id', stored.userId);
 
     if (updateErr) throw updateErr;
 
-    // Log audit event
+    // Clear setup session token
+    mfaStore.delete(tempToken);
+
+    // Capture IP Address & Log to Database
     const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
     const ip = rawIp.split(',')[0].trim();
-    
+
+    let logId = null;
+    const { data: logData, error: logErr } = await supabaseAdmin
+      .from('login_logs')
+      .insert({
+        user_id: stored.userId,
+        user_role: stored.role,
+        display_name: stored.displayName || stored.userEmail || 'Admin',
+        ip_address: ip,
+        location: 'Resolving location...'
+      })
+      .select()
+      .single();
+
+    if (logData) {
+      logId = logData.id;
+      resolveGeoLocationAndUpdate(logData.id, ip);
+    }
+
+    // Log audit event
     try {
       await supabaseAdmin
         .from('audit_logs')
         .insert({
-          user_id: req.user.id,
-          user_role: req.role,
-          display_name: req.user.email,
+          user_id: stored.userId,
+          user_role: stored.role,
+          display_name: stored.displayName || stored.userEmail || 'Admin',
           action: 'ADMIN_MFA_ENABLED',
-          details: { email: req.user.email },
+          details: { email: stored.userEmail, login_log_id: logId },
           ip_address: ip
         });
     } catch (auditErr) {
       console.error("Failed to audit MFA setup:", auditErr.message);
     }
 
-    res.json({ success: true, message: 'Multi-Factor Authentication enabled successfully.' });
+    res.json({
+      message: 'Login successful',
+      role: stored.role,
+      userId: stored.userId,
+      userEmail: stored.userEmail,
+      loginLogId: logId,
+      dbPassword: stored.dbPassword
+    });
   } catch (err) {
     console.error('MFA setup update error:', err.message);
-    res.status(500).json({ error: 'Failed to save MFA configuration.' });
+    res.status(500).json({ error: 'Failed to complete MFA setup.' });
   }
 });
 
@@ -937,8 +986,8 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
 
   console.log(`User verified successfully: Role [${stored.role}] ID [${stored.userId}]`)
 
-  // Derive native Supabase Auth password cryptographically
-  const dbPassword = crypto.createHash('sha256').update(stored.userEmail + (process.env.SUPABASE_SERVICE_ROLE_KEY || 'HRTA_SECRET_KEY_2026')).digest('hex');
+  // Derive native Supabase Auth password cryptographically using a deterministic pepper
+  const dbPassword = crypto.createHash('sha256').update(stored.userEmail + 'HRTA_SECURE_AUTH_PEPPER_2026').digest('hex');
 
   // MFA check for admins and superadmins
   if (stored.role === 'admin' || stored.role === 'super_admin') {
@@ -1070,6 +1119,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
   // Determine if MFA setup is required on first admin login
   let mfaSetupRequired = false;
   let mfaSecret = null;
+  let tempToken = null;
 
   if (stored.role === 'admin' || stored.role === 'super_admin') {
     try {
@@ -1082,10 +1132,32 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
       if (!adminErr && dbAdmin && !dbAdmin.mfa_secret) {
         mfaSetupRequired = true;
         mfaSecret = generateBase32Secret();
+        
+        tempToken = crypto.createHash('sha256').update(stored.userEmail + dbPassword + Date.now().toString()).digest('hex');
+        mfaStore.set(tempToken, {
+          role: stored.role,
+          userId: stored.userId,
+          userEmail: stored.userEmail,
+          displayName: stored.displayName || stored.userEmail,
+          dbPassword: dbPassword,
+          mfaSecret: mfaSecret,
+          isSetup: true
+        });
+        
+        setTimeout(() => mfaStore.delete(tempToken), 5 * 60 * 1000);
       }
     } catch (e) {
       console.error("Failed to check mfa_secret presence:", e.message);
     }
+  }
+
+  if (mfaSetupRequired) {
+    return res.json({
+      mfaSetupRequired: true,
+      tempToken: tempToken,
+      mfaSecret: mfaSecret,
+      email: stored.userEmail
+    });
   }
 
   // Return properties the React app needs
@@ -1096,8 +1168,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
     userEmail: stored.userEmail,
     loginLogId: logId,
     dbPassword: dbPassword,
-    mfaSetupRequired,
-    mfaSecret
+    mfaSetupRequired: false
   })
 })
 

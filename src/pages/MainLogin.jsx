@@ -278,6 +278,7 @@ const MainLogin = () => {
 
       // Check if MFA setup is required
       if (data.mfaSetupRequired) {
+        setMfaTempToken(data.tempToken);
         setPendingLoginData(data);
         setMfaSecretKey(data.mfaSecret);
         setStep('mfa_setup');
@@ -371,54 +372,45 @@ const MainLogin = () => {
     setLoading(true);
 
     try {
-      if (!pendingLoginData) {
+      if (!mfaTempToken) {
         throw new Error('MFA setup session missing. Please try logging in again.');
-      }
-
-      // Authenticate temporary session with Supabase so setup-mfa middleware approves
-      try {
-        const { error: authErr } = await supabase.auth.signInWithPassword({
-          email: pendingLoginData.userEmail,
-          password: pendingLoginData.dbPassword
-        });
-        if (authErr) throw authErr;
-      } catch (e) {
-        console.error("Supabase Auth Sync error during MFA setup:", e.message);
-        throw new Error("Failed to authenticate session with database: " + e.message);
-      }
-
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error('Session token not found. Please log in again.');
       }
 
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/setup-mfa`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          secret: mfaSecretKey,
+          tempToken: mfaTempToken,
           code: mfaCode.trim()
         }),
       });
 
-      const setupResult = await response.json();
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(setupResult.error || setupResult.message || 'MFA setup verification failed.');
+        throw new Error(data.error || data.message || 'MFA setup verification failed.');
       }
 
       // MFA setup succeeded! Complete login by populating sessionStorage
-      sessionStorage.setItem('role', pendingLoginData.role);
-      sessionStorage.setItem('userId', pendingLoginData.userId);
-      if (pendingLoginData.userEmail) sessionStorage.setItem('userEmail', pendingLoginData.userEmail);
-      if (pendingLoginData.loginLogId) sessionStorage.setItem('loginLogId', pendingLoginData.loginLogId);
+      sessionStorage.setItem('role', data.role);
+      sessionStorage.setItem('userId', data.userId);
+      if (data.userEmail) sessionStorage.setItem('userEmail', data.userEmail);
+      if (data.loginLogId) sessionStorage.setItem('loginLogId', data.loginLogId);
       sessionStorage.setItem('loginTime', new Date().toISOString());
+
+      // Native Supabase Sign-in Sync
+      try {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: data.userEmail,
+          password: data.dbPassword
+        });
+        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+      } catch (e) {
+        console.error("Supabase Auth Sync error:", e.message);
+      }
 
       navigate('/admin/dashboard', { replace: true });
 
