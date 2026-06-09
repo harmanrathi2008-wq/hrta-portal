@@ -50,7 +50,18 @@ const ExamInstructions = () => {
 
   const handleProceed = () => {
     if (isChecked) {
-      navigate(`/student/exam/${examId}/start`);
+      if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen()
+          .then(() => {
+            navigate(`/student/exam/${examId}/start`);
+          })
+          .catch((err) => {
+            console.warn("Failed to enter fullscreen on proceed:", err);
+            navigate(`/student/exam/${examId}/start`);
+          });
+      } else {
+        navigate(`/student/exam/${examId}/start`);
+      }
     }
   };
 

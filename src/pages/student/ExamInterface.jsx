@@ -96,7 +96,7 @@ export default function ExamInterface() {
 
   // Security Locking States
   const [hasFocus, setHasFocus] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
   const [imageError, setImageError] = useState(false);
 
   // Fetch Data: Student, Exam, Questions
