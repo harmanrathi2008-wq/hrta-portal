@@ -472,12 +472,17 @@ export default function StudentDashboard() {
 
   const loadJourneyData = async () => {
     try {
-      const { data } = await supabase
+      const { data, error: journeyErr } = await supabase
         .from('tasks')
         .select('*')
         .eq('student_id', studentId)
         .eq('status', 'journey_log')
         .order('due_date', { ascending: true });
+
+      if (journeyErr) {
+        console.error('Journey data query blocked (possible RLS issue):', journeyErr.message);
+        return;
+      }
 
       if (data) {
         setJourneyLogs(data);
@@ -575,12 +580,17 @@ export default function StudentDashboard() {
   // --- Yearly Tasks Completion Bar Chart Logic ---
   const loadDailyTasksChartData = async () => {
     try {
-      const { data } = await supabase
+      const { data, error: taskErr } = await supabase
         .from('tasks')
         .select('*')
         .eq('student_id', studentId)
         .eq('status', 'daily_task')
         .order('due_date', { ascending: true });
+
+      if (taskErr) {
+        console.error('Daily task chart query blocked (possible RLS issue):', taskErr.message);
+        return;
+      }
 
       if (data) {
         const groups = {};

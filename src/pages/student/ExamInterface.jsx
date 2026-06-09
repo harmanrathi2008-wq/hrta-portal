@@ -658,7 +658,17 @@ export default function ExamInterface() {
   // Security Focus & Screenshot Listeners Hook
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const isFull = !!document.fullscreenElement;
+      setIsFullscreen(isFull);
+
+      // If they exited fullscreen and exam is still active, immediately try to re-enter
+      if (!isFull && !isSubmittedRef.current && !isSubmittingRef.current) {
+        document.documentElement.requestFullscreen()
+          .then(() => setIsFullscreen(true))
+          .catch((err) => {
+            console.warn("Auto re-entry failed on change event, waiting for user gesture:", err);
+          });
+      }
     };
 
     const handleBlur = () => setHasFocus(false);
@@ -688,6 +698,15 @@ export default function ExamInterface() {
       }
     };
 
+    // Auto re-enter fullscreen on any click/mousemove/keydown when not in fullscreen
+    const handleUserGesture = () => {
+      if (!document.fullscreenElement && !isSubmittedRef.current && !isSubmittingRef.current) {
+        document.documentElement.requestFullscreen()
+          .then(() => setIsFullscreen(true))
+          .catch(() => {});
+      }
+    };
+
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
@@ -696,6 +715,12 @@ export default function ExamInterface() {
     document.addEventListener("paste", preventDefault);
     document.addEventListener("contextmenu", preventDefault);
     window.addEventListener("keydown", handleKeyDown);
+
+    // Event listeners to catch user gestures and immediately re-enter fullscreen
+    window.addEventListener("click", handleUserGesture);
+    window.addEventListener("mousemove", handleUserGesture);
+    window.addEventListener("keydown", handleUserGesture);
+    window.addEventListener("mousedown", handleUserGesture);
 
     // Initial fullscreen trigger request
     enterFullscreen();
@@ -709,6 +734,11 @@ export default function ExamInterface() {
       document.removeEventListener("paste", preventDefault);
       document.removeEventListener("contextmenu", preventDefault);
       window.removeEventListener("keydown", handleKeyDown);
+
+      window.removeEventListener("click", handleUserGesture);
+      window.removeEventListener("mousemove", handleUserGesture);
+      window.removeEventListener("keydown", handleUserGesture);
+      window.removeEventListener("mousedown", handleUserGesture);
     };
   }, []);
 
@@ -1433,12 +1463,7 @@ export default function ExamInterface() {
             Enter Fullscreen
           </button>
           
-          <button
-            onClick={() => setIsFullscreen(true)}
-            className="text-xs text-gray-500 hover:text-blue-400 font-semibold underline mt-2 block mx-auto uppercase cursor-pointer"
-          >
-            Bypass / Fullscreen not supported
-          </button>
+          {/* Bypass button removed to enforce strict fullscreen */}
         </div>
       </div>
     );

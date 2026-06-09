@@ -295,7 +295,7 @@ const MainLogin = () => {
 
       // Native Supabase Sign-in Sync
       try {
-        await supabase.auth.signOut().catch(() => {});
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         const { error: authErr } = await supabase.auth.signInWithPassword({
           email: data.userEmail,
           password: data.dbPassword
@@ -353,7 +353,7 @@ const MainLogin = () => {
 
       // Native Supabase Sign-in Sync
       try {
-        await supabase.auth.signOut().catch(() => {});
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         const { error: authErr } = await supabase.auth.signInWithPassword({
           email: data.userEmail,
           password: data.dbPassword
@@ -413,7 +413,7 @@ const MainLogin = () => {
 
       // Native Supabase Sign-in Sync
       try {
-        await supabase.auth.signOut().catch(() => {});
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         const { error: authErr } = await supabase.auth.signInWithPassword({
           email: data.userEmail,
           password: data.dbPassword

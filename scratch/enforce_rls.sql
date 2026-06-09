@@ -7,7 +7,7 @@ BEGIN
         SELECT policyname, tablename 
         FROM pg_policies 
         WHERE schemaname = 'public' 
-          AND tablename IN ('admins', 'students', 'exams', 'questions', 'exam_results', 'study_materials', 'login_logs', 'audit_logs', 'personal_assignments', 'exam_late_requests')
+          AND tablename IN ('admins', 'students', 'exams', 'questions', 'exam_results', 'study_materials', 'login_logs', 'audit_logs', 'personal_assignments', 'exam_late_requests', 'tasks')
     LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol.policyname, pol.tablename);
     END LOOP;
@@ -38,6 +38,7 @@ ALTER TABLE public.login_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.personal_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exam_late_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 
 -- 4. CREATE SECURE NON-RECURSIVE POLICIES
 
@@ -144,3 +145,21 @@ CREATE POLICY "Admins full access requests" ON public.exam_late_requests
 
 -- SCHEMA UPGRADE FOR MFA SECRET
 ALTER TABLE public.admins ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(32);
+
+-- RLS POLICIES FOR TASKS (Daily Planner, Journey Log, Task Shares)
+CREATE POLICY "Students manage own tasks" ON public.tasks
+  FOR ALL TO authenticated
+  USING (student_id::text = auth.uid()::text)
+  WITH CHECK (student_id::text = auth.uid()::text);
+
+CREATE POLICY "Admins full access tasks" ON public.tasks
+  FOR ALL TO authenticated
+  USING (public.is_admin(auth.uid()))
+  WITH CHECK (public.is_admin(auth.uid()));
+
+-- Allow students to see task_share entries from others (for friends feed)
+-- student_id on task_share rows is the SENDER's id, not receiver's
+-- So we open SELECT on task_share rows to all authenticated users
+CREATE POLICY "Students read shared tasks" ON public.tasks
+  FOR SELECT TO authenticated
+  USING (status = 'task_share');

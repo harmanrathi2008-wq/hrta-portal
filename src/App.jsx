@@ -56,7 +56,7 @@ function App() {
       if (Date.now() - loginTime > fourHours) {
         console.warn("Session expired on client-side (4-hour limit). Logging out.");
         sessionStorage.clear();
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
         window.location.href = '/?expired=true';
         return;
       }
@@ -79,8 +79,10 @@ function App() {
         if (res.status === 401) {
           const data = await res.json().catch(() => ({}));
           console.warn(`Session rejected by backend: ${data.error || 'unauthorized'}. Logging out.`);
+          // Use local scope so only THIS tab's session is cleared.
+          // Global signOut would broadcast auth state change and potentially disrupt other users' tabs.
           sessionStorage.clear();
-          await supabase.auth.signOut().catch(() => {});
+          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
           const param = data.error === 'session_expired' ? 'expired=true' : 'concurrent=true';
           window.location.href = `/?${param}`;
         }
