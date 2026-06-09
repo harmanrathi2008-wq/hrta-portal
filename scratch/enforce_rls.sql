@@ -1,16 +1,4 @@
--- =====================================================================
--- DATABASE HARDENING & ROW LEVEL SECURITY (RLS) ENFORCEMENT
--- Harman Rathi Testing Agency (HRTA) Portal - Security System Upgrade
--- =====================================================================
-
--- This script enables Row Level Security (RLS) on all system tables
--- and configures granular policies to restrict unauthenticated access,
--- isolate student records to their respective owners, and enforce
--- administrative authority for backend and direct DB calls.
-
--- ---------------------------------------------------------------------
--- 1. ADMINS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR ADMINS
 ALTER TABLE public.admins ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Admins full access" ON public.admins;
@@ -23,9 +11,7 @@ CREATE POLICY "Admins full access" ON public.admins
     EXISTS (SELECT 1 FROM public.admins a WHERE a.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 2. STUDENTS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR STUDENTS
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students read own profile" ON public.students;
@@ -43,9 +29,7 @@ CREATE POLICY "Admins full access students" ON public.students
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 3. EXAMS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR EXAMS
 ALTER TABLE public.exams ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students read exams" ON public.exams;
@@ -63,9 +47,7 @@ CREATE POLICY "Admins full access exams" ON public.exams
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 4. QUESTIONS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR QUESTIONS
 ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students read questions" ON public.questions;
@@ -83,9 +65,7 @@ CREATE POLICY "Admins full access questions" ON public.questions
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 5. EXAM RESULTS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR EXAM RESULTS
 ALTER TABLE public.exam_results ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students manage own results" ON public.exam_results;
@@ -104,9 +84,7 @@ CREATE POLICY "Admins full access exam_results" ON public.exam_results
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 6. STUDY MATERIALS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR STUDY MATERIALS
 ALTER TABLE public.study_materials ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students read materials" ON public.study_materials;
@@ -124,9 +102,7 @@ CREATE POLICY "Admins full access materials" ON public.study_materials
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 7. LOGIN LOGS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR LOGIN LOGS
 ALTER TABLE public.login_logs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users insert own logs" ON public.login_logs;
@@ -147,9 +123,7 @@ CREATE POLICY "Admins read logs" ON public.login_logs
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 8. AUDIT LOGS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR AUDIT LOGS
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Users insert audit logs" ON public.audit_logs;
@@ -164,9 +138,7 @@ CREATE POLICY "Admins read audit logs" ON public.audit_logs
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 9. PERSONAL ASSIGNMENTS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR PERSONAL ASSIGNMENTS
 ALTER TABLE public.personal_assignments ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students read own assignments" ON public.personal_assignments;
@@ -184,9 +156,7 @@ CREATE POLICY "Admins full access assignments" ON public.personal_assignments
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 10. EXAM LATE REQUESTS TABLE POLICIES
--- ---------------------------------------------------------------------
+-- RLS POLICIES FOR EXAM LATE REQUESTS
 ALTER TABLE public.exam_late_requests ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Students manage own requests" ON public.exam_late_requests;
@@ -205,7 +175,5 @@ CREATE POLICY "Admins full access requests" ON public.exam_late_requests
     EXISTS (SELECT 1 FROM public.admins WHERE admins.id = auth.uid())
   );
 
--- ---------------------------------------------------------------------
--- 11. ADMINS TABLE SCHEMA UPGRADE FOR MFA
--- ---------------------------------------------------------------------
+-- SCHEMA UPGRADE FOR MFA SECRET
 ALTER TABLE public.admins ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(32);
