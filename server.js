@@ -989,40 +989,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
   // Derive native Supabase Auth password cryptographically using a deterministic pepper
   const dbPassword = crypto.createHash('sha256').update(stored.userEmail + 'HRTA_SECURE_AUTH_PEPPER_2026').digest('hex');
 
-  // MFA check for admins and superadmins
-  if (stored.role === 'admin' || stored.role === 'super_admin') {
-    try {
-      const { data: dbAdmin, error: adminErr } = await supabaseAdmin
-        .from('admins')
-        .select('mfa_secret')
-        .eq('id', stored.userId)
-        .single();
-
-      if (!adminErr && dbAdmin && dbAdmin.mfa_secret) {
-        // MFA is enabled! Generate a temporary session token (valid for 5 minutes)
-        const tempToken = crypto.createHash('sha256').update(stored.userEmail + dbPassword + Date.now().toString()).digest('hex');
-        mfaStore.set(tempToken, {
-          role: stored.role,
-          userId: stored.userId,
-          userEmail: stored.userEmail,
-          displayName: stored.userEmail,
-          dbPassword: dbPassword
-        });
-        
-        setTimeout(() => mfaStore.delete(tempToken), 5 * 60 * 1000);
-
-        return res.json({
-          mfaRequired: true,
-          tempToken: tempToken,
-          email: stored.userEmail
-        });
-      }
-    } catch (mfaCheckErr) {
-      console.error('MFA DB verification error:', mfaCheckErr.message);
-    }
-  }
-
-  // Self-healing Supabase Auth Sync
+  // Self-healing Supabase Auth Sync (Run immediately so auth user exists & matches ID before any early MFA redirects)
   try {
     const { data: userData, error: getErr } = await supabaseAdmin.auth.admin.getUserByEmail(stored.userEmail);
     if (getErr || !userData || !userData.user) {
@@ -1067,6 +1034,39 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
     }
   } catch (syncErr) {
     console.error("Exception during Supabase Auth Sync:", syncErr.message);
+  }
+
+  // MFA check for admins and superadmins
+  if (stored.role === 'admin' || stored.role === 'super_admin') {
+    try {
+      const { data: dbAdmin, error: adminErr } = await supabaseAdmin
+        .from('admins')
+        .select('mfa_secret')
+        .eq('id', stored.userId)
+        .single();
+
+      if (!adminErr && dbAdmin && dbAdmin.mfa_secret) {
+        // MFA is enabled! Generate a temporary session token (valid for 5 minutes)
+        const tempToken = crypto.createHash('sha256').update(stored.userEmail + dbPassword + Date.now().toString()).digest('hex');
+        mfaStore.set(tempToken, {
+          role: stored.role,
+          userId: stored.userId,
+          userEmail: stored.userEmail,
+          displayName: stored.userEmail,
+          dbPassword: dbPassword
+        });
+        
+        setTimeout(() => mfaStore.delete(tempToken), 5 * 60 * 1000);
+
+        return res.json({
+          mfaRequired: true,
+          tempToken: tempToken,
+          email: stored.userEmail
+        });
+      }
+    } catch (mfaCheckErr) {
+      console.error('MFA DB verification error:', mfaCheckErr.message);
+    }
   }
 
   // Capture IP Address & Log to Database
