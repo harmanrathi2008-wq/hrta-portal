@@ -130,23 +130,17 @@ async function verifyAdminJWT(req, res, next) {
       return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
     }
 
-    const { data: latestLog, error: logErr } = await supabaseAdmin
+    const { data: currentLog, error: logErr } = await supabaseAdmin
       .from('login_logs')
-      .select('id, login_at')
-      .eq('user_id', user.id)
-      .order('login_at', { ascending: false })
-      .limit(1)
+      .select('login_at')
+      .eq('id', sessionId)
       .single();
 
-    if (logErr || !latestLog) {
+    if (logErr || !currentLog) {
       return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
     }
 
-    if (latestLog.id !== sessionId) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'You have been logged out because a new login was detected from another device.' });
-    }
-
-    const sessionAge = Date.now() - new Date(latestLog.login_at).getTime();
+    const sessionAge = Date.now() - new Date(currentLog.login_at).getTime();
     const fourHours = 4 * 60 * 60 * 1000;
     if (sessionAge > fourHours) {
       return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
@@ -192,29 +186,23 @@ async function verifyUserJWT(req, res, next) {
       return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
     }
 
-    // Concurrent Session & 4-Hour Lifetime Validation
+    // Session 4-Hour Lifetime Validation
     const sessionId = req.headers['x-session-id'] || req.query.sessionId;
     if (!sessionId) {
       return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
     }
 
-    const { data: latestLog, error: logErr } = await supabaseAdmin
+    const { data: currentLog, error: logErr } = await supabaseAdmin
       .from('login_logs')
-      .select('id, login_at')
-      .eq('user_id', user.id)
-      .order('login_at', { ascending: false })
-      .limit(1)
+      .select('login_at')
+      .eq('id', sessionId)
       .single();
 
-    if (logErr || !latestLog) {
+    if (logErr || !currentLog) {
       return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
     }
 
-    if (latestLog.id !== sessionId) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'You have been logged out because a new login was detected from another device.' });
-    }
-
-    const sessionAge = Date.now() - new Date(latestLog.login_at).getTime();
+    const sessionAge = Date.now() - new Date(currentLog.login_at).getTime();
     const fourHours = 4 * 60 * 60 * 1000;
     if (sessionAge > fourHours) {
       return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
