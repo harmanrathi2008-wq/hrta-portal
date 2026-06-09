@@ -368,9 +368,12 @@ export default function ExamInterface() {
               };
 
               // Add local tracks to peer connection
-              stream.getTracks().forEach((track) => {
-                pc.addTrack(track, stream);
-              });
+              const activeStream = localStreamRef.current || stream;
+              if (activeStream) {
+                activeStream.getTracks().forEach((track) => {
+                  pc.addTrack(track, activeStream);
+                });
+              }
 
               // Send ice candidate
               pc.onicecandidate = (event) => {
@@ -437,8 +440,9 @@ export default function ExamInterface() {
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
+      const activeStream = localStreamRef.current || stream;
+      if (activeStream) {
+        activeStream.getTracks().forEach((track) => track.stop());
       }
       supabase.removeChannel(channel);
       sessionStorage.removeItem("cameraGranted");
