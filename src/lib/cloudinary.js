@@ -1,3 +1,5 @@
+import { supabase } from './supabase'
+
 // Cloudinary configuration
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'dayxiswon'
 const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'hrta_uploads'
@@ -41,9 +43,15 @@ export const uploadImageToCloudinary = async (file) => {
  */
 export const deleteImageFromCloudinary = async (publicId) => {
   try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+
     const response = await fetch('/api/delete-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({ public_id: publicId })
     })
     

@@ -129,10 +129,18 @@ const ReviewSubmission = () => {
       const admin = JSON.parse(sessionStorage.getItem('admin') || '{}');
       const role = sessionStorage.getItem('role') || 'admin';
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
       
       await fetch(`${apiBaseUrl}/api/audit-log`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
         body: JSON.stringify({
           userId: admin.id || 'Unknown',
           userRole: role,

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { supabase } from '../lib/supabase'
 
 export default function Login() {
   const [mode, setMode] = useState('student')
@@ -104,6 +105,20 @@ export default function Login() {
         sessionStorage.setItem('userEmail', email)
         sessionStorage.setItem('role', data.role)
         sessionStorage.setItem('userId', data.userId)
+        if (data.loginLogId) sessionStorage.setItem('loginLogId', data.loginLogId)
+        sessionStorage.setItem('loginTime', new Date().toISOString())
+
+        // Native Supabase Sign-in Sync
+        try {
+          const { error: authErr } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: data.dbPassword
+          });
+          if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+        } catch (e) {
+          console.error("Supabase Auth Sync error:", e.message);
+        }
+
         toast.success('Login successful!')
 
         if (data.role === 'super_admin' || data.role === 'admin') {

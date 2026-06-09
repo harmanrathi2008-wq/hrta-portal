@@ -140,10 +140,18 @@ export default function AdminMessages() {
     try {
       const fileName = `admin-messages/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
       // 1. Get signed upload URL from backend
       const res = await fetch(`${API_BASE}/api/get-upload-url`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
         body: JSON.stringify({ fileName }),
       });
 
@@ -152,7 +160,7 @@ export default function AdminMessages() {
         throw new Error(errData.error || 'Failed to get secure upload URL');
       }
 
-      const { token, path } = await res.json();
+      const { token: uploadToken, path } = await res.json();
 
       // Simulate progress while uploading
       const progressInterval = setInterval(() => {
@@ -162,7 +170,7 @@ export default function AdminMessages() {
       // 2. Upload file directly to Supabase using the signed URL/token
       const { data, error } = await supabase.storage
         .from('hrta-files')
-        .uploadToSignedUrl(path, token, file, {
+        .uploadToSignedUrl(path, uploadToken, file, {
           cacheControl: '3600',
           upsert: false,
           contentType: 'application/pdf',
@@ -204,10 +212,18 @@ export default function AdminMessages() {
         .select('id, full_name, email, application_id')
         .in('id', selectedStudents);
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
       // Send via backend
       const response = await fetch(`${API_BASE}/api/admin-message`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
         body: JSON.stringify({
           students: studentData,
           subject: subject.trim(),

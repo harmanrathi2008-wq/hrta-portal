@@ -194,12 +194,23 @@ const ExamQuestions = () => {
     setImagePreview(q.image_url || '');
   };
 
+  const getAuthHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'X-Session-ID': loginLogId
+    };
+  };
+
   const uploadImageToCloudinary = async (base64Image) => {
     try {
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/upload-image`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify({ image: base64Image })
       });
       const data = await response.json();
@@ -278,7 +289,7 @@ const ExamQuestions = () => {
               const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
               await fetch(`${apiBaseUrl}/api/delete-image`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: await getAuthHeaders(),
                 body: JSON.stringify({ public_id: editingQuestion.image_public_id })
               });
             } catch (e) {
@@ -292,7 +303,7 @@ const ExamQuestions = () => {
             const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
             await fetch(`${apiBaseUrl}/api/delete-image`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: await getAuthHeaders(),
               body: JSON.stringify({ public_id: editingQuestion.image_public_id })
             });
           } catch (e) {
@@ -359,7 +370,7 @@ const ExamQuestions = () => {
           try {
             await fetch(`${apiBaseUrl}/api/delete-image`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: await getAuthHeaders(),
               body: JSON.stringify({ public_id: pubId })
             });
           } catch (e) {
@@ -395,7 +406,7 @@ const ExamQuestions = () => {
             try {
               await fetch(`${apiBaseUrl}/api/delete-image`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: await getAuthHeaders(),
                 body: JSON.stringify({ public_id: parsed.image_public_id })
               });
             } catch (e) {
@@ -409,7 +420,7 @@ const ExamQuestions = () => {
       if (imagePublicId) {
         await fetch(`${apiBaseUrl}/api/delete-image`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getAuthHeaders(),
           body: JSON.stringify({ public_id: imagePublicId })
         });
       }

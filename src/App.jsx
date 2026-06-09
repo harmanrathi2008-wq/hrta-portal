@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { supabase } from './lib/supabase'
 
 // Main Login Page (JEE Main Style)
 import MainLogin from './pages/MainLogin'
@@ -44,26 +45,57 @@ function App() {
   useEffect(() => {
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
     
-    const sendHeartbeat = async () => {
+    const checkSessionAndHeartbeat = async () => {
       const loginLogId = sessionStorage.getItem('loginLogId');
-      if (!loginLogId) return;
+      const loginTimeStr = sessionStorage.getItem('loginTime');
+      if (!loginLogId || !loginTimeStr) return;
 
+      // 1. Client-side absolute 4-hour expiry check
+      const loginTime = new Date(loginTimeStr).getTime();
+      const fourHours = 4 * 60 * 60 * 1000;
+      if (Date.now() - loginTime > fourHours) {
+        console.warn("Session expired on client-side (4-hour limit). Logging out.");
+        sessionStorage.clear();
+        await supabase.auth.signOut();
+        window.location.href = '/?expired=true';
+        return;
+      }
+
+      // 2. Send heartbeat to backend with secure headers
       try {
-        await fetch(`${apiBaseUrl}/api/session-heartbeat`, {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || '';
+
+        const res = await fetch(`${apiBaseUrl}/api/session-heartbeat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Session-ID': loginLogId
+          },
           body: JSON.stringify({ logId: loginLogId })
         });
+
+        if (res.status === 401) {
+          const data = await res.json();
+          if (data.error === 'session_expired' || data.error === 'session_invalidated') {
+            console.warn(`Session rejected by backend: ${data.error}. Logging out.`);
+            sessionStorage.clear();
+            await supabase.auth.signOut();
+            const param = data.error === 'session_expired' ? 'expired=true' : 'concurrent=true';
+            window.location.href = `/?${param}`;
+          }
+        }
       } catch (err) {
         console.warn('Failed to send heartbeat', err);
       }
     };
 
-    // Send initial heartbeat
-    sendHeartbeat();
+    // Send initial heartbeat & check
+    checkSessionAndHeartbeat();
 
-    // Send heartbeat every 30 seconds
-    const interval = setInterval(sendHeartbeat, 30000);
+    // Check session and send heartbeat every 30 seconds
+    const interval = setInterval(checkSessionAndHeartbeat, 30000);
 
     return () => clearInterval(interval);
   }, []);

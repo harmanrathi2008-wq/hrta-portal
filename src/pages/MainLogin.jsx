@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 
 const MainLogin = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('student'); // 'student' or 'super_admin'
-  const [step, setStep] = useState('login'); // 'login' or 'otp'
+  const [step, setStep] = useState('login'); // 'login', 'otp', 'mfa_challenge', or 'mfa_setup'
   
   // Form State
   const [applicationId, setApplicationId] = useState('');
@@ -18,6 +19,14 @@ const MainLogin = () => {
   const [otp, setOtp] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // MFA States
+  const [mfaTempToken, setMfaTempToken] = useState('');
+  const [mfaEmail, setMfaEmail] = useState('');
+  const [mfaSecretKey, setMfaSecretKey] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [pendingLoginData, setPendingLoginData] = useState(null);
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -35,6 +44,61 @@ const MainLogin = () => {
     // Clear any existing session on login page load to prevent conflicts
     sessionStorage.clear();
   }, [activeTab]);
+
+  // Dynamically load Cloudflare Turnstile Script
+  useEffect(() => {
+    if (!document.querySelector('script[src*="challenges.cloudflare.com"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    }
+  }, []);
+
+  // Explicitly render Turnstile Widget
+  useEffect(() => {
+    let interval;
+    const renderWidget = () => {
+      const container = document.getElementById('turnstile-container');
+      if (window.turnstile && container) {
+        container.innerHTML = '';
+        try {
+          window.turnstile.render(container, {
+            sitekey: '1x00000000000000000000AA', // Official Cloudflare Testing Sitekey
+            callback: (token) => {
+              setTurnstileToken(token);
+            },
+            'expired-callback': () => {
+              setTurnstileToken('');
+            },
+            'error-callback': () => {
+              setTurnstileToken('');
+            }
+          });
+        } catch (e) {
+          console.warn('Turnstile render error:', e.message);
+        }
+      }
+    };
+
+    if (step === 'login') {
+      if (window.turnstile) {
+        renderWidget();
+      } else {
+        interval = setInterval(() => {
+          if (window.turnstile) {
+            renderWidget();
+            clearInterval(interval);
+          }
+        }, 100);
+      }
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [step, activeTab]);
 
   // Canvas Color-Changing Particle System Effect
   useEffect(() => {
@@ -117,6 +181,15 @@ const MainLogin = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('expired') === 'true' || params.get('session_expired') === 'true') {
+      setError('Your session has expired (4-hour limit). Please log in again.');
+    } else if (params.get('concurrent') === 'true' || params.get('session_invalidated') === 'true') {
+      setError('You have been logged out because a new login was detected on another device.');
+    }
+  }, []);
+
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -127,6 +200,11 @@ const MainLogin = () => {
       return;
     }
 
+    if (!turnstileToken) {
+      setError('Security verification failed. Please complete the Turnstile challenge.');
+      return;
+    }
+
     setLoading(true);
     try {
       const endpoint = activeTab === 'student' ? '/api/send-student-otp' : '/api/send-superadmin-otp';
@@ -134,30 +212,30 @@ const MainLogin = () => {
       const payload = activeTab === 'student' 
         ? { 
             applicationId: applicationId.trim(), 
-            dateOfBirth: dob 
+            dateOfBirth: dob,
+            turnstileToken
           } 
         : { 
             email: email.trim(), 
-            secretKey: secretKey.trim() 
+            secretKey: secretKey.trim(),
+            turnstileToken
           };
 
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+      const sendRes = await fetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || data.message || 'Authentication failed. Please check your credentials.');
+      const sendData = await sendRes.json();
+      if (!sendRes.ok) {
+        throw new Error(sendData.error || sendData.message || 'Failed to send OTP.');
       }
 
       setStep('otp');
     } catch (err) {
       setError(err.message);
-      generateCaptcha();
     } finally {
       setLoading(false);
     }
@@ -188,10 +266,42 @@ const MainLogin = () => {
         throw new Error(data.error || data.message || 'Invalid or Expired OTP.');
       }
 
+      // Check if MFA challenge is required
+      if (data.mfaRequired) {
+        setMfaTempToken(data.tempToken);
+        setMfaEmail(data.email || identifier);
+        setStep('mfa_challenge');
+        setMfaCode('');
+        setLoading(false);
+        return;
+      }
+
+      // Check if MFA setup is required
+      if (data.mfaSetupRequired) {
+        setPendingLoginData(data);
+        setMfaSecretKey(data.mfaSecret);
+        setStep('mfa_setup');
+        setMfaCode('');
+        setLoading(false);
+        return;
+      }
+
       sessionStorage.setItem('role', data.role);
       sessionStorage.setItem('userId', data.userId);
       if (data.userEmail) sessionStorage.setItem('userEmail', data.userEmail);
       if (data.loginLogId) sessionStorage.setItem('loginLogId', data.loginLogId);
+      sessionStorage.setItem('loginTime', new Date().toISOString());
+
+      // Native Supabase Sign-in Sync
+      try {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: data.userEmail,
+          password: data.dbPassword
+        });
+        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+      } catch (e) {
+        console.error("Supabase Auth Sync error:", e.message);
+      }
 
       if (data.role === 'super_admin' || data.role === 'admin') {
         navigate('/admin/dashboard', { replace: true });
@@ -199,6 +309,119 @@ const MainLogin = () => {
         navigate('/student/dashboard', { replace: true });
       }
       
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMfaChallengeSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const response = await fetch(`${apiBaseUrl}/api/verify-mfa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tempToken: mfaTempToken,
+          code: mfaCode.trim()
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || data.message || 'Invalid or Expired MFA code.');
+      }
+
+      // MFA challenge passed! Set credentials and redirect
+      sessionStorage.setItem('role', data.role);
+      sessionStorage.setItem('userId', data.userId);
+      if (data.userEmail) sessionStorage.setItem('userEmail', data.userEmail);
+      if (data.loginLogId) sessionStorage.setItem('loginLogId', data.loginLogId);
+      sessionStorage.setItem('loginTime', new Date().toISOString());
+
+      // Native Supabase Sign-in Sync
+      try {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: data.userEmail,
+          password: data.dbPassword
+        });
+        if (authErr) console.error("Supabase Auth Sync failed:", authErr.message);
+      } catch (e) {
+        console.error("Supabase Auth Sync error:", e.message);
+      }
+
+      navigate('/admin/dashboard', { replace: true });
+
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMfaSetupSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      if (!pendingLoginData) {
+        throw new Error('MFA setup session missing. Please try logging in again.');
+      }
+
+      // Authenticate temporary session with Supabase so setup-mfa middleware approves
+      try {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: pendingLoginData.userEmail,
+          password: pendingLoginData.dbPassword
+        });
+        if (authErr) throw authErr;
+      } catch (e) {
+        console.error("Supabase Auth Sync error during MFA setup:", e.message);
+        throw new Error("Failed to authenticate session with database: " + e.message);
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('Session token not found. Please log in again.');
+      }
+
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const response = await fetch(`${apiBaseUrl}/api/setup-mfa`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          secret: mfaSecretKey,
+          code: mfaCode.trim()
+        }),
+      });
+
+      const setupResult = await response.json();
+
+      if (!response.ok) {
+        throw new Error(setupResult.error || setupResult.message || 'MFA setup verification failed.');
+      }
+
+      // MFA setup succeeded! Complete login by populating sessionStorage
+      sessionStorage.setItem('role', pendingLoginData.role);
+      sessionStorage.setItem('userId', pendingLoginData.userId);
+      if (pendingLoginData.userEmail) sessionStorage.setItem('userEmail', pendingLoginData.userEmail);
+      if (pendingLoginData.loginLogId) sessionStorage.setItem('loginLogId', pendingLoginData.loginLogId);
+      sessionStorage.setItem('loginTime', new Date().toISOString());
+
+      navigate('/admin/dashboard', { replace: true });
+
     } catch (err) {
       setError(err.message);
     } finally {
@@ -412,9 +635,14 @@ const MainLogin = () => {
                       type="text" required
                       value={captchaInput}
                       onChange={(e) => setCaptchaInput(e.target.value)}
-                      className="w-full border border-white/10 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500/30 bg-transparent text-white font-semibold transition-all text-sm focus:border-transparent placeholder-slate-600"
+                      className="w-full border border-white/10 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500/30 bg-transparent text-white font-semibold transition-all text-sm focus:border-transparent placeholder-slate-600 mb-4"
                       placeholder="Enter Security Pin"
                     />
+
+                    {/* Cloudflare Turnstile */}
+                    <div className="flex justify-center pt-2">
+                      <div id="turnstile-container" data-theme="dark"></div>
+                    </div>
                   </div>
 
                   <button
@@ -468,6 +696,109 @@ const MainLogin = () => {
                       className="w-2/3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 py-3.5 rounded-xl font-black shadow-lg transition-colors flex justify-center items-center uppercase text-xs disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       {loading ? 'Verifying...' : 'Verify & Proceed'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* STEP 3: MFA CHALLENGE */}
+              {step === 'mfa_challenge' && (
+                <form onSubmit={handleMfaChallengeSubmit} className="space-y-6">
+                  <div className="text-center mb-6">
+                    <div className="w-16 h-16 bg-cyan-500/10 border border-cyan-500/25 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
+                      <svg className="w-8 h-8 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                      </svg>
+                    </div>
+                    <h3 className="font-bold text-lg text-white">Multi-Factor Authentication</h3>
+                    <p className="text-xs text-slate-400 mt-2 font-medium leading-relaxed">
+                      Enter the 6-digit verification code from your Authenticator app for <strong className="text-cyan-400">{mfaEmail}</strong>.
+                    </p>
+                  </div>
+
+                  <div>
+                    <input
+                      type="text" required maxLength="6"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                      className="w-full border border-white/10 px-4 py-4 text-center text-3xl font-black tracking-[0.7em] rounded-xl bg-transparent focus:outline-none focus:border-cyan-500 transition-colors text-white"
+                      placeholder="••••••"
+                    />
+                  </div>
+
+                  <div className="flex space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setStep('login'); setMfaCode(''); }}
+                      className="w-1/3 bg-white/5 hover:bg-white/10 text-slate-300 py-3.5 rounded-xl font-bold transition-colors border border-white/10 shadow-sm text-xs uppercase"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading || mfaCode.length !== 6}
+                      className="w-2/3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 py-3.5 rounded-xl font-black shadow-lg transition-colors flex justify-center items-center uppercase text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {loading ? 'Verifying...' : 'Verify & Login'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* STEP 4: MFA SETUP */}
+              {step === 'mfa_setup' && (
+                <form onSubmit={handleMfaSetupSubmit} className="space-y-5">
+                  <div className="text-center mb-4">
+                    <div className="w-12 h-12 bg-cyan-500/10 border border-cyan-500/25 rounded-full flex items-center justify-center mx-auto mb-3 shadow-md">
+                      <svg className="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h.01M16 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                      </svg>
+                    </div>
+                    <h3 className="font-bold text-base text-white">Enable Multi-Factor Authentication</h3>
+                    <p className="text-[11px] text-slate-400 mt-1 font-medium leading-relaxed">
+                      Scan the QR code or enter the key manually in your Authenticator app (e.g. Google Authenticator) to enable 2FA security.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col items-center bg-white/5 border border-white/10 p-4 rounded-xl space-y-3">
+                    <img 
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent('otpauth://totp/HRTA:' + (pendingLoginData?.userEmail || 'admin') + '?secret=' + mfaSecretKey + '&issuer=HRTA')}`}
+                      alt="MFA QR Code"
+                      className="w-[150px] h-[150px] bg-white p-2 rounded-lg border border-cyan-500/20 shadow-md"
+                    />
+                    <div className="text-center w-full">
+                      <span className="block text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Secret Key (Manual Entry)</span>
+                      <code className="text-xs bg-slate-900/60 text-cyan-400 border border-white/5 px-2.5 py-1 rounded-md font-mono select-all tracking-wider block break-all">
+                        {mfaSecretKey}
+                      </code>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-1.5 text-center">Verify Authenticator Code</label>
+                    <input
+                      type="text" required maxLength="6"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                      className="w-full border border-white/10 px-4 py-3 text-center text-2xl font-black tracking-[0.5em] rounded-xl bg-transparent focus:outline-none focus:border-cyan-500 transition-colors text-white"
+                      placeholder="••••••"
+                    />
+                  </div>
+
+                  <div className="flex space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setStep('login'); setMfaCode(''); }}
+                      className="w-1/3 bg-white/5 hover:bg-white/10 text-slate-300 py-3.5 rounded-xl font-bold transition-colors border border-white/10 shadow-sm text-xs uppercase"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading || mfaCode.length !== 6}
+                      className="w-2/3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 py-3.5 rounded-xl font-black shadow-lg transition-colors flex justify-center items-center uppercase text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {loading ? 'Enabling...' : 'Verify & Enable'}
                     </button>
                   </div>
                 </form>

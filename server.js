@@ -12,6 +12,7 @@ import { configureSecurityHeaders } from './middleware/securityHeaders.js'
 import { apiLimiter, authLimiter, heavyRequestLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
 import crypto from 'crypto'
+import { body, validationResult } from 'express-validator'
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -72,7 +73,7 @@ const supabase = createClient(
 
 const supabaseAdmin = createClient(
   process.env.VITE_SUPABASE_URL,
-  process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
 )
 
 // Resend - Robust initialization supporting VITE_ fallback and filtering out bad environment strings ("undefined", "null")
@@ -101,6 +102,131 @@ const SUPER_ADMIN_SECRET = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_
 
 // Store OTPs
 const otpStore = new Map()
+
+// Middleware to verify Admin JWT from Supabase Auth
+async function verifyAdminJWT(req, res, next) {
+  try {
+    let token = '';
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({ error: 'Access Denied: No session token provided.' });
+    }
+    
+    // Validate JWT via Supabase Auth server
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
+    }
+
+    // Concurrent Session & 4-Hour Lifetime Validation
+    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+    if (!sessionId) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
+    }
+
+    const { data: latestLog, error: logErr } = await supabaseAdmin
+      .from('login_logs')
+      .select('id, login_at')
+      .eq('user_id', user.id)
+      .order('login_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (logErr || !latestLog) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
+    }
+
+    if (latestLog.id !== sessionId) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'You have been logged out because a new login was detected from another device.' });
+    }
+
+    const sessionAge = Date.now() - new Date(latestLog.login_at).getTime();
+    const fourHours = 4 * 60 * 60 * 1000;
+    if (sessionAge > fourHours) {
+      return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
+    }
+
+    // Verify Admin status in database
+    const { data: adminUser, error: dbErr } = await supabaseAdmin
+      .from('admins')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (dbErr || !adminUser || !['admin', 'super_admin'].includes(adminUser.role)) {
+      return res.status(403).json({ error: 'Access Denied: Administrator role required.' });
+    }
+
+    req.user = user;
+    req.role = adminUser.role;
+    next();
+  } catch (err) {
+    console.error('Admin token validation error:', err.message);
+    res.status(500).json({ error: 'Internal security authentication error.' });
+  }
+}
+
+// Middleware to verify Student or Admin JWT
+async function verifyUserJWT(req, res, next) {
+  try {
+    let token = '';
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query && req.query.token) {
+      token = req.query.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({ error: 'Access Denied: No session token provided.' });
+    }
+
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+    if (authErr || !user) {
+      return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
+    }
+
+    // Concurrent Session & 4-Hour Lifetime Validation
+    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+    if (!sessionId) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
+    }
+
+    const { data: latestLog, error: logErr } = await supabaseAdmin
+      .from('login_logs')
+      .select('id, login_at')
+      .eq('user_id', user.id)
+      .order('login_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (logErr || !latestLog) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
+    }
+
+    if (latestLog.id !== sessionId) {
+      return res.status(401).json({ error: 'session_invalidated', message: 'You have been logged out because a new login was detected from another device.' });
+    }
+
+    const sessionAge = Date.now() - new Date(latestLog.login_at).getTime();
+    const fourHours = 4 * 60 * 60 * 1000;
+    if (sessionAge > fourHours) {
+      return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    console.error('User token validation error:', err.message);
+    res.status(500).json({ error: 'Internal security authentication error.' });
+  }
+}
 
 // Domain emails
 const FROM_EMAIL = process.env.FROM_EMAIL_STUDENT || 'notifications@harmanrathitportal.nxtdev.xyz'
@@ -292,8 +418,288 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' })
 })
 
+// ============ SECURITY & MFA HELPERS ============
+
+// Temporary store for active MFA login challenges (valid for 5 minutes)
+const mfaStore = new Map();
+
+// Cloudflare Turnstile Verification Middleware
+async function verifyTurnstileToken(req, res, next) {
+  try {
+    const turnstileToken = req.body.turnstileToken;
+    if (!turnstileToken) {
+      return res.status(400).json({ error: 'Please complete the security challenge.' });
+    }
+
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+    const ip = rawIp.split(',')[0].trim();
+    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000UN';
+
+    const response = await axios.post('https://challenges.cloudflare.com/turnstile/v0/siteverify', null, {
+      params: {
+        secret: turnstileSecret,
+        response: turnstileToken,
+        remoteip: ip
+      }
+    });
+
+    if (!response.data.success) {
+      return res.status(400).json({ error: 'Security challenge verification failed. Please try again.' });
+    }
+    next();
+  } catch (err) {
+    console.error('Turnstile verification error (falling back to pass):', err.message);
+    next(); // Fallback to avoid complete denial if Cloudflare service is down
+  }
+}
+
+// Validator Helper for Express-Validator Results
+const handleValidationErrors = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: errors.array()[0].msg });
+  }
+  next();
+};
+
+// Express-Validator Payload Schemas
+const validateVerifyOtp = [
+  body('otp').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('OTP must be a 6-digit number'),
+  body('email').optional().isEmail().withMessage('Invalid email format'),
+  body('identifier').optional().isString().trim().notEmpty().withMessage('Identifier cannot be empty'),
+  handleValidationErrors
+];
+
+const validateAuditLog = [
+  body('userId').isString().trim().notEmpty().withMessage('User ID is required'),
+  body('userRole').isIn(['student', 'admin', 'super_admin']).withMessage('Invalid user role'),
+  body('action').isString().trim().notEmpty().withMessage('Action is required'),
+  handleValidationErrors
+];
+
+const validateUploadImage = [
+  body('image').isString().notEmpty().withMessage('Base64 image data is required'),
+  handleValidationErrors
+];
+
+const validateDeleteImage = [
+  body('public_id').isString().notEmpty().withMessage('Cloudinary public ID is required'),
+  handleValidationErrors
+];
+
+const validateGetUploadUrl = [
+  body('fileName').isString().notEmpty().withMessage('File name is required'),
+  handleValidationErrors
+];
+
+// Native TOTP MFA Functions using Built-in crypto
+function generateBase32Secret() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let secret = '';
+  for (let i = 0; i < 16; i++) {
+    secret += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return secret;
+}
+
+function decodeBase32(charstr) {
+  const base32chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  let hex = '';
+  const cleanStr = charstr.replace(/=+$/, '').toUpperCase();
+  
+  for (let i = 0; i < cleanStr.length; i++) {
+    const val = base32chars.indexOf(cleanStr.charAt(i));
+    if (val === -1) throw new Error('Invalid base32 character');
+    bits += val.toString(2).padStart(5, '0');
+  }
+  
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    const chunk = bits.substring(i, i + 8);
+    hex += parseInt(chunk, 2).toString(16).padStart(2, '0');
+  }
+  return Buffer.from(hex, 'hex');
+}
+
+function verifyTOTP(token, secret, window = 1) {
+  try {
+    const key = decodeBase32(secret);
+    const epoch = Math.floor(Date.now() / 1000);
+    const counter = Math.floor(epoch / 30);
+    
+    for (let i = -window; i <= window; i++) {
+      const countBuf = Buffer.alloc(8);
+      const val = BigInt(counter + i);
+      countBuf.writeBigInt64BE(val);
+      
+      const hmac = crypto.createHmac('sha1', key).update(countBuf).digest();
+      const offset = hmac[hmac.length - 1] & 0xf;
+      const code = ((hmac[offset] & 0x7f) << 24) |
+                   ((hmac[offset + 1] & 0xff) << 16) |
+                   ((hmac[offset + 2] & 0xff) << 8) |
+                   (hmac[offset + 3] & 0xff);
+                   
+      const otp = (code % 1000000).toString().padStart(6, '0');
+      if (otp === token.trim()) {
+        return true;
+      }
+    }
+  } catch (e) {
+    console.error('TOTP validation error:', e.message);
+  }
+  return false;
+}
+
+// ============ VERIFY MFA ============
+app.post('/api/verify-mfa', authLimiter, [
+  body('tempToken').isString().notEmpty().withMessage('Session token is required'),
+  body('code').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('Authenticator code must be a 6-digit number'),
+  handleValidationErrors
+], async (req, res) => {
+  const { tempToken, code } = req.body;
+
+  const stored = mfaStore.get(tempToken);
+  if (!stored) {
+    return res.status(400).json({ error: 'MFA session has expired or is invalid. Please log in again.' });
+  }
+
+  try {
+    const { data: dbAdmin, error: adminErr } = await supabaseAdmin
+      .from('admins')
+      .select('mfa_secret')
+      .eq('id', stored.userId)
+      .single();
+
+    if (adminErr || !dbAdmin || !dbAdmin.mfa_secret) {
+      return res.status(400).json({ error: 'MFA setup not found. Please log in again.' });
+    }
+
+    const isValid = verifyTOTP(code, dbAdmin.mfa_secret);
+    if (!isValid) {
+      // Capture IP Address & Log failed attempt to track anomalies
+      const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+      const ip = rawIp.split(',')[0].trim();
+      try {
+        await supabaseAdmin
+          .from('audit_logs')
+          .insert({
+            user_id: stored.userId,
+            user_role: stored.role,
+            display_name: stored.displayName || stored.userEmail || 'Admin',
+            action: 'LOGIN_MFA_FAILED',
+            details: { email: stored.userEmail, reason: 'Invalid TOTP code entered', ip_address: ip },
+            ip_address: ip
+          });
+      } catch (auditErr) {
+        console.error("Failed to insert failed MFA audit log:", auditErr.message);
+      }
+      return res.status(400).json({ error: 'Invalid authenticator code.' });
+    }
+
+    // Clear MFA store
+    mfaStore.delete(tempToken);
+
+    // Capture IP Address & Log to Database
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+
+    let logId = null;
+    const { data: logData, error: logErr } = await supabase
+      .from('login_logs')
+      .insert({
+        user_id: stored.userId,
+        user_role: stored.role,
+        display_name: stored.displayName || stored.userEmail || 'Admin',
+        ip_address: ip,
+        location: 'Resolving location...'
+      })
+      .select()
+      .single();
+
+    if (logData) {
+      logId = logData.id;
+      resolveGeoLocationAndUpdate(logData.id, ip);
+    }
+
+    // Write to audit_logs
+    try {
+      await supabaseAdmin
+        .from('audit_logs')
+        .insert({
+          user_id: stored.userId,
+          user_role: stored.role,
+          display_name: stored.displayName || stored.userEmail || 'Admin',
+          action: 'ADMIN_MFA_LOGIN',
+          details: { email: stored.userEmail, login_log_id: logId },
+          ip_address: ip
+        });
+    } catch (auditErr) {
+      console.error("Failed to insert admin MFA login audit log:", auditErr.message);
+    }
+
+    res.json({
+      message: 'Login successful',
+      role: stored.role,
+      userId: stored.userId,
+      userEmail: stored.userEmail,
+      loginLogId: logId,
+      dbPassword: stored.dbPassword
+    });
+  } catch (err) {
+    console.error('MFA validation crash:', err.message);
+    res.status(500).json({ error: 'Internal server error during MFA authentication.' });
+  }
+});
+
+// ============ SETUP MFA ============
+app.post('/api/setup-mfa', verifyAdminJWT, [
+  body('secret').isString().isLength({ min: 16, max: 16 }).withMessage('Invalid MFA secret key'),
+  body('code').isString().isLength({ min: 6, max: 6 }).isNumeric().withMessage('Verification code must be 6 digits'),
+  handleValidationErrors
+], async (req, res) => {
+  const { secret, code } = req.body;
+
+  const isValid = verifyTOTP(code, secret);
+  if (!isValid) {
+    return res.status(400).json({ error: 'Invalid verification code. Please check your authenticator app.' });
+  }
+
+  try {
+    const { error: updateErr } = await supabaseAdmin
+      .from('admins')
+      .update({ mfa_secret: secret })
+      .eq('id', req.user.id);
+
+    if (updateErr) throw updateErr;
+
+    // Log audit event
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+    
+    try {
+      await supabaseAdmin
+        .from('audit_logs')
+        .insert({
+          user_id: req.user.id,
+          user_role: req.role,
+          display_name: req.user.email,
+          action: 'ADMIN_MFA_ENABLED',
+          details: { email: req.user.email },
+          ip_address: ip
+        });
+    } catch (auditErr) {
+      console.error("Failed to audit MFA setup:", auditErr.message);
+    }
+
+    res.json({ success: true, message: 'Multi-Factor Authentication enabled successfully.' });
+  } catch (err) {
+    console.error('MFA setup update error:', err.message);
+    res.status(500).json({ error: 'Failed to save MFA configuration.' });
+  }
+});
+
 // ============ ADMIN OTP ============
-app.post('/api/send-admin-otp', authLimiter, validateEmailInput, async (req, res) => {
+app.post('/api/send-admin-otp', authLimiter, verifyTurnstileToken, validateEmailInput, async (req, res) => {
   const { email } = req.body
 
   if (!email) {
@@ -354,7 +760,7 @@ app.post('/api/send-admin-otp', authLimiter, validateEmailInput, async (req, res
 })
 
 // ============ SUPER ADMIN OTP ============
-app.post('/api/send-superadmin-otp', authLimiter, validateEmailInput, async (req, res) => {
+app.post('/api/send-superadmin-otp', authLimiter, verifyTurnstileToken, validateEmailInput, async (req, res) => {
   const { email, secretKey } = req.body
 
   if (!email || !secretKey) {
@@ -419,7 +825,7 @@ app.post('/api/send-superadmin-otp', authLimiter, validateEmailInput, async (req
 })
 
 // ============ STUDENT OTP ============
-app.post('/api/send-student-otp', authLimiter, async (req, res) => {
+app.post('/api/send-student-otp', authLimiter, verifyTurnstileToken, async (req, res) => {
   const { applicationId, dateOfBirth } = req.body
 
   if (!applicationId || !dateOfBirth) {
@@ -487,14 +893,10 @@ app.post('/api/send-student-otp', authLimiter, async (req, res) => {
 })
 
 // ============ VERIFY OTP (BULLETPROOF) ============
-app.post('/api/verify-otp', authLimiter, async (req, res) => {
+app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => {
   // Support both 'identifier' and legacy 'email' from frontend payload
   const incomingIdentifier = req.body.identifier || req.body.email;
   const otp = req.body.otp;
-
-  if (!incomingIdentifier || !otp) {
-    return res.status(400).json({ error: 'Identifier and OTP are required' })
-  }
 
   // NORMALIZE THE LOOKUP KEY to perfectly match how we stored it
   const lookupKey = incomingIdentifier.toLowerCase().trim();
@@ -509,7 +911,24 @@ app.post('/api/verify-otp', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'OTP has expired. Please request a new one.' })
   }
 
-  if (otp !== '694774' && stored.otp !== otp) {
+  if (stored.otp !== otp) {
+    // Audit log for failed attempt to track anomalies/brute force
+    try {
+      const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+      const ip = rawIp.split(',')[0].trim();
+      await supabaseAdmin
+        .from('audit_logs')
+        .insert({
+          user_id: stored.userId || 'Unknown',
+          user_role: stored.role || 'Anonymous',
+          display_name: stored.userEmail || 'Anonymous',
+          action: 'LOGIN_OTP_FAILED',
+          details: { email: stored.userEmail, reason: 'Invalid OTP code entered', ip_address: ip },
+          ip_address: ip
+        });
+    } catch (auditErr) {
+      console.error("Failed to insert failed OTP audit log:", auditErr.message);
+    }
     return res.status(400).json({ error: 'Invalid OTP' })
   }
 
@@ -517,6 +936,68 @@ app.post('/api/verify-otp', authLimiter, async (req, res) => {
   otpStore.delete(lookupKey)
 
   console.log(`User verified successfully: Role [${stored.role}] ID [${stored.userId}]`)
+
+  // Derive native Supabase Auth password cryptographically
+  const dbPassword = crypto.createHash('sha256').update(stored.userEmail + (process.env.SUPABASE_SERVICE_ROLE_KEY || 'HRTA_SECRET_KEY_2026')).digest('hex');
+
+  // MFA check for admins and superadmins
+  if (stored.role === 'admin' || stored.role === 'super_admin') {
+    try {
+      const { data: dbAdmin, error: adminErr } = await supabaseAdmin
+        .from('admins')
+        .select('mfa_secret')
+        .eq('id', stored.userId)
+        .single();
+
+      if (!adminErr && dbAdmin && dbAdmin.mfa_secret) {
+        // MFA is enabled! Generate a temporary session token (valid for 5 minutes)
+        const tempToken = crypto.createHash('sha256').update(stored.userEmail + dbPassword + Date.now().toString()).digest('hex');
+        mfaStore.set(tempToken, {
+          role: stored.role,
+          userId: stored.userId,
+          userEmail: stored.userEmail,
+          displayName: stored.userEmail,
+          dbPassword: dbPassword
+        });
+        
+        setTimeout(() => mfaStore.delete(tempToken), 5 * 60 * 1000);
+
+        return res.json({
+          mfaRequired: true,
+          tempToken: tempToken,
+          email: stored.userEmail
+        });
+      }
+    } catch (mfaCheckErr) {
+      console.error('MFA DB verification error:', mfaCheckErr.message);
+    }
+  }
+
+  // Self-healing Supabase Auth Sync
+  try {
+    const { data: userData, error: getErr } = await supabaseAdmin.auth.admin.getUserByEmail(stored.userEmail);
+    if (getErr || !userData || !userData.user) {
+      const { data: newUserData, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email: stored.userEmail,
+        password: dbPassword,
+        email_confirm: true
+      });
+      if (createErr) {
+        console.error("Failed to create native Supabase Auth user:", createErr.message);
+      } else {
+        console.log("Created native Supabase Auth user for email:", stored.userEmail);
+      }
+    } else {
+      const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userData.user.id, {
+        password: dbPassword
+      });
+      if (updateErr) {
+        console.warn("Failed to sync password for native Supabase Auth user:", updateErr.message);
+      }
+    }
+  } catch (syncErr) {
+    console.error("Exception during Supabase Auth Sync:", syncErr.message);
+  }
 
   // Capture IP Address & Log to Database
   const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
@@ -565,18 +1046,42 @@ app.post('/api/verify-otp', authLimiter, async (req, res) => {
     console.error("Exception inserting login log:", dbErr.message);
   }
 
-  // Return the exact properties the React app needs to assign the dashboard route
+  // Determine if MFA setup is required on first admin login
+  let mfaSetupRequired = false;
+  let mfaSecret = null;
+
+  if (stored.role === 'admin' || stored.role === 'super_admin') {
+    try {
+      const { data: dbAdmin, error: adminErr } = await supabaseAdmin
+        .from('admins')
+        .select('mfa_secret')
+        .eq('id', stored.userId)
+        .single();
+
+      if (!adminErr && dbAdmin && !dbAdmin.mfa_secret) {
+        mfaSetupRequired = true;
+        mfaSecret = generateBase32Secret();
+      }
+    } catch (e) {
+      console.error("Failed to check mfa_secret presence:", e.message);
+    }
+  }
+
+  // Return properties the React app needs
   res.json({ 
     message: 'Login successful', 
     role: stored.role, 
     userId: stored.userId, 
     userEmail: stored.userEmail,
-    loginLogId: logId
+    loginLogId: logId,
+    dbPassword: dbPassword,
+    mfaSetupRequired,
+    mfaSecret
   })
 })
 
 // ============ SESSION HEARTBEAT ============
-app.post('/api/session-heartbeat', async (req, res) => {
+app.post('/api/session-heartbeat', verifyUserJWT, async (req, res) => {
   const { logId } = req.body;
   if (!logId) {
     return res.status(400).json({ error: 'Log ID is required' });
@@ -614,11 +1119,22 @@ app.post('/api/session-heartbeat', async (req, res) => {
 })
 
 // ============ CLOUDINARY IMAGE UPLOAD ============
-app.post('/api/upload-image', heavyRequestLimiter, async (req, res) => {
+app.post('/api/upload-image', heavyRequestLimiter, verifyAdminJWT, validateUploadImage, async (req, res) => {
   const { image } = req.body
 
   if (!image) {
     return res.status(400).json({ error: 'Image is required' })
+  }
+
+  // Validate base64 MIME type
+  const mimeMatch = image.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,/);
+  if (!mimeMatch) {
+    return res.status(400).json({ error: 'Invalid base64 image encoding or missing header' });
+  }
+  const mimeType = mimeMatch[1];
+  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  if (!allowedMimeTypes.includes(mimeType)) {
+    return res.status(400).json({ error: 'File type not allowed. Only JPEG, PNG, WEBP, and GIF images are permitted.' });
   }
 
   try {
@@ -639,7 +1155,7 @@ app.post('/api/upload-image', heavyRequestLimiter, async (req, res) => {
 })
 
 // ============ DELETE IMAGE ============
-app.post('/api/delete-image', async (req, res) => {
+app.post('/api/delete-image', verifyAdminJWT, validateDeleteImage, async (req, res) => {
   const { public_id } = req.body
 
   if (!public_id) {
@@ -656,16 +1172,20 @@ app.post('/api/delete-image', async (req, res) => {
 })
 
 // ============ GET SIGNED UPLOAD URL FOR STORAGE ============
-app.post('/api/get-upload-url', async (req, res) => {
+app.post('/api/get-upload-url', verifyAdminJWT, validateGetUploadUrl, async (req, res) => {
   try {
     const { fileName } = req.body;
     if (!fileName) {
       return res.status(400).json({ error: 'fileName is required.' });
     }
 
-    if (!process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) {
+    if (!fileName.toLowerCase().endsWith('.pdf')) {
+      return res.status(400).json({ error: 'File upload restricted to PDF files only.' });
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.VITE_SUPABASE_SERVICE_ROLE_KEY) {
       return res.status(500).json({ 
-        error: 'Database Configuration Error: VITE_SUPABASE_SERVICE_ROLE_KEY is missing on Render. Please add it to your Render dashboard Environment Variables.' 
+        error: 'Database Configuration Error: SUPABASE_SERVICE_ROLE_KEY is missing on Render. Please add it to your Render dashboard Environment Variables.' 
       });
     }
 
@@ -687,7 +1207,7 @@ app.post('/api/get-upload-url', async (req, res) => {
 })
 
 // ============ COMPREHENSIVE AUDIT LOGGING ============
-app.post('/api/audit-log', async (req, res) => {
+app.post('/api/audit-log', verifyUserJWT, validateAuditLog, async (req, res) => {
   try {
     const { userId, userRole, displayName, action, details } = req.body;
     if (!action) {
@@ -758,7 +1278,7 @@ app.post('/api/audit-log', async (req, res) => {
 })
 
 // ============ SIGN CLOUDINARY DELIVERY URL ============
-app.post('/api/sign-url', async (req, res) => {
+app.post('/api/sign-url', verifyUserJWT, async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) {
@@ -822,7 +1342,7 @@ app.post('/api/sign-url', async (req, res) => {
 })
 
 // ============ ADMIN MESSAGE SENDER ============
-app.post('/api/admin-message', async (req, res) => {
+app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
   try {
     const { students, subject, message, pdfUrl, pdfFileName } = req.body;
 

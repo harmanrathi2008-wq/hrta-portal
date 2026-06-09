@@ -52,6 +52,11 @@ const StudentExams = () => {
     setCameraDeniedModal(false);
     const userId = sessionStorage.getItem("userId");
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+    
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
     try {
       // Prompt for camera permission
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -65,7 +70,11 @@ const StudentExams = () => {
       try {
         await fetch(`${apiBaseUrl}/api/audit-log`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Session-ID': loginLogId
+          },
           body: JSON.stringify({
             userId: userId || 'Unknown',
             userRole: 'student',
@@ -89,7 +98,11 @@ const StudentExams = () => {
       try {
         await fetch(`${apiBaseUrl}/api/audit-log`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Session-ID': loginLogId
+          },
           body: JSON.stringify({
             userId: userId || 'Unknown',
             userRole: 'student',

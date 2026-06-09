@@ -72,10 +72,18 @@ const ManageStudents = () => {
 
   const uploadImageToCloudinary = async (base64Image) => {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/upload-image`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
         body: JSON.stringify({ image: base64Image })
       });
       const data = await response.json();

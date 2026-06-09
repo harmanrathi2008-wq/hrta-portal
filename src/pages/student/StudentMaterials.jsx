@@ -19,6 +19,9 @@ export default function StudentMaterials() {
         .order('created_at', { ascending: false })
       
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
       
       // Dynamically sign any Cloudinary asset delivery URLs for access control
       const signedData = await Promise.all((data || []).map(async (material) => {
@@ -26,7 +29,11 @@ export default function StudentMaterials() {
           try {
             const res = await fetch(`${apiBaseUrl}/api/sign-url`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'X-Session-ID': loginLogId
+              },
               body: JSON.stringify({ url: material.file_url })
             });
             const result = await res.json();

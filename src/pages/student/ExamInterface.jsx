@@ -46,6 +46,26 @@ export default function ExamInterface() {
   const [cameraRetryLoading, setCameraRetryLoading] = useState(false);
   const cameraAccessLostRef = React.useRef(false);
 
+  const sessionTokenRef = React.useRef('');
+  React.useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      sessionTokenRef.current = session?.access_token || '';
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      sessionTokenRef.current = session?.access_token || '';
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const getHeaders = () => {
+    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessionTokenRef.current}`,
+      'X-Session-ID': loginLogId
+    };
+  };
+
   // App & Exam States
   const [student, setStudent] = useState(null);
   const [exam, setExam] = useState(null);
@@ -171,7 +191,7 @@ export default function ExamInterface() {
           const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
           await fetch(`${apiBaseUrl}/api/audit-log`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders(),
             body: JSON.stringify({
               userId: userId,
               userRole: 'student',
@@ -257,7 +277,7 @@ export default function ExamInterface() {
               cameraAccessLostRef.current = true;
               fetch(`${apiBaseUrl}/api/audit-log`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getHeaders(),
                 body: JSON.stringify({
                   userId: userId || 'Unknown',
                   userRole: 'student',
@@ -283,7 +303,7 @@ export default function ExamInterface() {
             if (sender !== "admin") {
               fetch(`${apiBaseUrl}/api/audit-log`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getHeaders(),
                 body: JSON.stringify({
                   userId: userId || 'Unknown',
                   userRole: 'student',
@@ -315,7 +335,7 @@ export default function ExamInterface() {
                 if (pc.connectionState === "connected") {
                   fetch(`${apiBaseUrl}/api/audit-log`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getHeaders(),
                     body: JSON.stringify({
                       userId: userId || 'Unknown',
                       userRole: 'student',
@@ -331,7 +351,7 @@ export default function ExamInterface() {
                   if (!isSubmittedRef.current) {
                     fetch(`${apiBaseUrl}/api/audit-log`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: getHeaders(),
                       body: JSON.stringify({
                         userId: userId || 'Unknown',
                         userRole: 'student',
@@ -393,7 +413,7 @@ export default function ExamInterface() {
         try {
           fetch(`${apiBaseUrl}/api/audit-log`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getHeaders(),
             body: JSON.stringify({
               userId: userId || 'Unknown',
               userRole: 'student',
@@ -445,7 +465,7 @@ export default function ExamInterface() {
         });
 
         const blob = new Blob([payload], { type: 'application/json' });
-        navigator.sendBeacon(`${apiBaseUrl}/api/audit-log`, blob);
+        navigator.sendBeacon(`${apiBaseUrl}/api/audit-log?token=${sessionTokenRef.current}&sessionId=${sessionStorage.getItem('loginLogId') || ''}`, blob);
       }
     };
 
@@ -471,7 +491,7 @@ export default function ExamInterface() {
       try {
         await fetch(`${apiBaseUrl}/api/audit-log`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getHeaders(),
           body: JSON.stringify({
             userId: userId || 'Unknown',
             userRole: 'student',
@@ -492,7 +512,7 @@ export default function ExamInterface() {
             cameraAccessLostRef.current = true;
             fetch(`${apiBaseUrl}/api/audit-log`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: getHeaders(),
               body: JSON.stringify({
                 userId: userId || 'Unknown',
                 userRole: 'student',
@@ -1150,7 +1170,7 @@ export default function ExamInterface() {
         const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
         await fetch(`${apiBaseUrl}/api/audit-log`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getHeaders(),
           body: JSON.stringify({
             userId: userId || 'Unknown',
             userRole: 'student',

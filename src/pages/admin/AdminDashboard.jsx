@@ -36,7 +36,7 @@ const AdminDashboard = () => {
   const videoRef = useRef(null);
 
   // Stop monitoring and close WebRTC peer connection
-  const stopMonitoring = () => {
+  const stopMonitoring = async () => {
     if (monitoringStudent) {
       // Log audit event: ADMIN_MONITOR_STOP
       try {
@@ -45,9 +45,17 @@ const AdminDashboard = () => {
         const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
         const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || '';
+        const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
         fetch(`${apiBaseUrl}/api/audit-log`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Session-ID': loginLogId
+          },
           body: JSON.stringify({
             userId: adminId || 'Unknown',
             userRole: adminRole,
@@ -88,7 +96,7 @@ const AdminDashboard = () => {
   };
 
   // Start monitoring student live camera feed
-  const startMonitoring = (session) => {
+  const startMonitoring = async (session) => {
     stopMonitoring();
 
     setMonitoringStudent(session);
@@ -101,9 +109,17 @@ const AdminDashboard = () => {
       const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      const token = authSession?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
       fetch(`${apiBaseUrl}/api/audit-log`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
         body: JSON.stringify({
           userId: adminId || 'Unknown',
           userRole: adminRole,
