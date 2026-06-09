@@ -978,6 +978,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
     const { data: userData, error: getErr } = await supabaseAdmin.auth.admin.getUserByEmail(stored.userEmail);
     if (getErr || !userData || !userData.user) {
       const { data: newUserData, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        id: stored.userId,
         email: stored.userEmail,
         password: dbPassword,
         email_confirm: true
@@ -986,6 +987,26 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
         console.error("Failed to create native Supabase Auth user:", createErr.message);
       } else {
         console.log("Created native Supabase Auth user for email:", stored.userEmail);
+      }
+    } else if (userData.user.id !== stored.userId) {
+      console.log(`Mismatch detected for ${stored.userEmail}. Auth ID: ${userData.user.id}, Stored ID: ${stored.userId}. Re-aligning...`);
+      // Delete mismatched user
+      const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userData.user.id);
+      if (deleteErr) {
+        console.error("Failed to delete mismatched Supabase Auth user:", deleteErr.message);
+      } else {
+        // Create user with correct ID
+        const { data: newUserData, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+          id: stored.userId,
+          email: stored.userEmail,
+          password: dbPassword,
+          email_confirm: true
+        });
+        if (createErr) {
+          console.error("Failed to recreate aligned Supabase Auth user:", createErr.message);
+        } else {
+          console.log("Successfully aligned Supabase Auth user for email:", stored.userEmail);
+        }
       }
     } else {
       const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userData.user.id, {
