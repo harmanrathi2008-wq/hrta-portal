@@ -96,7 +96,30 @@ export default function ExamInterface() {
 
   // Security Locking States
   const [hasFocus, setHasFocus] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+
+  const isFullscreenSupported = () => {
+    const docEl = document.documentElement;
+    return !!(docEl.requestFullscreen || 
+              docEl.webkitRequestFullscreen || 
+              docEl.mozRequestFullScreen || 
+              docEl.msRequestFullscreen);
+  };
+
+  const getFullscreenElement = () => {
+    const doc = document;
+    return doc.fullscreenElement || 
+           doc.webkitFullscreenElement || 
+           doc.mozFullScreenElement || 
+           doc.msFullscreenElement;
+  };
+
+  const [isFullscreen, setIsFullscreen] = useState(() => {
+    if (!isFullscreenSupported()) {
+      return true; // Auto-bypass for devices/browsers that do not support standard fullscreen (e.g. iPhone)
+    }
+    return !!getFullscreenElement();
+  });
+
   const [imageError, setImageError] = useState(false);
 
   // Fetch Data: Student, Exam, Questions
@@ -671,16 +694,16 @@ export default function ExamInterface() {
   // Security Focus & Screenshot Listeners Hook
   useEffect(() => {
     const handleFullscreenChange = () => {
-      const isFull = !!document.fullscreenElement;
+      if (!isFullscreenSupported()) {
+        setIsFullscreen(true);
+        return;
+      }
+      const isFull = !!getFullscreenElement();
       setIsFullscreen(isFull);
 
       // If they exited fullscreen and exam is still active, immediately try to re-enter
       if (!isFull && !isSubmittedRef.current && !isSubmittingRef.current) {
-        document.documentElement.requestFullscreen()
-          .then(() => setIsFullscreen(true))
-          .catch((err) => {
-            console.warn("Auto re-entry failed on change event, waiting for user gesture:", err);
-          });
+        enterFullscreen();
       }
     };
 
@@ -713,14 +736,17 @@ export default function ExamInterface() {
 
     // Auto re-enter fullscreen on any click/mousemove/keydown when not in fullscreen
     const handleUserGesture = () => {
-      if (!document.fullscreenElement && !isSubmittedRef.current && !isSubmittingRef.current) {
-        document.documentElement.requestFullscreen()
-          .then(() => setIsFullscreen(true))
-          .catch(() => {});
+      if (!isFullscreenSupported()) return;
+      if (!getFullscreenElement() && !isSubmittedRef.current && !isSubmittingRef.current) {
+        enterFullscreen();
       }
     };
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
     window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
     document.addEventListener("copy", preventDefault);
@@ -740,6 +766,10 @@ export default function ExamInterface() {
 
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("copy", preventDefault);
@@ -756,11 +786,26 @@ export default function ExamInterface() {
   }, []);
 
   const enterFullscreen = () => {
-    if (document.documentElement.requestFullscreen) {
-      document.documentElement
-        .requestFullscreen()
-        .then(() => setIsFullscreen(true))
-        .catch(() => {});
+    if (!isFullscreenSupported()) {
+      setIsFullscreen(true);
+      return;
+    }
+    const docEl = document.documentElement;
+    const requestFS = docEl.requestFullscreen || 
+                      docEl.webkitRequestFullscreen || 
+                      docEl.mozRequestFullScreen || 
+                      docEl.msRequestFullscreen;
+    if (requestFS) {
+      try {
+        const promise = requestFS.call(docEl);
+        if (promise && typeof promise.then === 'function') {
+          promise.then(() => setIsFullscreen(true)).catch(() => {});
+        } else {
+          setIsFullscreen(true);
+        }
+      } catch (e) {
+        setIsFullscreen(true);
+      }
     }
   };
 

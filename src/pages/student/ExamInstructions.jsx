@@ -50,15 +50,31 @@ const ExamInstructions = () => {
 
   const handleProceed = () => {
     if (isChecked) {
-      if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen()
-          .then(() => {
+      const docEl = document.documentElement;
+      const requestFS = docEl.requestFullscreen || 
+                        docEl.webkitRequestFullscreen || 
+                        docEl.mozRequestFullScreen || 
+                        docEl.msRequestFullscreen;
+
+      if (requestFS) {
+        try {
+          const promise = requestFS.call(docEl);
+          if (promise && typeof promise.then === 'function') {
+            promise
+              .then(() => {
+                navigate(`/student/exam/${examId}/start`);
+              })
+              .catch((err) => {
+                console.warn("Failed to enter fullscreen on proceed:", err);
+                navigate(`/student/exam/${examId}/start`);
+              });
+          } else {
+            // Browsers that don't return a promise on requestFullscreen (older Safari versions)
             navigate(`/student/exam/${examId}/start`);
-          })
-          .catch((err) => {
-            console.warn("Failed to enter fullscreen on proceed:", err);
-            navigate(`/student/exam/${examId}/start`);
-          });
+          }
+        } catch (e) {
+          navigate(`/student/exam/${examId}/start`);
+        }
       } else {
         navigate(`/student/exam/${examId}/start`);
       }
