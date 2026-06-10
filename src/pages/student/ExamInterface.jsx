@@ -120,6 +120,30 @@ export default function ExamInterface() {
     return !!getFullscreenElement();
   });
 
+  const enterFullscreen = () => {
+    if (!isFullscreenSupported()) {
+      setIsFullscreen(true);
+      return;
+    }
+    const docEl = document.documentElement;
+    const requestFS = docEl.requestFullscreen || 
+                      docEl.webkitRequestFullscreen || 
+                      docEl.mozRequestFullScreen || 
+                      docEl.msRequestFullscreen;
+    if (requestFS) {
+      try {
+        const promise = requestFS.call(docEl);
+        if (promise && typeof promise.then === 'function') {
+          promise.then(() => setIsFullscreen(true)).catch(() => {});
+        } else {
+          setIsFullscreen(true);
+        }
+      } catch (e) {
+        setIsFullscreen(true);
+      }
+    }
+  };
+
   const [imageError, setImageError] = useState(false);
 
   // Fetch Data: Student, Exam, Questions
@@ -784,30 +808,6 @@ export default function ExamInterface() {
       window.removeEventListener("mousedown", handleUserGesture);
     };
   }, []);
-
-  const enterFullscreen = () => {
-    if (!isFullscreenSupported()) {
-      setIsFullscreen(true);
-      return;
-    }
-    const docEl = document.documentElement;
-    const requestFS = docEl.requestFullscreen || 
-                      docEl.webkitRequestFullscreen || 
-                      docEl.mozRequestFullScreen || 
-                      docEl.msRequestFullscreen;
-    if (requestFS) {
-      try {
-        const promise = requestFS.call(docEl);
-        if (promise && typeof promise.then === 'function') {
-          promise.then(() => setIsFullscreen(true)).catch(() => {});
-        } else {
-          setIsFullscreen(true);
-        }
-      } catch (e) {
-        setIsFullscreen(true);
-      }
-    }
-  };
 
   const current = questions[currentIdx] || {};
 
