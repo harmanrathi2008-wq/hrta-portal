@@ -278,85 +278,89 @@ function normalizeDateOfBirth(dob) {
   return clean;
 }
 
-// Robust, self-healing email dispatch helper that tries all configured Resend keys in order of preference, falling back to Gmail SMTP rotation
-async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false }) {
-  // Always use correct sender domain based on message type
+// Robust, self-healing email dispatch helper
+// preferSmtp=true: tries Gmail SMTP FIRST (use for result emails to avoid new-domain IP reputation blocks with Gmail)
+// preferSmtp=false (default): tries Resend first, SMTP as fallback (use for OTPs)
+async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false, preferSmtp = false }) {
   const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
 
-  // Build the list of clients to try in order of preference
-  const clientsToTry = [];
-  
-  if (isOtp) {
-    if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
-  } else {
-    // Primary: verified scorecard/result client (otp.harmanrathiportal.dpdns.org)
-    if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
-    if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
-    if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
-  }
-
-  // Fallback to legacy clients
-  if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
-  if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
-  if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
-
-  let lastResendError = null;
-
-  // Try each Resend client until one succeeds
-  for (const { name, client } of clientsToTry) {
-    try {
-      console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
-      const response = await client.emails.send({
-        from: fromAddress,
-        to: to,
-        subject: subject,
-        html: html,
-        ...(text ? { text } : {})
-      });
-
-      if (response.error) {
-        throw new Error(response.error.message || `Resend ${name} returned error`);
+  // ── Gmail SMTP helper (shared by both paths) ─────────────────────────────
+  const tryGmailSmtp = async () => {
+    if (transporters.length === 0) return null;
+    let lastSmtpError = null;
+    for (let attempt = 0; attempt < transporters.length; attempt++) {
+      const idx = (currentTransporterIndex + attempt) % transporters.length;
+      const { email, transporter } = transporters[idx];
+      try {
+        console.log(`[SMTP] Attempting via Gmail SMTP: ${email}`);
+        await transporter.sendMail({
+          from: `"${fromName}" <${email}>`,
+          to, subject, html,
+          ...(text ? { text } : {})
+        });
+        currentTransporterIndex = (idx + 1) % transporters.length;
+        console.log(`[SMTP] Sent successfully via Gmail SMTP [${email}] to ${to}`);
+        return { success: true, provider: 'gmail_smtp', email };
+      } catch (err) {
+        console.warn(`[SMTP] Gmail SMTP [${email}] failed: ${err.message}`);
+        lastSmtpError = err;
       }
-
-      console.log(`[Resend] Email sent successfully via ${name} to ${to}`);
-      return { success: true, provider: `resend_${name}`, data: response };
-    } catch (err) {
-      console.warn(`[Resend] Client ${name} failed to send to ${to}: ${err.message}`);
-      lastResendError = err;
     }
-  }
+    return { success: false, error: lastSmtpError };
+  };
 
-  // 2. Gmail SMTP rotation fallback
-  console.log(`[SMTP] Initiating SMTP rotation fallback for ${to} (Resend failed)...`);
-  if (transporters.length === 0) {
-    throw new Error(`Resend failed (Last error: ${lastResendError ? lastResendError.message : 'No key working'}), and no Gmail SMTP accounts are configured as fallback.`);
-  }
-
-  let lastSmtpError = null;
-  for (let attempt = 0; attempt < transporters.length; attempt++) {
-    const idx = (currentTransporterIndex + attempt) % transporters.length;
-    const { email, transporter } = transporters[idx];
-    
-    try {
-      console.log(`[SMTP] Attempting to send email via Gmail SMTP: ${email}`);
-      await transporter.sendMail({
-        from: `"${fromName}" <${email}>`,
-        to: to,
-        subject: subject,
-        html: html
-      });
-      
-      currentTransporterIndex = (idx + 1) % transporters.length;
-      console.log(`[SMTP] Email sent successfully via Gmail SMTP [${email}] to ${to}`);
-      return { success: true, provider: 'gmail_smtp', email: email };
-    } catch (smtpError) {
-      console.warn(`[SMTP] Gmail SMTP [${email}] failed: ${smtpError.message}`);
-      lastSmtpError = smtpError;
+  // ── Resend helper ─────────────────────────────────────────────────────────
+  const tryResend = async () => {
+    const clientsToTry = [];
+    if (isOtp) {
+      if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
+    } else {
+      if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
+      if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
+      if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
     }
-  }
+    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
+    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
+    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
 
-  throw new Error(`All email sending channels failed. Resend error: ${lastResendError ? lastResendError.message : 'Unknown'}. SMTP error: ${lastSmtpError ? lastSmtpError.message : 'Unknown'}`);
+    let lastResendError = null;
+    for (const { name, client } of clientsToTry) {
+      try {
+        console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
+        const response = await client.emails.send({
+          from: fromAddress, to, subject, html,
+          ...(text ? { text } : {})
+        });
+        if (response.error) throw new Error(response.error.message || `Resend ${name} returned error`);
+        console.log(`[Resend] Sent successfully via ${name} to ${to}`);
+        return { success: true, provider: `resend_${name}`, data: response };
+      } catch (err) {
+        console.warn(`[Resend] Client ${name} failed: ${err.message}`);
+        lastResendError = err;
+      }
+    }
+    return { success: false, error: lastResendError };
+  };
+
+  // ── Route based on preferSmtp ─────────────────────────────────────────────
+  if (preferSmtp) {
+    // SMTP first (result/scorecard emails) — avoids new-domain IP reputation blocks
+    const smtpResult = await tryGmailSmtp();
+    if (smtpResult && smtpResult.success) return smtpResult;
+    console.log('[SMTP] All SMTP accounts failed, falling back to Resend...');
+    const resendResult = await tryResend();
+    if (resendResult && resendResult.success) return resendResult;
+    throw new Error(`All email channels failed. SMTP error: ${smtpResult?.error?.message || 'No SMTP accounts'}. Resend error: ${resendResult?.error?.message || 'Unknown'}`);
+  } else {
+    // Resend first (OTPs and admin emails) — Resend is faster and more reliable for transactional
+    const resendResult = await tryResend();
+    if (resendResult && resendResult.success) return resendResult;
+    console.log('[Resend] All Resend clients failed, falling back to Gmail SMTP...');
+    const smtpResult = await tryGmailSmtp();
+    if (smtpResult && smtpResult.success) return smtpResult;
+    throw new Error(`All email channels failed. Resend error: ${resendResult?.error?.message || 'Unknown'}. SMTP error: ${smtpResult?.error?.message || 'No SMTP accounts'}`);
+  }
 }
 
 // Resolve geo-location in the background and write to DB
@@ -1596,8 +1600,10 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
       text: plainText,
       fromName: 'HRTA Results',
       type: 'student',
-      isOtp: false
+      isOtp: false,
+      preferSmtp: true  // Use Gmail SMTP first — avoids Resend IP reputation block with Gmail
     });
+
 
     res.json({ success: true, message: 'Result email notification dispatched successfully.' });
   } catch (err) {
