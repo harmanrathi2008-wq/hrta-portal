@@ -1594,7 +1594,8 @@ This is an automated notification from Harman Rathi Testing Agency.
 Please do not reply to this email.
 Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
 
-    await sendEmail({
+    // Fire and forget email dispatching in the background to avoid 15-second client timeouts
+    sendEmail({
       to: studentEmail,
       subject: `HRTA Result Published: ${examTitle}`,
       html: htmlBody,
@@ -1603,13 +1604,14 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
       type: 'student',
       isOtp: false,
       preferSmtp: true  // Gmail SMTP first — bypasses new-domain IP reputation block
+    }).catch(err => {
+      console.error('Background result email failed to send:', err.message);
     });
-
 
     res.json({ success: true, message: 'Result email notification dispatched successfully.' });
   } catch (err) {
-    console.error('Failed to send result notification:', err.message);
-    res.status(500).json({ error: 'Failed to send result email notification: ' + err.message });
+    console.error('Failed to prepare result notification:', err.message);
+    res.status(500).json({ error: 'Failed to prepare result email notification: ' + err.message });
   }
 })
 
