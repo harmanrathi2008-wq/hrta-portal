@@ -83,6 +83,7 @@ export default function ExamInterface() {
   const [zoomedImage, setZoomedImage] = useState(null);
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomLastDist, setZoomLastDist] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
   // Connection & Auto-save states
   const [draftId, setDraftId] = useState(null);
@@ -107,12 +108,6 @@ export default function ExamInterface() {
       try {
         const userId = sessionStorage.getItem("userId");
         const role = sessionStorage.getItem("role");
-
-        const cameraGranted = sessionStorage.getItem("cameraGranted") === "true";
-        if (!cameraGranted) {
-          navigate("/student/exams");
-          return;
-        }
 
         if (!userId || role !== "student") {
           navigate("/");
@@ -242,7 +237,7 @@ export default function ExamInterface() {
 
       } catch (err) {
         console.error("Error loading exam data:", err);
-        alert("Failed to load exam data. Please check connection.");
+        setLoadError(err.message || "Failed to load exam data. Please check your connection and try again.");
       } finally {
         setLoading(false);
       }
@@ -1420,6 +1415,33 @@ export default function ExamInterface() {
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
         LOADING HARMAN RATHI TESTING AGENCY EXAMINATION SYSTEM...
+      </div>
+    );
+  }
+
+  // Error screen — shown if data failed to load (network issue, RLS error, etc.)
+  if (loadError) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center font-bold bg-[#f1f4f9] text-[#1f497d] p-8 text-center">
+        <svg className="w-16 h-16 text-red-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        <h2 className="text-xl font-black text-red-600 mb-2">Unable to Load Examination</h2>
+        <p className="text-sm text-gray-600 font-semibold mb-6 max-w-md leading-relaxed">{loadError}</p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => { setLoadError(null); setLoading(true); window.location.reload(); }}
+            className="bg-[#1f497d] hover:bg-[#15345a] text-white px-8 py-2.5 rounded font-bold uppercase transition-colors shadow cursor-pointer"
+          >
+            Retry
+          </button>
+          <button
+            onClick={() => navigate("/student/dashboard")}
+            className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-8 py-2.5 rounded font-bold uppercase transition-colors cursor-pointer"
+          >
+            Back to Dashboard
+          </button>
+        </div>
       </div>
     );
   }
