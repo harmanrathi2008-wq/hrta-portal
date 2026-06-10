@@ -208,8 +208,47 @@ export default function StudentDashboard() {
   // Friends Feed State
   const [friendsFeed, setFriendsFeed] = useState([]);
   const [loadingFeed, setLoadingFeed] = useState(false);
+  const [checkingCamera, setCheckingCamera] = useState(false);
+  const [cameraDeniedModal, setCameraDeniedModal] = useState(false);
+  const [pendingExamId, setPendingExamId] = useState(null);
 
   const studentId = sessionStorage.getItem('userId');
+
+  const handleStartExamClick = async (examId) => {
+    setPendingExamId(examId);
+    setCheckingCamera(true);
+    setCameraDeniedModal(false);
+    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      stream.getTracks().forEach(track => track.stop());
+      sessionStorage.setItem('cameraGranted', 'true');
+      try {
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Session-ID': loginLogId },
+          body: JSON.stringify({ userId: studentId || 'Unknown', userRole: 'student', displayName: sessionStorage.getItem('userEmail') || 'Student', action: 'CAMERA_GRANTED', details: { exam_id: examId } })
+        });
+      } catch (logErr) { console.warn('Failed to audit CAMERA_GRANTED:', logErr); }
+      navigate(`/student/exam/${examId}/login`);
+    } catch (err) {
+      console.warn('Camera permission denied:', err);
+      sessionStorage.removeItem('cameraGranted');
+      setCameraDeniedModal(true);
+      try {
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Session-ID': loginLogId },
+          body: JSON.stringify({ userId: studentId || 'Unknown', userRole: 'student', displayName: sessionStorage.getItem('userEmail') || 'Student', action: 'CAMERA_DENIED', details: { exam_id: examId, error: err.message || String(err) } })
+        });
+      } catch (logErr) { console.warn('Failed to audit CAMERA_DENIED:', logErr); }
+    } finally {
+      setCheckingCamera(false);
+    }
+  };
 
   useEffect(() => {
     const checkAuth = () => {
@@ -837,11 +876,13 @@ export default function StudentDashboard() {
 
                     <div className="shrink-0 flex items-center">
                       {canStart ? (
-                        <Link to={`/student/exam/${exam.id}/login`}>
-                          <button className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#1f497d] hover:bg-[#15345a]'} text-white px-8 py-2.5 rounded-xl font-black uppercase transition-colors shadow text-xs tracking-wider`}>
-                            {exam.hasDraft ? 'RESUME EXAM' : (exam.nextAttemptNumber > 1 ? `START EXAM (Attempt #${exam.nextAttemptNumber})` : 'START EXAM')}
-                          </button>
-                        </Link>
+                        <button
+                          onClick={() => handleStartExamClick(exam.id)}
+                          disabled={checkingCamera}
+                          className={`${exam.hasDraft ? 'bg-cyan-600 hover:bg-cyan-700 animate-pulse' : 'bg-[#1f497d] hover:bg-[#15345a]'} text-white px-8 py-2.5 rounded-xl font-black uppercase transition-colors shadow text-xs tracking-wider disabled:opacity-60`}
+                        >
+                          {checkingCamera && pendingExamId === exam.id ? 'Checking Camera...' : exam.hasDraft ? 'RESUME EXAM' : (exam.nextAttemptNumber > 1 ? `START EXAM (Attempt #${exam.nextAttemptNumber})` : 'START EXAM')}
+                        </button>
                       ) : isEarly ? (
                         <button disabled className="bg-gray-250 text-gray-500 border border-gray-300 px-8 py-2.5 rounded-xl font-black uppercase text-xs tracking-wider cursor-not-allowed">
                           Exam Not Active
@@ -1354,6 +1395,39 @@ export default function StudentDashboard() {
         </div>
 
       </div>
+
+      {cameraDeniedModal && (
+        <div className="fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white border-2 border-red-500 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6">
+            <div className="text-center">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 text-3xl">📷</div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera Access Required</h3>
+              <div className="text-sm text-slate-600 font-semibold leading-relaxed mb-6">
+                Proctoring is active for this examination. You cannot proceed without granting camera access.
+                <p className="mt-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 p-2.5 rounded-xl font-bold">
+                  ⚠️ Please allow camera permission in your browser's address bar/site settings, then click "Try Again".
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCameraDeniedModal(false)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2.5 px-4 rounded-xl transition-colors text-sm uppercase tracking-wide cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { if (pendingExamId) handleStartExamClick(pendingExamId); else setCameraDeniedModal(false); }}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide cursor-pointer"
+                >
+                  Try Again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
