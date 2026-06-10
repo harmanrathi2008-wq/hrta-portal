@@ -88,6 +88,13 @@ const resendAdmin = new Resend(adminResendKey && adminResendKey !== 'undefined' 
 const studentResendKey = (process.env.RESEND_API_KEY_STUDENT || '').trim();
 const resendStudent = new Resend(studentResendKey && studentResendKey !== 'undefined' && studentResendKey !== 'null' ? studentResendKey : fallbackKey);
 
+// Dedicated clients for capacity-splitting
+const otpResendKey = (process.env.RESEND_API_KEY_OTP || '').trim();
+const resendOTPClient = otpResendKey && otpResendKey !== 'undefined' && otpResendKey !== 'null' ? new Resend(otpResendKey) : null;
+
+const notificationResendKey = (process.env.RESEND_API_KEY_NOTIFICATION || '').trim();
+const resendNotificationClient = notificationResendKey && notificationResendKey !== 'undefined' && notificationResendKey !== 'null' ? new Resend(notificationResendKey) : null;
+
 // Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -255,6 +262,13 @@ async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student
   // Build the list of clients to try in order of preference
   const clientsToTry = [];
   
+  if (isOtp) {
+    if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
+  } else {
+    if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
+  }
+
+  // Fallback to legacy clients
   if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
   if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
   if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
@@ -1524,7 +1538,7 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
     }
 
     // Pick the best available Resend instance
-    const mailer = resendStudent || resend;
+    const mailer = resendNotificationClient || resendStudent || resend;
     const fromEmail = FROM_EMAIL;
 
     const results = [];
