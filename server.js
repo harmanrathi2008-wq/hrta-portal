@@ -1469,77 +1469,106 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
       return res.status(400).json({ error: 'Student email is missing from database.' });
     }
 
-    const scorecardLink = `https://harmanrathitportal.nxtdev.xyz/student/results`;
+    // Use the same base domain as the sending domain (otp.harmanrathiportal.dpdns.org)
+    // to avoid URL/domain mismatch which triggers spam filters
+    const portalDomain = 'https://harmanrathiportal.dpdns.org';
+    const scorecardLink = `${portalDomain}/student/results`;
 
-    const htmlBody = `
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-    <body style="margin:0; padding:0; background:#060d17; font-family: 'Segoe UI', Arial, sans-serif;">
-      <div style="max-width: 600px; margin: 20px auto; background: #060d17; color: #cfd8dc; border-radius: 16px; overflow: hidden; border: 1px solid #1a2e45;">
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #0d1b2a 0%, #0a1628 100%); padding: 32px 24px; border-bottom: 2px solid #00bcd4; text-align: center;">
-          <h1 style="margin: 0; color: #00bcd4; font-size: 24px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase;">HRTA RESULT OUT</h1>
-          <p style="margin: 6px 0 0; color: #546e7a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;">Harman Rathi Testing Agency</p>
-        </div>
-        
-        <!-- Body -->
-        <div style="padding: 32px 24px; background: #0d1b2a;">
-          <p style="color: #64b5f6; font-size: 16px; font-weight: 700; margin: 0 0 16px 0;">Dear ${studentName},</p>
-          <p style="line-height: 1.6; font-size: 14px; margin: 0 0 24px 0; color: #cfd8dc;">
-            Your result for the examination <strong>"${examTitle}"</strong> has been successfully graded and published by the administrator.
-          </p>
+    // Clean, deliverable email — white background, no emojis, simple layout
+    // Dark themes and emoji in email body are blocked by many corporate mail servers
+    const htmlBody = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Result Published - HRTA</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f7fb; font-family:Arial, Helvetica, sans-serif; color:#222222;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f7fb; padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:8px; overflow:hidden; border:1px solid #dce3ee; max-width:600px;">
           
-          <!-- Scorecard Box -->
-          <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; margin-bottom: 28px;">
-            <h3 style="margin: 0 0 16px 0; color: #00bcd4; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1a2e45; padding-bottom: 8px;">📊 Performance Summary</h3>
-            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-              <tr>
-                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Exam Title:</td>
-                <td style="padding: 8px 0; text-align: right; color: white; font-weight: 700;">${examTitle}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Candidate Name:</td>
-                <td style="padding: 8px 0; text-align: right; color: white; font-weight: 700;">${studentName}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Application ID:</td>
-                <td style="padding: 8px 0; text-align: right; color: #90a4ae; font-family: monospace;">${submission.students?.application_id || 'N/A'}</td>
-              </tr>
-              <tr style="border-top: 1px solid #1a2e45;">
-                <td style="padding: 12px 0; color: #78909c; font-weight: 600; font-size: 15px;">Obtained Score:</td>
-                <td style="padding: 12px 0; text-align: right; color: #D4AF37; font-weight: 800; font-size: 18px;">${score} / ${total}</td>
-              </tr>
-              <tr>
-                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Percentage:</td>
-                <td style="padding: 8px 0; text-align: right; color: #00bcd4; font-weight: 700;">${pct}%</td>
-              </tr>
-            </table>
-          </div>
-          
-          <!-- CTA Button -->
-          <div style="text-align: center; margin-bottom: 28px;">
-            <a href="${scorecardLink}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #0288d1, #00bcd4); color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 4px 12px rgba(0, 188, 212, 0.25);">
-              🔍 View Scorecard on Portal
-            </a>
-          </div>
-        </div>
-        
-        <!-- Footer -->
-        <div style="background: #060d17; padding: 24px; text-align: center; border-top: 1px solid #1a2e45;">
-          <p style="margin: 0; color: #37474f; font-size: 11px; line-height: 1.6;">
-            This is an automated result dispatch from <strong>Harman Rathi Testing Agency</strong>.<br>
-            Please do not reply directly to this message.
-          </p>
-          <p style="margin: 10px 0 0; color: #263238; font-size: 10px;">© ${new Date().getFullYear()} HRTA · All Rights Reserved</p>
-        </div>
-      </div>
-    </body>
-    </html>`;
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#1a3a6b; padding:28px 32px; text-align:center;">
+              <p style="margin:0; color:#ffffff; font-size:22px; font-weight:bold; letter-spacing:1px;">HARMAN RATHI TESTING AGENCY</p>
+              <p style="margin:6px 0 0; color:#a8c0e8; font-size:12px; letter-spacing:2px;">RESULT NOTIFICATION</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 16px; font-size:16px; color:#1a3a6b; font-weight:bold;">Dear ${studentName},</p>
+              <p style="margin:0 0 24px; font-size:14px; line-height:1.7; color:#444444;">
+                Your result for the examination <strong>${examTitle}</strong> has been graded and published by the administrator. Please find your performance summary below.
+              </p>
+
+              <!-- Score Box -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dce3ee; border-radius:6px; margin-bottom:28px;">
+                <tr style="background-color:#f0f5ff;">
+                  <td colspan="2" style="padding:12px 16px; font-size:12px; font-weight:bold; color:#1a3a6b; letter-spacing:1px; border-bottom:1px solid #dce3ee;">PERFORMANCE SUMMARY</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px; font-size:13px; color:#666666; border-bottom:1px solid #f0f0f0;">Exam Title</td>
+                  <td style="padding:12px 16px; font-size:13px; font-weight:bold; color:#222222; text-align:right; border-bottom:1px solid #f0f0f0;">${examTitle}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px; font-size:13px; color:#666666; border-bottom:1px solid #f0f0f0;">Candidate Name</td>
+                  <td style="padding:12px 16px; font-size:13px; font-weight:bold; color:#222222; text-align:right; border-bottom:1px solid #f0f0f0;">${studentName}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px; font-size:13px; color:#666666; border-bottom:1px solid #f0f0f0;">Application ID</td>
+                  <td style="padding:12px 16px; font-size:13px; color:#555555; text-align:right; font-family:monospace; border-bottom:1px solid #f0f0f0;">${submission.students?.application_id || 'N/A'}</td>
+                </tr>
+                <tr style="background-color:#f9fbff;">
+                  <td style="padding:14px 16px; font-size:15px; font-weight:bold; color:#1a3a6b;">Score Obtained</td>
+                  <td style="padding:14px 16px; font-size:18px; font-weight:bold; color:#1a3a6b; text-align:right;">${score} / ${total}</td>
+                </tr>
+                <tr>
+                  <td style="padding:12px 16px; font-size:13px; color:#666666;">Percentage</td>
+                  <td style="padding:12px 16px; font-size:14px; font-weight:bold; color:#0d7a3e; text-align:right;">${pct}%</td>
+                </tr>
+              </table>
+
+              <!-- CTA Button -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                <tr>
+                  <td align="center">
+                    <a href="${scorecardLink}" target="_blank" style="display:inline-block; background-color:#1a3a6b; color:#ffffff; text-decoration:none; font-weight:bold; font-size:14px; padding:14px 32px; border-radius:6px; letter-spacing:0.5px;">View Scorecard on Portal</a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:13px; color:#888888; line-height:1.6;">
+                If the button above does not work, copy and paste this link into your browser:<br>
+                <span style="color:#1a3a6b;">${scorecardLink}</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f4f7fb; padding:20px 32px; text-align:center; border-top:1px solid #dce3ee;">
+              <p style="margin:0; font-size:12px; color:#999999; line-height:1.6;">
+                This is an automated notification from <strong>Harman Rathi Testing Agency</strong>.<br>
+                Please do not reply to this email.
+              </p>
+              <p style="margin:8px 0 0; font-size:11px; color:#bbbbbb;">Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.</p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 
     await sendEmail({
       to: studentEmail,
-      subject: `Result Published: ${examTitle} - HRTA`,
+      subject: `HRTA Result Published: ${examTitle}`,
       html: htmlBody,
       fromName: 'HRTA Results',
       type: 'student',
