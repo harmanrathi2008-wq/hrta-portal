@@ -206,9 +206,9 @@ async function verifyUserJWT(req, res, next) {
 
 // Domain emails
 // harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
-// harmanrathiportal.dpdns.org   = verified for result/scorecard emails (new domain, needs SMTP warmup)
-const FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
+// otp.harmanrathiportal.dpdns.org = verified for result/scorecard emails (verified domain)
+const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
