@@ -227,8 +227,9 @@ if (gmailAccountsRaw) {
         email: user,
         transporter: nodemailer.createTransport({
           host: 'smtp.gmail.com',
-          port: 465,
-          secure: true, // true for port 465, false for other ports
+          port: 587,
+          secure: false, // false for port 587 (uses STARTTLS)
+          requireTLS: true,
           auth: {
             user: user,
             pass: pass
