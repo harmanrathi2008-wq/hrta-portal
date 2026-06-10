@@ -298,13 +298,22 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
       const { email, transporter } = transporters[idx];
       try {
         console.log(`[SMTP] Attempting via Gmail SMTP: ${email}`);
+        
+        // If preferSmtp is true, we want the email to visually come from your custom domain (dpdns.org).
+        // Standard SMTP allows setting 'from' to the custom domain while logging in via Gmail.
+        const mailFrom = preferSmtp 
+          ? `"${fromName}" <${FROM_EMAIL}>` 
+          : `"${fromName}" <${email}>`;
+
         await transporter.sendMail({
-          from: `"${fromName}" <${email}>`,
+          from: mailFrom,
+          sender: email, // The actual SMTP authenticated account
+          replyTo: FROM_EMAIL,
           to, subject, html,
           ...(text ? { text } : {})
         });
         currentTransporterIndex = (idx + 1) % transporters.length;
-        console.log(`[SMTP] Sent successfully via Gmail SMTP [${email}] to ${to}`);
+        console.log(`[SMTP] Sent successfully via Gmail SMTP [${email}] to ${to} (as ${mailFrom})`);
         return { success: true, provider: 'gmail_smtp', email };
       } catch (err) {
         console.warn(`[SMTP] Gmail SMTP [${email}] failed: ${err.message}`);
