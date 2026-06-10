@@ -173,7 +173,7 @@ async function verifyUserJWT(req, res, next) {
 // Domain emails
 const FROM_EMAIL = 'notifications@harmanrathiportal.dpdns.org'
 const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
-const OTP_FROM_EMAIL = 'otp@nxtdev.xyz'
+const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
 const gmailAccountsRaw = process.env.GMAIL_ACCOUNTS || '';
