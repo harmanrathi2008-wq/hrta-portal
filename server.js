@@ -1501,9 +1501,9 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
       return res.status(400).json({ error: 'Student email is missing from database.' });
     }
 
-    // Use the same base domain as the sending domain (otp.harmanrathiportal.dpdns.org)
-    // to avoid URL/domain mismatch which triggers spam filters
-    const portalDomain = 'https://harmanrathiportal.dpdns.org';
+    // Use the exact verified subdomain (otp.harmanrathiportal.dpdns.org)
+    // to prevent domain/subdomain mismatched link blocks from Gmail spam filters
+    const portalDomain = 'https://otp.harmanrathiportal.dpdns.org';
     const scorecardLink = `${portalDomain}/student/results`;
 
     // Clean, deliverable email — white background, no emojis, simple layout
