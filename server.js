@@ -95,6 +95,8 @@ const resendOTPClient = otpResendKey && otpResendKey !== 'undefined' && otpResen
 const notificationResendKey = (process.env.RESEND_API_KEY_NOTIFICATION || '').trim();
 const resendNotificationClient = notificationResendKey && notificationResendKey !== 'undefined' && notificationResendKey !== 'null' ? new Resend(notificationResendKey) : null;
 
+const resendNewFallbackClient = new Resend('re_eNjnfeM1_KyztS1T9QKQShA3KXGLEo2ei');
+
 // Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -266,6 +268,8 @@ async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student
     if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
   } else {
     if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
+    // Explicitly add the new fallback client for notifications
+    if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
   }
 
   // Fallback to legacy clients
@@ -1537,8 +1541,13 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
       return res.status(400).json({ error: 'Subject is required.' });
     }
 
-    // Pick the best available Resend instance
-    const mailer = resendNotificationClient || resendStudent || resend;
+    // Pick the best available Resend instances in order
+    const mailerClients = [];
+    if (resendNotificationClient) mailerClients.push({ name: 'resendNotificationClient', client: resendNotificationClient });
+    if (resendNewFallbackClient) mailerClients.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
+    if (resendStudent) mailerClients.push({ name: 'resendStudent', client: resendStudent });
+    if (resend) mailerClients.push({ name: 'resendMain', client: resend });
+
     const fromEmail = FROM_EMAIL;
 
     const results = [];
@@ -1617,21 +1626,15 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
       </body>
       </html>`;
 
-      // Attach PDF if small enough (< 40MB)
-      const emailPayload = {
-        from: `HRTA Notifications <${fromEmail}>`,
-        to: [student.email],
-        subject: `[HRTA] ${subject}`,
-        html: htmlBody,
-      };
-
       try {
-        const { error: sendError } = await mailer.emails.send(emailPayload);
-        if (sendError) {
-          errors.push(`${student.full_name}: ${sendError.message}`);
-        } else {
-          results.push(student.full_name);
-        }
+        await sendEmail({
+          to: student.email,
+          subject: `[HRTA] ${subject}`,
+          html: htmlBody,
+          fromName: 'HRTA Notifications',
+          isOtp: false
+        });
+        results.push(student.full_name);
       } catch (e) {
         errors.push(`${student.full_name}: ${e.message}`);
       }

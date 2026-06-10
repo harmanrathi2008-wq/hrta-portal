@@ -434,6 +434,33 @@ const AdminDashboard = () => {
     }
   };
 
+  const sendResultNotification = async (submissionId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({ submissionId })
+      });
+
+      if (!response.ok) {
+        const errResult = await response.json();
+        throw new Error(errResult.error || 'Failed to dispatch email');
+      }
+    } catch (e) {
+      console.error("Failed to send result publication notification email:", e);
+      alert("⚠️ Result published, but email notification failed: " + e.message);
+    }
+  };
+
   const handleQuickPublish = async (resultId, studentName) => {
     if (!window.confirm(`Publish result for ${studentName}? They will immediately see their scorecard.`)) return;
     setPublishingId(resultId);
@@ -443,6 +470,7 @@ const AdminDashboard = () => {
         .update({ status: 'published', published_at: new Date().toISOString() })
         .eq('id', resultId);
       if (error) throw error;
+      await sendResultNotification(resultId);
       await loadAllResults();
     } catch(e) {
       alert('Failed to publish: ' + e.message);

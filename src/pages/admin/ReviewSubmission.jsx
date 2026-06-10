@@ -459,7 +459,7 @@ const ReviewSubmission = () => {
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       
-      fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -467,9 +467,15 @@ const ReviewSubmission = () => {
           'X-Session-ID': loginLogId
         },
         body: JSON.stringify({ submissionId })
-      }).catch(err => console.error("Result published notification email dispatch failed:", err));
+      });
+
+      if (!response.ok) {
+        const errResult = await response.json();
+        throw new Error(errResult.error || 'Failed to dispatch email');
+      }
     } catch (e) {
-      console.error("Failed to initialize result published email notification:", e);
+      console.error("Result published notification email dispatch failed:", e);
+      toast.error("Result published to DB, but email notification failed to send: " + e.message);
     }
   };
 
