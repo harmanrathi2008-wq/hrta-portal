@@ -131,12 +131,31 @@ async function verifyAdminJWT(req, res, next) {
       return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
     }
 
-    // Verify Admin status in database
-    const { data: adminUser, error: dbErr } = await supabaseAdmin
+    // Verify Admin status — look up by email (most reliable) with id as fallback
+    let adminUser = null;
+    let dbErr = null;
+
+    // Primary: look up by email
+    const { data: adminByEmail, error: emailErr } = await supabaseAdmin
       .from('admins')
-      .select('role')
-      .eq('id', user.id)
-      .single();
+      .select('id, role')
+      .ilike('email', user.email)
+      .in('role', ['admin', 'super_admin'])
+      .limit(1)
+      .maybeSingle();
+
+    if (!emailErr && adminByEmail) {
+      adminUser = adminByEmail;
+    } else {
+      // Fallback: look up by id
+      const { data: adminById, error: idErr } = await supabaseAdmin
+        .from('admins')
+        .select('id, role')
+        .eq('id', user.id)
+        .single();
+      adminUser = adminById;
+      dbErr = idErr;
+    }
 
     if (dbErr || !adminUser || !['admin', 'super_admin'].includes(adminUser.role)) {
       return res.status(403).json({ error: 'Access Denied: Administrator role required.' });
