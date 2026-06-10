@@ -211,39 +211,25 @@ const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
 const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
-// Nodemailer SMTP Rotation Setup
-const gmailAccountsRaw = process.env.GMAIL_ACCOUNTS || '';
-const transporters = [];
-
-if (gmailAccountsRaw) {
-  const accounts = gmailAccountsRaw.split(',').map(item => item.trim()).filter(Boolean);
-  accounts.forEach((acc) => {
-    const parts = acc.split(':');
-    if (parts.length >= 2) {
-      const user = parts[0];
-      const pass = parts.slice(1).join(':');
-      
-      transporters.push({
-        email: user,
-        transporter: nodemailer.createTransport({
-          host: 'smtp.gmail.com',
-          port: 25,
-          secure: false, // false for port 25 (uses STARTTLS)
-          requireTLS: true,
-          auth: {
-            user: user,
-            pass: pass
-          },
-          connectionTimeout: 5000, // 5 seconds connection timeout
-          greetingTimeout: 5000,
-          socketTimeout: 10000
-        })
-      });
-    }
+if (process.env.RESEND_API_KEY) {
+  transporters.push({
+    email: FROM_EMAIL,
+    transporter: nodemailer.createTransport({
+      host: 'smtp.resend.com',
+      port: 2525,
+      secure: false, // port 2525 uses STARTTLS
+      auth: {
+        user: 'resend',
+        pass: process.env.RESEND_API_KEY.trim()
+      },
+      connectionTimeout: 5000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000
+    })
   });
-  console.log(`Initialized ${transporters.length} Gmail SMTP accounts for rotation failover.`);
+  console.log(`Initialized Resend SMTP relay on port 2525 for custom domain ${FROM_EMAIL}`);
 } else {
-  console.warn("WARNING: GMAIL_ACCOUNTS environment variable is not defined. SMTP rotation fallback is disabled.");
+  console.warn("WARNING: RESEND_API_KEY is not defined. Resend SMTP relay configuration skipped.");
 }
 
 let currentTransporterIndex = 0;
@@ -302,27 +288,31 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
     for (let attempt = 0; attempt < transporters.length; attempt++) {
       const idx = (currentTransporterIndex + attempt) % transporters.length;
       const { email, transporter } = transporters[idx];
+  // ── SMTP Relay helper (shared by both paths) ─────────────────────────────
+  const trySmtp = async () => {
+    if (transporters.length === 0) return null;
+    let lastSmtpError = null;
+    for (let attempt = 0; attempt < transporters.length; attempt++) {
+      const idx = (currentTransporterIndex + attempt) % transporters.length;
+      const { email, transporter } = transporters[idx];
       try {
-        console.log(`[SMTP] Attempting via Gmail SMTP: ${email}`);
+        console.log(`[SMTP] Attempting via SMTP Relay: ${email}`);
         
-        // If preferSmtp is true, we want the email to visually come from your custom domain (dpdns.org).
-        // Standard SMTP allows setting 'from' to the custom domain while logging in via Gmail.
         const mailFrom = preferSmtp 
           ? `"${fromName}" <${FROM_EMAIL}>` 
           : `"${fromName}" <${email}>`;
 
         await transporter.sendMail({
           from: mailFrom,
-          sender: email, // The actual SMTP authenticated account
           replyTo: FROM_EMAIL,
           to, subject, html,
           ...(text ? { text } : {})
         });
         currentTransporterIndex = (idx + 1) % transporters.length;
-        console.log(`[SMTP] Sent successfully via Gmail SMTP [${email}] to ${to} (as ${mailFrom})`);
-        return { success: true, provider: 'gmail_smtp', email };
+        console.log(`[SMTP] Sent successfully via SMTP Relay [${email}] to ${to} (as ${mailFrom})`);
+        return { success: true, provider: 'smtp_relay', email };
       } catch (err) {
-        console.warn(`[SMTP] Gmail SMTP [${email}] failed: ${err.message}`);
+        console.warn(`[SMTP] SMTP Relay [${email}] failed: ${err.message}`);
         lastSmtpError = err;
       }
     }
@@ -374,7 +364,7 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
   // ── Route based on preferSmtp ─────────────────────────────────────────────
   if (preferSmtp) {
     // SMTP first (result/scorecard emails) — avoids new-domain IP reputation blocks
-    const smtpResult = await tryGmailSmtp();
+    const smtpResult = await trySmtp();
     if (smtpResult && smtpResult.success) return smtpResult;
     console.log('[SMTP] All SMTP accounts failed, falling back to Resend...');
     const resendResult = await tryResend();
@@ -384,8 +374,8 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
     // Resend first (OTPs and admin emails) — Resend is faster and more reliable for transactional
     const resendResult = await tryResend();
     if (resendResult && resendResult.success) return resendResult;
-    console.log('[Resend] All Resend clients failed, falling back to Gmail SMTP...');
-    const smtpResult = await tryGmailSmtp();
+    console.log('[Resend] All Resend clients failed, falling back to SMTP...');
+    const smtpResult = await trySmtp();
     if (smtpResult && smtpResult.success) return smtpResult;
     throw new Error(`All email channels failed. Resend error: ${resendResult?.error?.message || 'Unknown'}. SMTP error: ${smtpResult?.error?.message || 'No SMTP accounts'}`);
   }
