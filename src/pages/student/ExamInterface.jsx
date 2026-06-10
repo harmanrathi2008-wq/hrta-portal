@@ -96,6 +96,7 @@ export default function ExamInterface() {
 
   // Security Locking States
   const [hasFocus, setHasFocus] = useState(true);
+  const mountTimeRef = React.useRef(Date.now()); // Used for startup grace period
 
   const isFullscreenSupported = () => {
     const docEl = document.documentElement;
@@ -122,6 +123,11 @@ export default function ExamInterface() {
 
   const enterFullscreen = () => {
     if (!isFullscreenSupported()) {
+      setIsFullscreen(true);
+      return;
+    }
+    // Skip if already in fullscreen to avoid duplicate requests that cause fullscreenchange flicker
+    if (getFullscreenElement()) {
       setIsFullscreen(true);
       return;
     }
@@ -785,8 +791,11 @@ export default function ExamInterface() {
     window.addEventListener("keydown", handleUserGesture);
     window.addEventListener("mousedown", handleUserGesture);
 
-    // Initial fullscreen trigger request
-    enterFullscreen();
+    // Initial fullscreen trigger — only request if NOT already in fullscreen
+    // (avoids double-request when coming from ExamInstructions which already entered fullscreen)
+    if (!getFullscreenElement()) {
+      enterFullscreen();
+    }
 
     return () => {
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -1502,8 +1511,22 @@ export default function ExamInterface() {
     return base;
   };
 
-  // Full screen mandatory blocker page
-  if (!isFullscreen && !loading) {
+  // ── RENDER GUARDS (loading FIRST so blockers never fire during data fetch) ──
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center font-bold bg-[#f1f4f9] text-[#1f497d]">
+        <svg className="animate-spin h-8 w-8 mr-3" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        LOADING HARMAN RATHI TESTING AGENCY EXAMINATION SYSTEM...
+      </div>
+    );
+  }
+
+  // Full screen mandatory blocker page (only shown AFTER loading is complete)
+  if (!isFullscreen) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0">
         <div className="bg-slate-900 border border-slate-700 p-8 rounded-lg max-w-md shadow-2xl">
@@ -1520,15 +1543,15 @@ export default function ExamInterface() {
           >
             Enter Fullscreen
           </button>
-          
           {/* Bypass button removed to enforce strict fullscreen */}
         </div>
       </div>
     );
   }
 
-  // Focus lost anticheat blocker page
-  if (!hasFocus && !loading) {
+  // Focus lost anticheat blocker page — suppressed for 2s after mount (fullscreen transition causes brief blur)
+  const withinStartupGrace = (Date.now() - mountTimeRef.current) < 2000;
+  if (!hasFocus && !withinStartupGrace) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0 animate-pulse">
         <div className="bg-red-950 border border-red-500 p-8 rounded-lg max-w-md shadow-2xl">
@@ -1546,18 +1569,6 @@ export default function ExamInterface() {
             Return to Exam
           </button>
         </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center font-bold bg-[#f1f4f9] text-[#1f497d]">
-        <svg className="animate-spin h-8 w-8 mr-3" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        LOADING HARMAN RATHI TESTING AGENCY EXAMINATION SYSTEM...
       </div>
     );
   }
