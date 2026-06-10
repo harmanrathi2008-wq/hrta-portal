@@ -77,28 +77,27 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
 )
 
-// Resend - Robust initialization supporting VITE_ fallback and filtering out bad environment strings ("undefined", "null")
-const fallbackKey = 're_eNjnfeM1_KyztS1T9QKQShA3KXGLEo2ei';
-const mainResendKey = (process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || '').trim();
-const resend = new Resend(mainResendKey && mainResendKey !== 'undefined' && mainResendKey !== 'null' ? mainResendKey : fallbackKey);
+// Resend clients - ALL keys loaded from environment variables only (never hardcode API keys)
+function makeResendClient(envKey) {
+  const key = (envKey || '').trim();
+  return key && key !== 'undefined' && key !== 'null' && key.startsWith('re_') ? new Resend(key) : null;
+}
 
-const adminResendKey = (process.env.RESEND_API_KEY_ADMIN || '').trim();
-const resendAdmin = new Resend(adminResendKey && adminResendKey !== 'undefined' && adminResendKey !== 'null' ? adminResendKey : fallbackKey);
-
-const studentResendKey = (process.env.RESEND_API_KEY_STUDENT || '').trim();
-const resendStudent = new Resend(studentResendKey && studentResendKey !== 'undefined' && studentResendKey !== 'null' ? studentResendKey : fallbackKey);
+const resend = makeResendClient(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
+const resendAdmin = makeResendClient(process.env.RESEND_API_KEY_ADMIN);
+const resendStudent = makeResendClient(process.env.RESEND_API_KEY_STUDENT);
 
 // Dedicated clients for capacity-splitting
-const otpResendKey = (process.env.RESEND_API_KEY_OTP || '').trim();
-const resendOTPClient = otpResendKey && otpResendKey !== 'undefined' && otpResendKey !== 'null' ? new Resend(otpResendKey) : null;
-
-const notificationResendKey = (process.env.RESEND_API_KEY_NOTIFICATION || '').trim();
-const resendNotificationClient = notificationResendKey && notificationResendKey !== 'undefined' && notificationResendKey !== 'null' ? new Resend(notificationResendKey) : null;
+const resendOTPClient = makeResendClient(process.env.RESEND_API_KEY_OTP);
+const resendNotificationClient = makeResendClient(process.env.RESEND_API_KEY_NOTIFICATION);
 
 // Primary verified client for scorecard/result emails (domain: otp.harmanrathiportal.dpdns.org)
-const resendScorecardClient = new Resend(process.env.RESEND_API_KEY_SCORECARD || 're_MN7VhpY8_FLDbtpwU4ub67C3AK2bhdHJL');
+const resendScorecardClient = makeResendClient(process.env.RESEND_API_KEY_SCORECARD);
 
-const resendNewFallbackClient = new Resend('re_eNjnfeM1_KyztS1T9QKQShA3KXGLEo2ei');
+// Fallback client (uses main key as last resort)
+const resendNewFallbackClient = makeResendClient(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
+
+
 
 // Cloudinary
 cloudinary.config({
