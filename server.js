@@ -200,11 +200,11 @@ async function verifyUserJWT(req, res, next) {
   }
 }
 
-// Domain emails — must use Resend-verified domains for delivery
-// otp.harmanrathiportal.dpdns.org is verified for result/notification emails
-// harmanrathitportal.nxtdev.xyz is verified for OTP emails
-const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
+// Domain emails
+// harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
+// harmanrathiportal.dpdns.org   = verified for result/scorecard emails (new domain, needs SMTP warmup)
+const FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
@@ -316,6 +316,7 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
     if (isOtp) {
       if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
     } else {
+      // For result/notification emails: scorecard client uses dpdns.org domain
       if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
       if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
       if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
@@ -1601,7 +1602,7 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
       fromName: 'HRTA Results',
       type: 'student',
       isOtp: false,
-      preferSmtp: true  // Use Gmail SMTP first — avoids Resend IP reputation block with Gmail
+      preferSmtp: true  // Gmail SMTP first — bypasses new-domain IP reputation block
     });
 
 
