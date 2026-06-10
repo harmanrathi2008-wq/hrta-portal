@@ -226,11 +226,16 @@ if (gmailAccountsRaw) {
       transporters.push({
         email: user,
         transporter: nodemailer.createTransport({
-          service: 'gmail',
+          host: 'smtp.gmail.com',
+          port: 465,
+          secure: true, // true for port 465, false for other ports
           auth: {
             user: user,
             pass: pass
-          }
+          },
+          connectionTimeout: 5000, // 5 seconds connection timeout
+          greetingTimeout: 5000,
+          socketTimeout: 10000
         })
       });
     }
