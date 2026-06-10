@@ -125,28 +125,6 @@ async function verifyAdminJWT(req, res, next) {
       return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
     }
 
-    // Concurrent Session & 4-Hour Lifetime Validation
-    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-    if (!sessionId) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
-    }
-
-    const { data: currentLog, error: logErr } = await supabaseAdmin
-      .from('login_logs')
-      .select('login_at')
-      .eq('id', sessionId)
-      .single();
-
-    if (logErr || !currentLog) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
-    }
-
-    const sessionAge = Date.now() - new Date(currentLog.login_at).getTime();
-    const fourHours = 4 * 60 * 60 * 1000;
-    if (sessionAge > fourHours) {
-      return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
-    }
-
     // Verify Admin status in database
     const { data: adminUser, error: dbErr } = await supabaseAdmin
       .from('admins')
@@ -185,28 +163,6 @@ async function verifyUserJWT(req, res, next) {
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) {
       return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
-    }
-
-    // Session 4-Hour Lifetime Validation
-    const sessionId = req.headers['x-session-id'] || req.query.sessionId;
-    if (!sessionId) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'Session tracking ID is missing.' });
-    }
-
-    const { data: currentLog, error: logErr } = await supabaseAdmin
-      .from('login_logs')
-      .select('login_at')
-      .eq('id', sessionId)
-      .single();
-
-    if (logErr || !currentLog) {
-      return res.status(401).json({ error: 'session_invalidated', message: 'Session not found. Please log in again.' });
-    }
-
-    const sessionAge = Date.now() - new Date(currentLog.login_at).getTime();
-    const fourHours = 4 * 60 * 60 * 1000;
-    if (sessionAge > fourHours) {
-      return res.status(401).json({ error: 'session_expired', message: 'Your session has expired (4-hour limit). Please log in again.' });
     }
 
     req.user = user;

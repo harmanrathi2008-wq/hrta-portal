@@ -185,8 +185,6 @@ const MainLogin = () => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('expired') === 'true' || params.get('session_expired') === 'true') {
       setError('Your session has expired (4-hour limit). Please log in again.');
-    } else if (params.get('concurrent') === 'true' || params.get('session_invalidated') === 'true') {
-      setError('You have been logged out because a new login was detected on another device.');
     }
   }, []);
 

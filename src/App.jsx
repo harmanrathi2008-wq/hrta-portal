@@ -80,11 +80,9 @@ function App() {
           const data = await res.json().catch(() => ({}));
           console.warn(`Session rejected by backend: ${data.error || 'unauthorized'}. Logging out.`);
           // Use local scope so only THIS tab's session is cleared.
-          // Global signOut would broadcast auth state change and potentially disrupt other users' tabs.
           sessionStorage.clear();
           await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-          const param = data.error === 'session_expired' ? 'expired=true' : 'concurrent=true';
-          window.location.href = `/?${param}`;
+          window.location.href = '/?expired=true';
         }
       } catch (err) {
         console.warn('Failed to send heartbeat', err);
