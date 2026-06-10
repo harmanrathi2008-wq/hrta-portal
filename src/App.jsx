@@ -47,26 +47,14 @@ function App() {
     
     const checkSessionAndHeartbeat = async () => {
       const loginLogId = sessionStorage.getItem('loginLogId');
-      const loginTimeStr = sessionStorage.getItem('loginTime');
-      if (!loginLogId || !loginTimeStr) return;
+      if (!loginLogId) return;
 
-      // 1. Client-side absolute 4-hour expiry check
-      const loginTime = new Date(loginTimeStr).getTime();
-      const fourHours = 4 * 60 * 60 * 1000;
-      if (Date.now() - loginTime > fourHours) {
-        console.warn("Session expired on client-side (4-hour limit). Logging out.");
-        sessionStorage.clear();
-        await supabase.auth.signOut({ scope: 'local' });
-        window.location.href = '/?expired=true';
-        return;
-      }
-
-      // 2. Send heartbeat to backend with secure headers
+      // Send silent heartbeat to backend to keep active duration updated in login_logs
       try {
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token || '';
 
-        const res = await fetch(`${apiBaseUrl}/api/session-heartbeat`, {
+        await fetch(`${apiBaseUrl}/api/session-heartbeat`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -75,24 +63,15 @@ function App() {
           },
           body: JSON.stringify({ logId: loginLogId })
         });
-
-        if (res.status === 401) {
-          const data = await res.json().catch(() => ({}));
-          console.warn(`Session rejected by backend: ${data.error || 'unauthorized'}. Logging out.`);
-          // Use local scope so only THIS tab's session is cleared.
-          sessionStorage.clear();
-          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-          window.location.href = '/?expired=true';
-        }
       } catch (err) {
         console.warn('Failed to send heartbeat', err);
       }
     };
 
-    // Send initial heartbeat & check
+    // Send initial heartbeat
     checkSessionAndHeartbeat();
 
-    // Check session and send heartbeat every 30 seconds
+    // Send heartbeat every 30 seconds
     const interval = setInterval(checkSessionAndHeartbeat, 30000);
 
     return () => clearInterval(interval);

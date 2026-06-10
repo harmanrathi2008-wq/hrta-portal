@@ -184,7 +184,7 @@ const MainLogin = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('expired') === 'true' || params.get('session_expired') === 'true') {
-      setError('Your session has expired (4-hour limit). Please log in again.');
+      setError('Your session has expired. Please log in again.');
     }
   }, []);
 
