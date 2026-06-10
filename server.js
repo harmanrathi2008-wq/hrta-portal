@@ -31,7 +31,7 @@ const PORT = process.env.PORT || 8080
 // Global security headers via Helmet
 app.use(configureSecurityHeaders);
 
-// Restrict CORS origins securely (allowing localhost and Cloudflare Pages domains)
+// Restrict CORS origins securely (allowing localhost, Cloudflare Pages, and custom domain)
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) {
@@ -39,8 +39,9 @@ app.use(cors({
     }
     const isLocalhost = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
     const isCloudflarePages = origin === 'https://hrta-portal.pages.dev' || origin.endsWith('.hrta-portal.pages.dev');
+    const isCustomDomain = origin === 'https://harmanrathiportal.dpdns.org' || origin.endsWith('.harmanrathiportal.dpdns.org');
     
-    if (isLocalhost || isCloudflarePages) {
+    if (isLocalhost || isCloudflarePages || isCustomDomain) {
       callback(null, true);
     } else {
       callback(new Error('Blocked by secure CORS policy'));
