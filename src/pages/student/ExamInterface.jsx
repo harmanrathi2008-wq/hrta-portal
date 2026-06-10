@@ -96,61 +96,9 @@ export default function ExamInterface() {
 
   // Security Locking States
   const [hasFocus, setHasFocus] = useState(true);
-  const mountTimeRef = React.useRef(Date.now()); // Used for startup grace period
-
-  const isFullscreenSupported = () => {
-    const docEl = document.documentElement;
-    return !!(docEl.requestFullscreen || 
-              docEl.webkitRequestFullscreen || 
-              docEl.mozRequestFullScreen || 
-              docEl.msRequestFullscreen);
-  };
-
-  const getFullscreenElement = () => {
-    const doc = document;
-    return doc.fullscreenElement || 
-           doc.webkitFullscreenElement || 
-           doc.mozFullScreenElement || 
-           doc.msFullscreenElement;
-  };
-
-  const [isFullscreen, setIsFullscreen] = useState(() => {
-    if (!isFullscreenSupported()) {
-      return true; // Auto-bypass for devices/browsers that do not support standard fullscreen (e.g. iPhone)
-    }
-    return !!getFullscreenElement();
-  });
-
-  const enterFullscreen = () => {
-    if (!isFullscreenSupported()) {
-      setIsFullscreen(true);
-      return;
-    }
-    // Skip if already in fullscreen to avoid duplicate requests that cause fullscreenchange flicker
-    if (getFullscreenElement()) {
-      setIsFullscreen(true);
-      return;
-    }
-    const docEl = document.documentElement;
-    const requestFS = docEl.requestFullscreen || 
-                      docEl.webkitRequestFullscreen || 
-                      docEl.mozRequestFullScreen || 
-                      docEl.msRequestFullscreen;
-    if (requestFS) {
-      try {
-        const promise = requestFS.call(docEl);
-        if (promise && typeof promise.then === 'function') {
-          promise.then(() => setIsFullscreen(true)).catch(() => {});
-        } else {
-          setIsFullscreen(true);
-        }
-      } catch (e) {
-        setIsFullscreen(true);
-      }
-    }
-  };
 
   const [imageError, setImageError] = useState(false);
+
 
   // Fetch Data: Student, Exam, Questions
   useEffect(() => {
@@ -723,20 +671,6 @@ export default function ExamInterface() {
 
   // Security Focus & Screenshot Listeners Hook
   useEffect(() => {
-    const handleFullscreenChange = () => {
-      if (!isFullscreenSupported()) {
-        setIsFullscreen(true);
-        return;
-      }
-      const isFull = !!getFullscreenElement();
-      setIsFullscreen(isFull);
-
-      // If they exited fullscreen and exam is still active, immediately try to re-enter
-      if (!isFull && !isSubmittedRef.current && !isSubmittingRef.current) {
-        enterFullscreen();
-      }
-    };
-
     const handleBlur = () => setHasFocus(false);
     const handleFocus = () => setHasFocus(true);
 
@@ -764,19 +698,6 @@ export default function ExamInterface() {
       }
     };
 
-    // Auto re-enter fullscreen on any click/mousemove/keydown when not in fullscreen
-    const handleUserGesture = () => {
-      if (!isFullscreenSupported()) return;
-      if (!getFullscreenElement() && !isSubmittedRef.current && !isSubmittingRef.current) {
-        enterFullscreen();
-      }
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
-    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
-    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
-
     window.addEventListener("blur", handleBlur);
     window.addEventListener("focus", handleFocus);
     document.addEventListener("copy", preventDefault);
@@ -785,24 +706,7 @@ export default function ExamInterface() {
     document.addEventListener("contextmenu", preventDefault);
     window.addEventListener("keydown", handleKeyDown);
 
-    // Event listeners to catch user gestures and immediately re-enter fullscreen
-    window.addEventListener("click", handleUserGesture);
-    window.addEventListener("mousemove", handleUserGesture);
-    window.addEventListener("keydown", handleUserGesture);
-    window.addEventListener("mousedown", handleUserGesture);
-
-    // Initial fullscreen trigger — only request if NOT already in fullscreen
-    // (avoids double-request when coming from ExamInstructions which already entered fullscreen)
-    if (!getFullscreenElement()) {
-      enterFullscreen();
-    }
-
     return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
-      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
-      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
-
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("copy", preventDefault);
@@ -810,11 +714,6 @@ export default function ExamInterface() {
       document.removeEventListener("paste", preventDefault);
       document.removeEventListener("contextmenu", preventDefault);
       window.removeEventListener("keydown", handleKeyDown);
-
-      window.removeEventListener("click", handleUserGesture);
-      window.removeEventListener("mousemove", handleUserGesture);
-      window.removeEventListener("keydown", handleUserGesture);
-      window.removeEventListener("mousedown", handleUserGesture);
     };
   }, []);
 
@@ -1525,33 +1424,9 @@ export default function ExamInterface() {
     );
   }
 
-  // Full screen mandatory blocker page (only shown AFTER loading is complete)
-  if (!isFullscreen) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0">
-        <div className="bg-slate-900 border border-slate-700 p-8 rounded-lg max-w-md shadow-2xl">
-          <svg className="w-16 h-16 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>
-          </svg>
-          <h2 className="text-lg font-black mb-3 text-blue-400">FULLSCREEN REQUIRED</h2>
-          <p className="text-sm font-semibold text-gray-400 leading-relaxed mb-6">
-            This examination must be taken in Full Screen mode to maintain testing integrity. Click below to enter fullscreen and begin.
-          </p>
-          <button
-            onClick={enterFullscreen}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 font-bold rounded uppercase transition-all shadow-md tracking-wider cursor-pointer mb-3"
-          >
-            Enter Fullscreen
-          </button>
-          {/* Bypass button removed to enforce strict fullscreen */}
-        </div>
-      </div>
-    );
-  }
 
-  // Focus lost anticheat blocker page — suppressed for 2s after mount (fullscreen transition causes brief blur)
-  const withinStartupGrace = (Date.now() - mountTimeRef.current) < 2000;
-  if (!hasFocus && !withinStartupGrace) {
+  // Focus lost anticheat blocker page
+  if (!hasFocus) {
     return (
       <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0 animate-pulse">
         <div className="bg-red-950 border border-red-500 p-8 rounded-lg max-w-md shadow-2xl">
@@ -1560,7 +1435,7 @@ export default function ExamInterface() {
           </svg>
           <h2 className="text-lg font-black mb-3 text-red-500">⚠️ FOCUS LOST DETECTED</h2>
           <p className="text-xs font-semibold text-gray-350 leading-relaxed mb-6">
-            You switched tabs, opened developers inspect tools, or focused outside the test screen. All violations are logged automatically. Click below to return focus.
+            You switched tabs, opened developer tools, or focused outside the test screen. All violations are logged automatically. Click below to return focus.
           </p>
           <button
             onClick={() => window.focus()}
