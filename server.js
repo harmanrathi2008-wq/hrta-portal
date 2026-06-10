@@ -279,7 +279,7 @@ function normalizeDateOfBirth(dob) {
 }
 
 // Robust, self-healing email dispatch helper that tries all configured Resend keys in order of preference, falling back to Gmail SMTP rotation
-async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student', isOtp = false }) {
+async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false }) {
   // Always use correct sender domain based on message type
   const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
@@ -311,7 +311,8 @@ async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student
         from: fromAddress,
         to: to,
         subject: subject,
-        html: html
+        html: html,
+        ...(text ? { text } : {})
       });
 
       if (response.error) {
@@ -1566,10 +1567,33 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
 </body>
 </html>`;
 
+    const plainText = `HARMAN RATHI TESTING AGENCY - RESULT NOTIFICATION
+
+Dear ${studentName},
+
+Your result for the examination "${examTitle}" has been graded and published.
+
+PERFORMANCE SUMMARY
+-------------------
+Exam Title    : ${examTitle}
+Candidate Name: ${studentName}
+Application ID: ${submission.students?.application_id || 'N/A'}
+Score Obtained: ${score} / ${total}
+Percentage    : ${pct}%
+
+View your scorecard at:
+${scorecardLink}
+
+---
+This is an automated notification from Harman Rathi Testing Agency.
+Please do not reply to this email.
+Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
+
     await sendEmail({
       to: studentEmail,
       subject: `HRTA Result Published: ${examTitle}`,
       html: htmlBody,
+      text: plainText,
       fromName: 'HRTA Results',
       type: 'student',
       isOtp: false
