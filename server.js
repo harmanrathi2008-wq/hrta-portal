@@ -281,13 +281,7 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
   const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
 
-  // ── Gmail SMTP helper (shared by both paths) ─────────────────────────────
-  const tryGmailSmtp = async () => {
-    if (transporters.length === 0) return null;
-    let lastSmtpError = null;
-    for (let attempt = 0; attempt < transporters.length; attempt++) {
-      const idx = (currentTransporterIndex + attempt) % transporters.length;
-      const { email, transporter } = transporters[idx];
+
   // ── SMTP Relay helper (shared by both paths) ─────────────────────────────
   const trySmtp = async () => {
     if (transporters.length === 0) return null;
