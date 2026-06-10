@@ -28,6 +28,10 @@ const __dirname = dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 8080
 
+// Trust proxy header when running behind reverse proxy (e.g. Render, Cloudflare)
+// Required for express-rate-limit to safely determine the actual client IP
+app.set('trust proxy', 1);
+
 // Global security headers via Helmet
 app.use(configureSecurityHeaders);
 
