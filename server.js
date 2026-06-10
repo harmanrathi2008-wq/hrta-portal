@@ -198,9 +198,10 @@ async function verifyUserJWT(req, res, next) {
   }
 }
 
-// Domain emails
-const FROM_EMAIL = 'notifications@harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
+// Domain emails — must use a Resend-verified domain for delivery
+// harmanrathitportal.nxtdev.xyz is the verified domain in Resend
+const FROM_EMAIL = 'results@harmanrathitportal.nxtdev.xyz'
+const ADMIN_FROM_EMAIL = 'admin@harmanrathitportal.nxtdev.xyz'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
@@ -1464,7 +1465,7 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
       return res.status(400).json({ error: 'Student email is missing from database.' });
     }
 
-    const scorecardLink = `https://harmanrathiportal.dpdns.org/student/results`;
+    const scorecardLink = `https://harmanrathitportal.nxtdev.xyz/student/results`;
 
     const htmlBody = `
     <!DOCTYPE html>
