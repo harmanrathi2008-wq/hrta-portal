@@ -1626,7 +1626,7 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
       isOtp: false,
       preferSmtp: true  // Gmail SMTP first — bypasses new-domain IP reputation block
     }).catch(err => {
-      console.error('Background result email failed to send:', err.message);
+      console.error('Background result email failed to send:', err);
     });
 
     res.json({ success: true, message: 'Result email notification dispatched successfully.' });
