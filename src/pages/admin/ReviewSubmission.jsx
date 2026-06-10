@@ -112,6 +112,7 @@ const ReviewSubmission = () => {
   const [unpublishing, setUnpublishing] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [error, setError] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
   
   const [submission, setSubmission] = useState(null);
   const [student, setStudent] = useState(null);
@@ -479,6 +480,38 @@ const ReviewSubmission = () => {
     }
   };
 
+  const handleManualSendEmail = async () => {
+    if (!submissionId) return;
+    setSendingEmail(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({ submissionId })
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to dispatch email');
+      }
+      toast.success('✉️ Scorecard email notification sent successfully!');
+    } catch (e) {
+      console.error("Manual result email failed:", e);
+      toast.error("Failed to send email: " + e.message);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
   const handlePublish = async () => {
     if (!window.confirm("Publish this result? The student will immediately see their score on their dashboard.")) return;
     setPublishing(true);
@@ -656,6 +689,16 @@ const ReviewSubmission = () => {
             >
               View Scorecard
             </Link>
+          )}
+
+          {submission.status === 'published' && (
+            <button
+              onClick={handleManualSendEmail}
+              disabled={sendingEmail}
+              className="px-5 py-3 rounded font-bold text-white shadow-md bg-cyan-600 hover:bg-cyan-700 transition-colors text-sm flex items-center justify-center cursor-pointer disabled:opacity-50"
+            >
+              {sendingEmail ? 'Sending...' : '✉️ Send Scorecard Email'}
+            </button>
           )}
 
           {/* ===== PUBLISHED STATE BUTTONS ===== */}

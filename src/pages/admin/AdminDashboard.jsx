@@ -461,6 +461,37 @@ const AdminDashboard = () => {
     }
   };
 
+  const handleResendEmail = async (resultId) => {
+    setIsProcessing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({ submissionId: resultId })
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to dispatch email');
+      }
+      alert('✉️ Scorecard email notification sent successfully!');
+    } catch (e) {
+      console.error("Failed to resend result email:", e);
+      alert("⚠️ Failed to send email: " + e.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleQuickPublish = async (resultId, studentName) => {
     if (!window.confirm(`Publish result for ${studentName}? They will immediately see their scorecard.`)) return;
     setPublishingId(resultId);
@@ -1211,6 +1242,18 @@ CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests
                                 title="Unpublish Result"
                               >
                                 {isProcessing ? '...' : '🔒 Unpublish'}
+                              </button>
+                            )}
+
+                            {/* Quick Resend Email */}
+                            {isPublished && (
+                              <button
+                                onClick={() => handleResendEmail(result.id)}
+                                disabled={isProcessing}
+                                className="bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/20 text-cyan-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                title="Send/Resend Scorecard Email"
+                              >
+                                ✉️ Email
                               </button>
                             )}
                           </div>
