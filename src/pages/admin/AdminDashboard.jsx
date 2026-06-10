@@ -342,8 +342,37 @@ const AdminDashboard = () => {
         
         if (activeErr) {
           console.error("Error fetching active sessions:", activeErr);
+        } else if (activeSessionsData && activeSessionsData.length > 0) {
+          const studentIds = [...new Set(activeSessionsData.map(s => s.student_id))].filter(Boolean);
+          const examIds = [...new Set(activeSessionsData.map(s => s.exam_id))].filter(Boolean);
+
+          if (studentIds.length > 0 && examIds.length > 0) {
+            const { data: finishedResults, error: finishedErr } = await supabase
+              .from('exam_results')
+              .select('student_id, exam_id, status, submitted_at')
+              .in('student_id', studentIds)
+              .in('exam_id', examIds)
+              .in('status', ['submitted', 'published', 'blocked']);
+
+            if (finishedErr) {
+              console.error("Error fetching finished sessions:", finishedErr);
+              setActiveSessions(activeSessionsData);
+            } else {
+              const filteredActive = activeSessionsData.filter(session => {
+                const hasLaterSubmission = (finishedResults || []).some(r => 
+                  r.student_id === session.student_id && 
+                  r.exam_id === session.exam_id && 
+                  (!r.submitted_at || new Date(r.submitted_at) >= new Date(session.started_at || 0))
+                );
+                return !hasLaterSubmission;
+              });
+              setActiveSessions(filteredActive);
+            }
+          } else {
+            setActiveSessions(activeSessionsData);
+          }
         } else {
-          setActiveSessions(activeSessionsData || []);
+          setActiveSessions([]);
         }
 
       } catch (err) {
