@@ -95,6 +95,9 @@ const resendOTPClient = otpResendKey && otpResendKey !== 'undefined' && otpResen
 const notificationResendKey = (process.env.RESEND_API_KEY_NOTIFICATION || '').trim();
 const resendNotificationClient = notificationResendKey && notificationResendKey !== 'undefined' && notificationResendKey !== 'null' ? new Resend(notificationResendKey) : null;
 
+// Primary verified client for scorecard/result emails (domain: otp.harmanrathiportal.dpdns.org)
+const resendScorecardClient = new Resend(process.env.RESEND_API_KEY_SCORECARD || 're_MN7VhpY8_FLDbtpwU4ub67C3AK2bhdHJL');
+
 const resendNewFallbackClient = new Resend('re_eNjnfeM1_KyztS1T9QKQShA3KXGLEo2ei');
 
 // Cloudinary
@@ -198,10 +201,11 @@ async function verifyUserJWT(req, res, next) {
   }
 }
 
-// Domain emails — must use a Resend-verified domain for delivery
-// harmanrathitportal.nxtdev.xyz is the verified domain in Resend
-const FROM_EMAIL = 'results@harmanrathitportal.nxtdev.xyz'
-const ADMIN_FROM_EMAIL = 'admin@harmanrathitportal.nxtdev.xyz'
+// Domain emails — must use Resend-verified domains for delivery
+// otp.harmanrathiportal.dpdns.org is verified for result/notification emails
+// harmanrathitportal.nxtdev.xyz is verified for OTP emails
+const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
@@ -287,8 +291,9 @@ async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student
   if (isOtp) {
     if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
   } else {
+    // Primary: verified scorecard/result client (otp.harmanrathiportal.dpdns.org)
+    if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
     if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
-    // Explicitly add the new fallback client for notifications
     if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
   }
 
