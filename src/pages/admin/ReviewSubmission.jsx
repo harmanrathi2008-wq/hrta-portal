@@ -452,12 +452,34 @@ const ReviewSubmission = () => {
     }
   };
 
+  const sendResultNotification = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({ submissionId })
+      }).catch(err => console.error("Result published notification email dispatch failed:", err));
+    } catch (e) {
+      console.error("Failed to initialize result published email notification:", e);
+    }
+  };
+
   const handlePublish = async () => {
     if (!window.confirm("Publish this result? The student will immediately see their score on their dashboard.")) return;
     setPublishing(true);
     try {
       await calculateAndSave('published');
       await logAuditEvent('PUBLISH_EXAM_RESULT', { status: 'published' });
+      await sendResultNotification();
       alert('✅ Result Published! Student can now see their scorecard.');
       navigate('/admin/results');
     } catch (err) {
@@ -497,6 +519,7 @@ const ReviewSubmission = () => {
         status: 'published',
         manual_overrides: markOverrides
       });
+      await sendResultNotification();
       setEditMode(false);
       // Refresh submission data
       const { data } = await supabase.from('exam_results').select('*').eq('id', submissionId).single();

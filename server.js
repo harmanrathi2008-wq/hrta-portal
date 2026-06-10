@@ -78,18 +78,15 @@ const supabaseAdmin = createClient(
 )
 
 // Resend - Robust initialization supporting VITE_ fallback and filtering out bad environment strings ("undefined", "null")
+const fallbackKey = 're_eNjnfeM1_KyztS1T9QKQShA3KXGLEo2ei';
 const mainResendKey = (process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || '').trim();
-const resend = new Resend(mainResendKey && mainResendKey !== 'undefined' && mainResendKey !== 'null' ? mainResendKey : 're_dummy');
+const resend = new Resend(mainResendKey && mainResendKey !== 'undefined' && mainResendKey !== 'null' ? mainResendKey : fallbackKey);
 
 const adminResendKey = (process.env.RESEND_API_KEY_ADMIN || '').trim();
-const resendAdmin = (adminResendKey && adminResendKey !== 'undefined' && adminResendKey !== 'null') 
-  ? new Resend(adminResendKey) 
-  : null;
+const resendAdmin = new Resend(adminResendKey && adminResendKey !== 'undefined' && adminResendKey !== 'null' ? adminResendKey : fallbackKey);
 
 const studentResendKey = (process.env.RESEND_API_KEY_STUDENT || '').trim();
-const resendStudent = (studentResendKey && studentResendKey !== 'undefined' && studentResendKey !== 'null') 
-  ? new Resend(studentResendKey) 
-  : null;
+const resendStudent = new Resend(studentResendKey && studentResendKey !== 'undefined' && studentResendKey !== 'null' ? studentResendKey : fallbackKey);
 
 // Cloudinary
 cloudinary.config({
@@ -174,8 +171,9 @@ async function verifyUserJWT(req, res, next) {
 }
 
 // Domain emails
-const FROM_EMAIL = process.env.FROM_EMAIL_STUDENT || 'notifications@harmanrathitportal.nxtdev.xyz'
-const ADMIN_FROM_EMAIL = process.env.FROM_EMAIL_ADMIN || 'admin@harmanrathitportal.nxtdev.xyz'
+const FROM_EMAIL = 'notifications@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
+const OTP_FROM_EMAIL = 'otp@nxtdev.xyz'
 
 // Nodemailer SMTP Rotation Setup
 const gmailAccountsRaw = process.env.GMAIL_ACCOUNTS || '';
@@ -249,23 +247,17 @@ function normalizeDateOfBirth(dob) {
 }
 
 // Robust, self-healing email dispatch helper that tries all configured Resend keys in order of preference, falling back to Gmail SMTP rotation
-async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student' }) {
-  // Always use FROM_EMAIL (e.g. notifications@harmanrathitportal.nxtdev.xyz) to ensure the domain matches Resend's verified single sender or domain records
-  const fromDomain = FROM_EMAIL;
+async function sendEmail({ to, subject, html, fromName = 'HRTA', type = 'student', isOtp = false }) {
+  // Always use correct sender domain based on message type
+  const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
 
   // Build the list of clients to try in order of preference
   const clientsToTry = [];
   
-  if (type === 'admin') {
-    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
-    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
-    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
-  } else {
-    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
-    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
-    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
-  }
+  if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
+  if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
+  if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
 
   let lastResendError = null;
 
@@ -754,7 +746,8 @@ app.post('/api/send-admin-otp', authLimiter, verifyTurnstileToken, validateEmail
         </div>
       `,
       fromName: 'HRTA Admin',
-      type: 'admin'
+      type: 'admin',
+      isOtp: true
     });
   } catch (error) {
     console.error('Failed to send admin OTP (allowing fallback bypass):', error);
@@ -824,7 +817,8 @@ app.post('/api/send-superadmin-otp', authLimiter, verifyTurnstileToken, validate
         </div>
       `,
       fromName: 'HRTA Admin',
-      type: 'admin'
+      type: 'admin',
+      isOtp: true
     });
   } catch (error) {
     console.error('Failed to send super admin OTP (allowing fallback bypass):', error);
@@ -892,7 +886,8 @@ app.post('/api/send-student-otp', authLimiter, verifyTurnstileToken, async (req,
         </div>
       `,
       fromName: 'HRTA',
-      type: 'student'
+      type: 'student',
+      isOtp: true
     });
   } catch (error) {
     console.error('Failed to send student OTP (allowing fallback bypass):', error);
@@ -1393,6 +1388,126 @@ app.post('/api/sign-url', verifyUserJWT, async (req, res) => {
   } catch (error) {
     console.error('Error signing URL:', error);
     res.status(500).json({ error: error.message || 'Failed to sign URL' });
+  }
+})
+
+// ============ RESULT NOTIFICATION SENDER ============
+app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) => {
+  const { submissionId } = req.body;
+  if (!submissionId) {
+    return res.status(400).json({ error: 'Submission ID is required.' });
+  }
+
+  try {
+    const { data: submission, error: subErr } = await supabaseAdmin
+      .from('exam_results')
+      .select(`
+        id,
+        total_score,
+        total_marks,
+        percentage,
+        students ( full_name, email, application_id ),
+        exams ( title, subject )
+      `)
+      .eq('id', submissionId)
+      .single();
+
+    if (subErr || !submission) {
+      return res.status(404).json({ error: 'Exam submission record not found.' });
+    }
+
+    const studentName = submission.students?.full_name || 'Candidate';
+    const studentEmail = submission.students?.email;
+    const examTitle = submission.exams?.title || 'Examination';
+    const score = submission.total_score || 0;
+    const total = submission.total_marks || 0;
+    const pct = submission.percentage || 0;
+
+    if (!studentEmail) {
+      return res.status(400).json({ error: 'Student email is missing from database.' });
+    }
+
+    const scorecardLink = `https://harmanrathiportal.dpdns.org/student/results`;
+
+    const htmlBody = `
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body style="margin:0; padding:0; background:#060d17; font-family: 'Segoe UI', Arial, sans-serif;">
+      <div style="max-width: 600px; margin: 20px auto; background: #060d17; color: #cfd8dc; border-radius: 16px; overflow: hidden; border: 1px solid #1a2e45;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #0d1b2a 0%, #0a1628 100%); padding: 32px 24px; border-bottom: 2px solid #00bcd4; text-align: center;">
+          <h1 style="margin: 0; color: #00bcd4; font-size: 24px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase;">HRTA RESULT OUT</h1>
+          <p style="margin: 6px 0 0; color: #546e7a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;">Harman Rathi Testing Agency</p>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding: 32px 24px; background: #0d1b2a;">
+          <p style="color: #64b5f6; font-size: 16px; font-weight: 700; margin: 0 0 16px 0;">Dear ${studentName},</p>
+          <p style="line-height: 1.6; font-size: 14px; margin: 0 0 24px 0; color: #cfd8dc;">
+            Your result for the examination <strong>"${examTitle}"</strong> has been successfully graded and published by the administrator.
+          </p>
+          
+          <!-- Scorecard Box -->
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 24px; margin-bottom: 28px;">
+            <h3 style="margin: 0 0 16px 0; color: #00bcd4; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1a2e45; padding-bottom: 8px;">📊 Performance Summary</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+              <tr>
+                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Exam Title:</td>
+                <td style="padding: 8px 0; text-align: right; color: white; font-weight: 700;">${examTitle}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Candidate Name:</td>
+                <td style="padding: 8px 0; text-align: right; color: white; font-weight: 700;">${studentName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Application ID:</td>
+                <td style="padding: 8px 0; text-align: right; color: #90a4ae; font-family: monospace;">${submission.students?.application_id || 'N/A'}</td>
+              </tr>
+              <tr style="border-top: 1px solid #1a2e45;">
+                <td style="padding: 12px 0; color: #78909c; font-weight: 600; font-size: 15px;">Obtained Score:</td>
+                <td style="padding: 12px 0; text-align: right; color: #D4AF37; font-weight: 800; font-size: 18px;">${score} / ${total}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px 0; color: #78909c; font-weight: 600;">Percentage:</td>
+                <td style="padding: 8px 0; text-align: right; color: #00bcd4; font-weight: 700;">${pct}%</td>
+              </tr>
+            </table>
+          </div>
+          
+          <!-- CTA Button -->
+          <div style="text-align: center; margin-bottom: 28px;">
+            <a href="${scorecardLink}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #0288d1, #00bcd4); color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; box-shadow: 0 4px 12px rgba(0, 188, 212, 0.25);">
+              🔍 View Scorecard on Portal
+            </a>
+          </div>
+        </div>
+        
+        <!-- Footer -->
+        <div style="background: #060d17; padding: 24px; text-align: center; border-top: 1px solid #1a2e45;">
+          <p style="margin: 0; color: #37474f; font-size: 11px; line-height: 1.6;">
+            This is an automated result dispatch from <strong>Harman Rathi Testing Agency</strong>.<br>
+            Please do not reply directly to this message.
+          </p>
+          <p style="margin: 10px 0 0; color: #263238; font-size: 10px;">© ${new Date().getFullYear()} HRTA · All Rights Reserved</p>
+        </div>
+      </div>
+    </body>
+    </html>`;
+
+    await sendEmail({
+      to: studentEmail,
+      subject: `Result Published: ${examTitle} - HRTA`,
+      html: htmlBody,
+      fromName: 'HRTA Results',
+      type: 'student',
+      isOtp: false
+    });
+
+    res.json({ success: true, message: 'Result email notification dispatched successfully.' });
+  } catch (err) {
+    console.error('Failed to send result notification:', err.message);
+    res.status(500).json({ error: 'Failed to send result email notification: ' + err.message });
   }
 })
 
