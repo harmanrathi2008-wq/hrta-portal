@@ -320,10 +320,12 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
     if (isOtp) {
       if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
     } else {
-      // For result/notification emails: scorecard client uses dpdns.org domain
+      // For result/scorecard emails: scorecard client uses dpdns.org domain
       if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
       if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
       if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
+      // Fallback: If preferSmtp is active, try the OTP client too since it has a verified working domain (nxtdev.xyz)
+      if (preferSmtp && resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
     }
     if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
     if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
@@ -333,8 +335,14 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
     for (const { name, client } of clientsToTry) {
       try {
         console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
+        
+        // Override from address if using the OTP client to match its verified domain (nxtdev.xyz)
+        const activeFromAddress = name === 'resendOTPClient' 
+          ? `${fromName} <${OTP_FROM_EMAIL}>` 
+          : fromAddress;
+
         const response = await client.emails.send({
-          from: fromAddress, to, subject, html,
+          from: activeFromAddress, to, subject, html,
           ...(text ? { text } : {})
         });
         if (response.error) throw new Error(response.error.message || `Resend ${name} returned error`);
