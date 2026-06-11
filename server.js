@@ -211,6 +211,10 @@ const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
 const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
+// Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
+const transporters = [];
+let currentTransporterIndex = 0;
+
 if (process.env.RESEND_API_KEY) {
   transporters.push({
     email: FROM_EMAIL,
@@ -232,7 +236,6 @@ if (process.env.RESEND_API_KEY) {
   console.warn("WARNING: RESEND_API_KEY is not defined. Resend SMTP relay configuration skipped.");
 }
 
-let currentTransporterIndex = 0;
 
 // Robust Date Normalizer to handle standard date picker (YYYY-MM-DD), manual types, slashes, hyphens, etc.
 function normalizeDateOfBirth(dob) {
