@@ -215,7 +215,10 @@ const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 const transporters = [];
 let currentTransporterIndex = 0;
 
-if (process.env.RESEND_API_KEY) {
+// Use RESEND_API_KEY_SCORECARD if set (must be authorized for otp.harmanrathiportal.dpdns.org)
+// Fall back to RESEND_API_KEY if not set
+const smtpResendKey = (process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY || '').trim();
+if (smtpResendKey) {
   transporters.push({
     email: FROM_EMAIL,
     transporter: nodemailer.createTransport({
@@ -224,16 +227,16 @@ if (process.env.RESEND_API_KEY) {
       secure: false, // port 2525 uses STARTTLS
       auth: {
         user: 'resend',
-        pass: process.env.RESEND_API_KEY.trim()
+        pass: smtpResendKey
       },
-      connectionTimeout: 5000,
-      greetingTimeout: 5000,
-      socketTimeout: 10000
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 15000
     })
   });
   console.log(`Initialized Resend SMTP relay on port 2525 for custom domain ${FROM_EMAIL}`);
 } else {
-  console.warn("WARNING: RESEND_API_KEY is not defined. Resend SMTP relay configuration skipped.");
+  console.warn("WARNING: No Resend API key found. Resend SMTP relay configuration skipped.");
 }
 
 
