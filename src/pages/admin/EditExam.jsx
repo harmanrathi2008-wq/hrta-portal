@@ -45,7 +45,7 @@ const EditExam = () => {
     const fetchExamDetails = async () => {
       try {
         const role = sessionStorage.getItem('role');
-        if (role !== 'super_admin') {
+        if (role !== 'super_admin' && role !== 'admin') {
           navigate('/');
           return;
         }
