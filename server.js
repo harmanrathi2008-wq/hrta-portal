@@ -281,8 +281,8 @@ function normalizeDateOfBirth(dob) {
 }
 
 // Robust, self-healing email dispatch helper
-// preferSmtp=true: tries Gmail SMTP FIRST (use for result emails to avoid new-domain IP reputation blocks with Gmail)
-// preferSmtp=false (default): tries Resend first, SMTP as fallback (use for OTPs)
+// preferSmtp=true: tries SMTP relay first, falls back to Resend API
+// preferSmtp=false (default): tries Resend first, SMTP as fallback (OTPs)
 async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false, preferSmtp = false }) {
   const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
   const fromAddress = `${fromName} <${fromDomain}>`;
@@ -323,14 +323,16 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
   const tryResend = async () => {
     const clientsToTry = [];
     if (isOtp) {
+      // OTP emails: use OTP client (nxtdev.xyz domain - verified and reaches Gmail)
       if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
     } else {
-      // For result/scorecard emails: scorecard client uses dpdns.org domain
+      // Result/scorecard emails:
+      // 1. Try scorecard/notification/fallback clients FIRST (uses otp.harmanrathiportal.dpdns.org)
+      // 2. Fall back to OTP client (nxtdev.xyz domain) if others fail
       if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
       if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
       if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
-      // Fallback: If preferSmtp is active, try the OTP client too since it has a verified working domain (nxtdev.xyz)
-      if (preferSmtp && resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
+      if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
     }
     if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
     if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
@@ -341,9 +343,9 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
       try {
         console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
         
-        // Override from address if using the OTP client to match its verified domain (nxtdev.xyz)
-        const activeFromAddress = name === 'resendOTPClient' 
-          ? `${fromName} <${OTP_FROM_EMAIL}>` 
+        // Dynamically select from address: OTP client requires nxtdev.xyz, others use custom dpdns.org
+        const activeFromAddress = name === 'resendOTPClient'
+          ? `${fromName} <${OTP_FROM_EMAIL}>`
           : fromAddress;
 
         const response = await client.emails.send({
