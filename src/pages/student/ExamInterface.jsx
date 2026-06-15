@@ -41,6 +41,7 @@ export default function ExamInterface() {
   const localStreamRef = React.useRef(null);
   const peerConnectionRef = React.useRef(null);
   const proctorChannelRef = React.useRef(null);
+  const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
   const [cameraAccessLost, setCameraAccessLost] = useState(false);
@@ -80,7 +81,7 @@ export default function ExamInterface() {
   };
 
   // Unified proctor lock trigger
-  const triggerExamLock = (reason) => {
+  const triggerExamLock = async (reason) => {
     setIsProctorLocked(true);
     setLockReason(reason);
     logViolation('PROCTORING_VIOLATION_LOCK', { reason });
@@ -95,6 +96,26 @@ export default function ExamInterface() {
           data: { reason } 
         }
       }).catch(err => console.warn("Failed to send PROCTORING_VIOLATION signal:", err));
+    }
+
+    try {
+      const userId = sessionStorage.getItem("userId");
+      if (userId) {
+        await supabase
+          .from("proctor_locks")
+          .upsert([
+            {
+              student_id: userId,
+              exam_id: examId,
+              exam_result_id: draftId || null,
+              status: "locked",
+              reason: reason,
+              updated_at: new Date().toISOString()
+            }
+          ], { onConflict: 'student_id,exam_id' });
+      }
+    } catch (dbErr) {
+      console.warn("Failed to record proctor lock to DB:", dbErr);
     }
   };
 
@@ -664,6 +685,47 @@ export default function ExamInterface() {
           })
           .subscribe();
 
+        // Database-backed real-time watch on proctor_locks
+        const lockChannel = supabase
+          .channel(`proctor_lock_watch_${userId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'proctor_locks',
+              filter: `student_id=eq.${userId}`
+            },
+            (payload) => {
+              console.log("Proctor lock DB event received:", payload);
+              const newLockData = payload.new;
+              if (newLockData && newLockData.exam_id === examId) {
+                if (newLockData.status === 'approved') {
+                  console.log("DB Lock approved. Restoring exam state...");
+                  setIsProctorLocked(false);
+                  setLockReason("");
+                  setUnlockRequestSent(false);
+                  tabSwitchCountRef.current = 0;
+                  logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared via DB approval' });
+                  
+                  // Clean up DB row
+                  supabase
+                    .from("proctor_locks")
+                    .delete()
+                    .eq("id", newLockData.id)
+                    .then(() => console.log("Cleaned up lock record."));
+                } else if (newLockData.status === 'rejected') {
+                  console.log("DB Lock rejected. Failing candidate...");
+                  setIsRejected(true);
+                  setIsProctorLocked(false);
+                  executeBlockSubmission();
+                }
+              }
+            }
+          )
+          .subscribe();
+        lockChannelRef.current = lockChannel;
+
       } catch (err) {
         console.error("Proctoring Media stream Initialization failed:", err);
         setCameraAccessLost(true);
@@ -698,6 +760,9 @@ export default function ExamInterface() {
         activeStream.getTracks().forEach((track) => track.stop());
       }
       supabase.removeChannel(channel);
+      if (lockChannelRef.current) {
+        supabase.removeChannel(lockChannelRef.current);
+      }
       sessionStorage.removeItem("cameraGranted");
     };
   }, [exam, student]);
@@ -2407,6 +2472,19 @@ export default function ExamInterface() {
                   <button
                     type="button"
                     onClick={async () => {
+                      try {
+                        const userId = sessionStorage.getItem("userId");
+                        if (userId) {
+                          await supabase
+                            .from("proctor_locks")
+                            .update({ status: "pending_unlock", updated_at: new Date().toISOString() })
+                            .eq("student_id", userId)
+                            .eq("exam_id", examId);
+                        }
+                      } catch (dbErr) {
+                        console.warn("Failed to update lock row to pending_unlock:", dbErr);
+                      }
+
                       if (proctorChannelRef.current) {
                         try {
                           await proctorChannelRef.current.send({
@@ -2418,12 +2496,12 @@ export default function ExamInterface() {
                               data: { studentName: student?.full_name, studentId: student?.id, reason: lockReason }
                             }
                           });
-                          setUnlockRequestSent(true);
-                          logViolation('PROCTORING_UNLOCK_REQUESTED', { reason: lockReason });
                         } catch (err) {
                           console.warn("Failed to broadcast unlock request:", err);
                         }
                       }
+                      setUnlockRequestSent(true);
+                      logViolation('PROCTORING_UNLOCK_REQUESTED', { reason: lockReason });
                     }}
                     className="w-full bg-amber-500 hover:bg-amber-600 text-gray-950 font-black py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide cursor-pointer"
                   >

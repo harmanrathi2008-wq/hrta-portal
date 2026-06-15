@@ -272,7 +272,18 @@ const AdminDashboard = () => {
   const handleApproveUnlock = async () => {
     if (!monitoringStudent) return;
     
-    // 1. Send signaling approve
+    // 1. Update status in database proctor_locks
+    try {
+      await supabase
+        .from("proctor_locks")
+        .update({ status: "approved", updated_at: new Date().toISOString() })
+        .eq("student_id", monitoringStudent.student_id)
+        .eq("exam_id", monitoringStudent.exam_id);
+    } catch (dbErr) {
+      console.warn("Error updating lock status to approved in DB:", dbErr);
+    }
+
+    // 2. Send signaling approve
     if (proctorChannelRef.current) {
       try {
         await proctorChannelRef.current.send({
@@ -332,7 +343,18 @@ const AdminDashboard = () => {
   const handleRejectUnlock = async () => {
     if (!monitoringStudent) return;
     
-    // 1. Send signaling reject
+    // 1. Update status in database proctor_locks
+    try {
+      await supabase
+        .from("proctor_locks")
+        .update({ status: "rejected", updated_at: new Date().toISOString() })
+        .eq("student_id", monitoringStudent.student_id)
+        .eq("exam_id", monitoringStudent.exam_id);
+    } catch (dbErr) {
+      console.warn("Error updating lock status to rejected in DB:", dbErr);
+    }
+
+    // 2. Send signaling reject
     if (proctorChannelRef.current) {
       try {
         await proctorChannelRef.current.send({
@@ -652,6 +674,7 @@ const AdminDashboard = () => {
 
     fetchDashboardData();
     loadAllResults();
+    loadProctorLocks();
 
     // Subscribe to real-time updates of exam_results
     const realtimeChannel = supabase
@@ -670,8 +693,25 @@ const AdminDashboard = () => {
       )
       .subscribe();
 
+    // Subscribe to real-time updates of proctor_locks
+    const locksRealtimeChannel = supabase
+      .channel('admin-proctor-locks-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'proctor_locks'
+        },
+        () => {
+          loadProctorLocks();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(realtimeChannel);
+      supabase.removeChannel(locksRealtimeChannel);
     };
   }, [navigate]);
 
@@ -699,6 +739,40 @@ const AdminDashboard = () => {
       console.error('Error loading results:', e);
     } finally {
       setResultsLoading(false);
+    }
+  };
+
+  const loadProctorLocks = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('proctor_locks')
+        .select(`
+          id,
+          status,
+          reason,
+          created_at,
+          student_id,
+          exam_id,
+          exam_result_id,
+          students ( full_name, application_id ),
+          exams ( title )
+        `);
+      if (!error && data) {
+        const violations = data.map(lock => ({
+          id: lock.id,
+          studentId: lock.student_id,
+          studentName: lock.students?.full_name || "Unknown Candidate",
+          examName: lock.exams?.title || "Exam",
+          reason: lock.reason || "Lock triggered",
+          type: lock.status === 'pending_unlock' ? 'UNLOCK_REQUEST' : 'PROCTORING_VIOLATION',
+          timestamp: lock.created_at,
+          examResultId: lock.exam_result_id,
+          dbLockId: lock.id
+        }));
+        setGlobalViolations(violations);
+      }
+    } catch (err) {
+      console.error("Error loading proctor locks:", err);
     }
   };
 
