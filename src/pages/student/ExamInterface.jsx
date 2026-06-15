@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
+import { toast } from "sonner";
 
 const parseOption = (opt) => {
   if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
@@ -45,6 +46,7 @@ export default function ExamInterface() {
   const [cameraAccessLost, setCameraAccessLost] = useState(false);
   const [cameraRetryLoading, setCameraRetryLoading] = useState(false);
   const cameraAccessLostRef = React.useRef(false);
+  const tabSwitchCountRef = React.useRef(0);
 
   // Proctoring Violation Lock States
   const [isProctorLocked, setIsProctorLocked] = useState(false);
@@ -651,6 +653,7 @@ export default function ExamInterface() {
               setIsProctorLocked(false);
               setLockReason("");
               setUnlockRequestSent(false);
+              tabSwitchCountRef.current = 0;
               logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared by Superadmin' });
             } else if (type === "UNLOCK_REJECTED") {
               console.log("Superadmin rejected unlock. Terminating candidate session...");
@@ -927,7 +930,22 @@ export default function ExamInterface() {
   useEffect(() => {
     const handleBlur = () => {
       if (!isSubmittedRef.current && !cameraAccessLostRef.current && !isProctorLocked && !isRejected) {
-        triggerExamLock("Focus Lost (Tab Switch Detected)");
+        tabSwitchCountRef.current += 1;
+        const count = tabSwitchCountRef.current;
+        
+        logViolation('TAB_SWITCH_OR_FOCUS_LOST', { 
+          note: `Window focus lost. Count: ${count}/5`, 
+          tab_switch_count: count 
+        });
+
+        if (count > 5) {
+          triggerExamLock("Focus Lost (Tab Switch Limit Exceeded - 5 Times)");
+        } else {
+          toast.error(`Warning: Tab switch or focus lost detected! (${count}/5). The exam will lock permanently if you exceed 5 warnings.`, {
+            duration: 5000,
+            position: 'top-center'
+          });
+        }
       }
     };
 

@@ -38,6 +38,9 @@ const AdminDashboard = () => {
   const [lockedReason, setLockedReason] = useState("");
   const [isAudioMuted, setIsAudioMuted] = useState(true);
 
+  const [globalViolations, setGlobalViolations] = useState([]);
+  const proctorChannelsRef = useRef({});
+
   const peerConnectionRef = useRef(null);
   const proctorChannelRef = useRef(null);
   const videoRef = useRef(null);
@@ -385,6 +388,143 @@ const AdminDashboard = () => {
     }, 1000);
     return () => clearInterval(timerTick);
   }, []);
+
+  // Dynamic subscription to each active student's proctoring channel
+  useEffect(() => {
+    const activeStudentIds = activeSessions.map(s => s.student_id).filter(Boolean);
+    
+    // Unsubscribe from channels that are no longer active
+    Object.keys(proctorChannelsRef.current).forEach((studentId) => {
+      if (!activeStudentIds.includes(studentId)) {
+        console.log(`Unsubscribing from inactive student channel: exam_proctor_${studentId}`);
+        supabase.removeChannel(proctorChannelsRef.current[studentId]);
+        delete proctorChannelsRef.current[studentId];
+      }
+    });
+
+    // Subscribe to new active channels
+    activeSessions.forEach((session) => {
+      const studentId = session.student_id;
+      if (studentId && !proctorChannelsRef.current[studentId]) {
+        console.log(`Subscribing to active student channel: exam_proctor_${studentId}`);
+        const channelName = `exam_proctor_${studentId}`;
+        const channel = supabase.channel(channelName);
+        
+        channel.on("broadcast", { event: "signal" }, async ({ payload }) => {
+          const { type, sender, data } = payload;
+          if (sender === "student") {
+            if (type === "PROCTORING_VIOLATION" || type === "UNLOCK_REQUEST") {
+              setGlobalViolations(prev => {
+                const existingIdx = prev.findIndex(v => v.studentId === studentId);
+                const newViolation = {
+                  id: Date.now() + Math.random().toString(),
+                  studentId: studentId,
+                  studentName: data?.studentName || session.students?.full_name || "Unknown Candidate",
+                  examName: session.exams?.title || "Exam",
+                  reason: data?.reason || "Violation detected",
+                  type: type,
+                  timestamp: new Date().toISOString(),
+                  examResultId: session.id,
+                  session: session
+                };
+                
+                if (existingIdx > -1) {
+                  const updated = [...prev];
+                  updated[existingIdx] = newViolation;
+                  return updated;
+                } else {
+                  return [newViolation, ...prev];
+                }
+              });
+
+              if (type === "PROCTORING_VIOLATION") {
+                toast.error(`Violation: ${data?.reason || "Exam Locked"} by ${session.students?.full_name || "Student"}`);
+              } else {
+                toast.warning(`Unlock requested by ${session.students?.full_name || "Student"}`);
+              }
+            }
+          }
+        });
+        
+        channel.subscribe();
+        proctorChannelsRef.current[studentId] = channel;
+      }
+    });
+  }, [activeSessions]);
+
+  // Clean up all dynamically subscribed channels on component unmount
+  useEffect(() => {
+    return () => {
+      Object.keys(proctorChannelsRef.current).forEach((studentId) => {
+        supabase.removeChannel(proctorChannelsRef.current[studentId]);
+      });
+      proctorChannelsRef.current = {};
+    };
+  }, []);
+
+  const handleGlobalApproveUnlock = async (violation) => {
+    const { studentId, examResultId } = violation;
+    const channelName = `exam_proctor_${studentId}`;
+    
+    let channel = proctorChannelsRef.current[studentId];
+    if (!channel) {
+      channel = supabase.channel(channelName);
+      await channel.subscribe();
+    }
+
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "signal",
+        payload: { type: "UNLOCK_APPROVED", sender: "admin" }
+      });
+      toast.success(`Unlock command approved for ${violation.studentName}`);
+    } catch (err) {
+      console.warn("Failed to send unlock approved signal:", err);
+      toast.error("Failed to broadcast unlock command.");
+    }
+
+    setGlobalViolations(prev => prev.filter(v => v.studentId !== studentId));
+  };
+
+  const handleGlobalRejectUnlock = async (violation) => {
+    const { studentId, examResultId } = violation;
+    const channelName = `exam_proctor_${studentId}`;
+    
+    let channel = proctorChannelsRef.current[studentId];
+    if (!channel) {
+      channel = supabase.channel(channelName);
+      await channel.subscribe();
+    }
+
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "signal",
+        payload: { type: "UNLOCK_REJECTED", sender: "admin" }
+      });
+      toast.error(`Rejection sent for ${violation.studentName}`);
+    } catch (err) {
+      console.warn("Failed to send unlock rejected signal:", err);
+    }
+
+    try {
+      const { error } = await supabase
+        .from("exam_results")
+        .update({
+          status: "blocked",
+          total_score: 0,
+          percentage: 0
+        })
+        .eq("id", examResultId);
+      
+      if (error) throw error;
+    } catch (dbErr) {
+      console.error("Error updating exam_results status to blocked:", dbErr);
+    }
+
+    setGlobalViolations(prev => prev.filter(v => v.studentId !== studentId));
+  };
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -931,6 +1071,96 @@ const AdminDashboard = () => {
           
           {/* Main Action Area - Pending Submissions (Glassmorphism) */}
           <div className="lg:col-span-2 space-y-8">
+            {/* Live Proctoring Alerts & Unlock Queue Panel */}
+            <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.05)] overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+              
+              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                    </span>
+                    🚨 Live Proctoring Security Alerts & Unlock Queue
+                  </h2>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Real-time lock requests and proctoring violations from all active students.
+                  </p>
+                </div>
+                <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
+                  {globalViolations.length} Alert{globalViolations.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+
+              <div className="p-6">
+                {globalViolations.length === 0 ? (
+                  <div className="py-8 text-center text-slate-500 font-bold">
+                    <p className="text-sm text-slate-400 mb-1">🛡️ System Secure & Monitored</p>
+                    <p className="text-[10px] font-normal text-slate-500">No active lockout alerts or violations reported.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {globalViolations.map((violation) => (
+                      <div key={violation.id} className="bg-red-950/10 hover:bg-red-950/15 border border-red-500/20 rounded-xl p-4 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in">
+                        <div className="flex-1 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-white font-extrabold text-sm uppercase">
+                              👤 {violation.studentName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              (ID: {violation.session?.students?.application_id || 'N/A'})
+                            </span>
+                            {violation.type === 'UNLOCK_REQUEST' ? (
+                              <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                UNLOCK REQUESTED
+                              </span>
+                            ) : (
+                              <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                                INTERFACE LOCKED
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="space-y-1 text-xs">
+                            <p className="text-slate-300 font-semibold">
+                              📝 Exam: <span className="text-white font-bold">{violation.examName}</span>
+                            </p>
+                            <p className="text-slate-400">
+                              ⚠️ Reason: <strong className="text-red-400">{violation.reason}</strong>
+                            </p>
+                            <p className="text-[10px] text-slate-500">
+                              ⏰ Detected: {new Date(violation.timestamp).toLocaleTimeString()}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Action Control Buttons */}
+                        <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleGlobalApproveUnlock(violation)}
+                            className="flex-1 md:flex-initial bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
+                          >
+                            ✓ Approve Unlock
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleGlobalRejectUnlock(violation)}
+                            className="flex-1 md:flex-initial bg-red-500 hover:bg-red-600 text-white font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
+                          >
+                            ✕ Reject & Fail
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Live Proctoring Control Room Panel */}
             <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
               <div className="h-0.5 w-full bg-gradient-to-r from-red-500 to-rose-600 animate-pulse" />
