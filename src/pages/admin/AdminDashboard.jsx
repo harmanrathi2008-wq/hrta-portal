@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { toast } from 'sonner';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -30,6 +31,12 @@ const AdminDashboard = () => {
   const [remoteStream, setRemoteStream] = useState(null);
   const [monitorStatus, setMonitorStatus] = useState("Connecting...");
   const [timeTick, setTimeTick] = useState(0);
+
+  // Proctoring Unlock & Audio Mute States
+  const [isStudentLocked, setIsStudentLocked] = useState(false);
+  const [pendingUnlockRequest, setPendingUnlockRequest] = useState(false);
+  const [lockedReason, setLockedReason] = useState("");
+  const [isAudioMuted, setIsAudioMuted] = useState(true);
 
   const peerConnectionRef = useRef(null);
   const proctorChannelRef = useRef(null);
@@ -93,6 +100,10 @@ const AdminDashboard = () => {
     setMonitoringStudent(null);
     setRemoteStream(null);
     setMonitorStatus("Connecting...");
+    setIsStudentLocked(false);
+    setPendingUnlockRequest(false);
+    setLockedReason("");
+    setIsAudioMuted(true);
   };
 
   // Start monitoring student live camera feed
@@ -216,6 +227,15 @@ const AdminDashboard = () => {
           } else if (type === "STUDENT_CAMERA_RECOVERED") {
             console.log("Student camera recovered. Re-initializing proctor feed.");
             startMonitoring(session);
+          } else if (type === "PROCTORING_VIOLATION") {
+            setIsStudentLocked(true);
+            setLockedReason(data?.reason || "Exam interface locked due to proctoring violation.");
+            toast.error(`Violation Detected: ${data?.reason || "Exam Locked"}`);
+          } else if (type === "UNLOCK_REQUEST") {
+            setIsStudentLocked(true);
+            setPendingUnlockRequest(true);
+            setLockedReason(data?.reason || "Candidate requested an interface unlock.");
+            toast.warning(`Unlock requested by candidate: ${data?.studentName || "Student"}`);
           }
         }
       })
@@ -237,6 +257,114 @@ const AdminDashboard = () => {
       videoRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
+
+  // Bind audio mute state programmatically
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isAudioMuted;
+    }
+  }, [isAudioMuted]);
+
+  // Handle Approve Unlock command
+  const handleApproveUnlock = async () => {
+    if (!monitoringStudent) return;
+    
+    // 1. Send signaling approve
+    if (proctorChannelRef.current) {
+      try {
+        await proctorChannelRef.current.send({
+          type: "broadcast",
+          event: "signal",
+          payload: { type: "UNLOCK_APPROVED", sender: "admin" }
+        });
+        toast.success("Unlock command broadcasted successfully.");
+      } catch (err) {
+        console.warn("Failed to broadcast approve signal:", err);
+        toast.error("Failed to broadcast unlock command.");
+      }
+    }
+
+    // 2. Log admin audit event
+    try {
+      const adminId = sessionStorage.getItem('userId');
+      const adminRole = sessionStorage.getItem('role') || 'super_admin';
+      const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
+      await fetch(`${apiBaseUrl}/api/audit-log`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({
+          userId: adminId || 'Unknown',
+          userRole: adminRole,
+          displayName: adminEmail,
+          action: 'ADMIN_UNLOCK_APPROVED',
+          details: {
+            monitored_student_id: monitoringStudent.student_id,
+            monitored_student_name: monitoringStudent.students?.full_name,
+            exam_id: monitoringStudent.exam_id,
+            exam_title: monitoringStudent.exams?.title
+          }
+        })
+      });
+    } catch (logErr) {
+      console.warn("Failed to audit ADMIN_UNLOCK_APPROVED:", logErr);
+    }
+
+    // 3. Clear local states
+    setIsStudentLocked(false);
+    setPendingUnlockRequest(false);
+    setLockedReason("");
+  };
+
+  // Handle Reject Unlock command
+  const handleRejectUnlock = async () => {
+    if (!monitoringStudent) return;
+    
+    // 1. Send signaling reject
+    if (proctorChannelRef.current) {
+      try {
+        await proctorChannelRef.current.send({
+          type: "broadcast",
+          event: "signal",
+          payload: { type: "UNLOCK_REJECTED", sender: "admin" }
+        });
+      } catch (err) {
+        console.warn("Failed to broadcast reject signal:", err);
+      }
+    }
+
+    // 2. Perform DB update directly from admin
+    try {
+      const { error } = await supabase
+        .from("exam_results")
+        .update({
+          status: "blocked",
+          total_score: 0,
+          percentage: 0
+        })
+        .eq("id", monitoringStudent.id);
+      
+      if (error) throw error;
+      toast.error("Unlock request rejected. Candidate is blocked and marked as failed.");
+    } catch (dbErr) {
+      console.error("Error updating exam_results status to blocked:", dbErr);
+      toast.error("Failed to block exam result directly in database, but rejection signal was sent.");
+    }
+
+    // 3. Clear local monitoring / lock state
+    setIsStudentLocked(false);
+    setPendingUnlockRequest(false);
+    setLockedReason("");
+  };
 
   // Clean up if monitored student is no longer active (submitted or left)
   useEffect(() => {
@@ -1442,7 +1570,6 @@ CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon 
                   ref={videoRef}
                   autoPlay
                   playsInline
-                  muted
                   className="w-full h-full object-cover rounded-xl border border-white/10"
                 />
               ) : (
@@ -1459,7 +1586,7 @@ CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon 
 
               {/* Video Overlay Badges */}
               {remoteStream && (
-                <div className="absolute inset-x-6 top-6 flex justify-between pointer-events-none">
+                <div className="absolute inset-x-6 top-6 flex justify-between pointer-events-none w-[calc(100%-3rem)]">
                   <span className="bg-red-600 text-white font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1.5 shadow-md">
                     <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse"></span>
                     LIVE PROCTOR
@@ -1469,7 +1596,71 @@ CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon 
                   </span>
                 </div>
               )}
+
+              {/* Speaker Toggle Button */}
+              {remoteStream && (
+                <button
+                  type="button"
+                  onClick={() => setIsAudioMuted(!isAudioMuted)}
+                  className="absolute bottom-6 right-6 z-10 bg-black/60 hover:bg-black/80 text-white p-2.5 rounded-xl border border-white/10 transition-all cursor-pointer flex items-center gap-2 text-xs font-bold uppercase tracking-wider shadow-md"
+                >
+                  {isAudioMuted ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                      Unmute Audio
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-emerald-400 animate-pulse" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM16 10a4 4 0 00-1.993-3.464 1 1 0 10-1 1.732 2 2 0 010 3.464 1 1 0 101 1.732A4 4 0 0016 10z" clipRule="evenodd" />
+                      </svg>
+                      Mute Audio
+                    </>
+                  )}
+                </button>
+              )}
             </div>
+
+            {/* Lockout / Violation Control Center */}
+            {isStudentLocked && (
+              <div className="bg-red-950/20 border-t border-b border-red-500/30 px-6 py-4 space-y-4">
+                <div className="flex items-start gap-3 flex-col sm:flex-row">
+                  <div className="bg-red-500/10 p-2 rounded-lg text-red-500 self-start">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h2m-2 0H8m11 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-bold text-red-400 uppercase tracking-wide text-xs">
+                      {pendingUnlockRequest ? "Candidate Requested Unlock" : "Candidate Interface Locked"}
+                    </h4>
+                    <p className="text-slate-300 text-xs mt-1 leading-relaxed">
+                      Reason: <strong className="text-red-400">{lockedReason || "Violation detected / camera disabled"}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Approve / Reject Actions */}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleApproveUnlock}
+                    className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black py-2 rounded-xl text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-[0_4px_12px_rgba(16,185,129,0.2)]"
+                  >
+                    ✓ Approve & Unlock Exam
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRejectUnlock}
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white font-black py-2 rounded-xl text-xs uppercase tracking-wider transition-colors cursor-pointer shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
+                  >
+                    ✕ Reject & Fail Candidate
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Modal Details / Connection Stats */}
             <div className="bg-black/40 px-6 py-4 flex flex-col gap-2 text-xs font-semibold text-slate-400">

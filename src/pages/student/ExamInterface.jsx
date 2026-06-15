@@ -46,6 +46,142 @@ export default function ExamInterface() {
   const [cameraRetryLoading, setCameraRetryLoading] = useState(false);
   const cameraAccessLostRef = React.useRef(false);
 
+  // Proctoring Violation Lock States
+  const [isProctorLocked, setIsProctorLocked] = useState(false);
+  const [lockReason, setLockReason] = useState("");
+  const [unlockRequestSent, setUnlockRequestSent] = useState(false);
+  const [isRejected, setIsRejected] = useState(false);
+
+  // Unified logging helper for candidate violations
+  const logViolation = async (action, details = {}) => {
+    try {
+      const userId = sessionStorage.getItem("userId");
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      await fetch(`${apiBaseUrl}/api/audit-log`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          userId: userId || 'Unknown',
+          userRole: 'student',
+          displayName: student?.full_name || 'Student',
+          action,
+          details: {
+            exam_id: examId,
+            exam_title: exam?.title,
+            ...details
+          }
+        })
+      });
+    } catch (e) {
+      console.warn("Failed to log violation to audit-log:", e);
+    }
+  };
+
+  // Unified proctor lock trigger
+  const triggerExamLock = (reason) => {
+    setIsProctorLocked(true);
+    setLockReason(reason);
+    logViolation('PROCTORING_VIOLATION_LOCK', { reason });
+
+    if (proctorChannelRef.current) {
+      proctorChannelRef.current.send({
+        type: "broadcast",
+        event: "signal",
+        payload: { 
+          type: "PROCTORING_VIOLATION", 
+          sender: "student", 
+          data: { reason } 
+        }
+      }).catch(err => console.warn("Failed to send PROCTORING_VIOLATION signal:", err));
+    }
+  };
+
+  // Submit blocked cheat attempt to Supabase
+  const executeBlockSubmission = async () => {
+    if (isSubmittingRef.current || isSubmittedRef.current) return;
+    isSubmittingRef.current = true;
+    setSubmitting(true);
+    try {
+      const userId = sessionStorage.getItem("userId");
+      if (!userId) throw new Error("No student session found.");
+
+      const timerKey = `exam_start_time_${examId}`;
+      const startTime = sessionStorage.getItem(timerKey) || Date.now().toString();
+
+      let attemptNumber = 1;
+      try {
+        const { data: existingAttempts } = await supabase
+          .from("exam_results")
+          .select("id")
+          .eq("student_id", userId)
+          .eq("exam_id", examId);
+        if (existingAttempts) {
+          attemptNumber = existingAttempts.length + 1;
+        }
+      } catch (e) {
+        console.error("Error fetching attempt count:", e);
+      }
+
+      const resultPayload = {
+        student_id: userId,
+        exam_id: examId,
+        answers: {}, // Empty responses to reset / penalize
+        status: "blocked",
+        total_score: 0,
+        total_marks: exam && exam.total_marks ? parseFloat(exam.total_marks) : 100,
+        percentage: 0,
+        correct_count: 0,
+        wrong_count: 0,
+        unattempted_count: questions.length,
+        started_at: new Date(parseInt(startTime, 10)).toISOString(),
+        submitted_at: new Date().toISOString(),
+        attempt_number: attemptNumber
+      };
+
+      let error;
+      if (draftId) {
+        const res = await supabase
+          .from("exam_results")
+          .update(resultPayload)
+          .eq("id", draftId);
+        error = res.error;
+      } else {
+        const res = await supabase.from("exam_results").insert([resultPayload]);
+        error = res.error;
+      }
+      if (error) throw error;
+
+      isSubmittedRef.current = true;
+
+      // Log audit event
+      try {
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        await fetch(`${apiBaseUrl}/api/audit-log`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            userId: userId || 'Unknown',
+            userRole: 'student',
+            displayName: student?.full_name || 'Student',
+            action: 'EXAM_TERMINATED_FOR_CHEATING',
+            details: {
+              exam_id: examId,
+              exam_title: exam?.title,
+              attempt_number: attemptNumber
+            }
+          })
+        });
+      } catch (logErr) {
+        console.warn("Failed to audit EXAM_TERMINATED_FOR_CHEATING:", logErr);
+      }
+
+    } catch (err) {
+      console.error("Error submitting blocked attempt:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const sessionTokenRef = React.useRef('');
   React.useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -245,57 +381,177 @@ export default function ExamInterface() {
     fetchData();
   }, [examId, navigate]);
 
-  // Camera Capture & Live WebRTC Proctoring Signaling System
+  // Camera & Microphone Capture & Live WebRTC Proctoring Signaling System
   useEffect(() => {
     const userId = sessionStorage.getItem("userId");
     if (!userId || !exam) return;
 
     let stream = null;
+    let pollingInterval = null;
     const channelName = `exam_proctor_${userId}`;
     const channel = supabase.channel(channelName);
     proctorChannelRef.current = channel;
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
+    // Offscreen elements for pixel brightness analysis
+    const offscreenVideo = document.createElement('video');
+    offscreenVideo.muted = true;
+    offscreenVideo.playsInline = true;
+
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = 64;
+    offscreenCanvas.height = 48;
+    const canvasCtx = offscreenCanvas.getContext('2d');
+
     const startCameraAndProctoring = async () => {
       try {
-        // Capture camera stream silently (not rendering it on student view)
+        // Capture video and audio stream silently
         stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, frameRate: 15 },
-          audio: false
+          audio: { echoCancellation: true, noiseSuppression: true }
         });
         localStreamRef.current = stream;
 
-        // Monitor camera track status (Permission Revoked / Webcam Unplugged)
-        stream.getTracks().forEach((track) => {
-          track.onended = () => {
-            if (!isSubmittedRef.current) {
+        // Bind stream to offscreen video element for frame analysis
+        offscreenVideo.srcObject = stream;
+        offscreenVideo.play().catch(e => console.warn("Offscreen video play failed:", e));
+
+        // Track ended and mute listeners (Self-healing and Logging)
+        const setupTrackListeners = (activeStream) => {
+          activeStream.getTracks().forEach((track) => {
+            track.onended = () => {
+              if (!isSubmittedRef.current) {
+                setCameraAccessLost(true);
+                cameraAccessLostRef.current = true;
+                logViolation('DEVICE_LOST', { track_label: track.label, kind: track.kind });
+              }
+            };
+            track.onmute = () => {
+              if (!isSubmittedRef.current) {
+                setCameraAccessLost(true);
+                cameraAccessLostRef.current = true;
+                logViolation('DEVICE_MUTED', { track_label: track.label, kind: track.kind });
+              }
+            };
+            track.onunmute = () => {
+              const allHealthy = activeStream.getTracks().every(t => t.readyState === 'live' && t.enabled && !t.muted);
+              if (allHealthy) {
+                setCameraAccessLost(false);
+                cameraAccessLostRef.current = false;
+              }
+            };
+          });
+        };
+
+        setupTrackListeners(stream);
+
+        // Security Polling Loop (Muted Sensors, Black Screens, Frozen Virtual Cameras)
+        let consecutiveBlackFrames = 0;
+        let prevFramesSent = null;
+        let consecutiveFrozenChecks = 0;
+
+        pollingInterval = setInterval(async () => {
+          if (isSubmittedRef.current || cameraAccessLostRef.current || isProctorLocked || isRejected) {
+            return;
+          }
+
+          const activeStream = localStreamRef.current || stream;
+          if (!activeStream) return;
+
+          // 1. Property checks (Hardware/OS mute sliders, console hacks)
+          const tracks = activeStream.getTracks();
+          if (tracks.length === 0) {
+            setCameraAccessLost(true);
+            cameraAccessLostRef.current = true;
+            logViolation('DEVICE_LOST', { reason: 'No media tracks found' });
+            return;
+          }
+
+          for (const track of tracks) {
+            if (track.readyState !== 'live' || !track.enabled || track.muted) {
               setCameraAccessLost(true);
               cameraAccessLostRef.current = true;
-              fetch(`${apiBaseUrl}/api/audit-log`, {
-                method: 'POST',
-                headers: getHeaders(),
-                body: JSON.stringify({
-                  userId: userId || 'Unknown',
-                  userRole: 'student',
-                  displayName: student?.full_name || 'Student',
-                  action: 'PERMISSION_REVOKED',
-                  details: {
-                    exam_id: examId,
-                    track_label: track.label,
-                    reason: 'track_ended_or_device_removed'
-                  }
-                })
-              }).catch(err => console.warn("Failed to audit PERMISSION_REVOKED:", err));
+              logViolation('DEVICE_LOST', { 
+                reason: `Track ${track.kind} inactive`, 
+                readyState: track.readyState, 
+                enabled: track.enabled, 
+                muted: track.muted 
+              });
+              return;
             }
-          };
-        });
+          }
+
+          // 2. Pixel/Brightness analysis (Anti-Black Screen / Covered Lens Shutter)
+          const videoTrack = activeStream.getVideoTracks()[0];
+          if (videoTrack && offscreenVideo.readyState >= 2) {
+            try {
+              canvasCtx.drawImage(offscreenVideo, 0, 0, 64, 48);
+              const imgData = canvasCtx.getImageData(0, 0, 64, 48);
+              const pixels = imgData.data;
+
+              let totalLuminance = 0;
+              for (let i = 0; i < pixels.length; i += 4) {
+                const r = pixels[i];
+                const g = pixels[i+1];
+                const b = pixels[i+2];
+                const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+                totalLuminance += luminance;
+              }
+              const avgBrightness = totalLuminance / (64 * 48);
+
+              if (avgBrightness < 8) {
+                consecutiveBlackFrames++;
+                if (consecutiveBlackFrames >= 2) {
+                  triggerExamLock("Camera Lens Covered or Sensor Blocked (Black Screen Detected)");
+                }
+              } else {
+                consecutiveBlackFrames = 0;
+              }
+            } catch (err) {
+              console.warn("Luminance check failed:", err);
+            }
+          }
+
+          // 3. WebRTC Stats Connection check (Frozen virtual streams / OBS camera bypasses)
+          const pc = peerConnectionRef.current;
+          if (pc && pc.connectionState === 'connected') {
+            try {
+              const stats = await pc.getStats();
+              let foundVideoStats = false;
+              stats.forEach(report => {
+                if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                  foundVideoStats = true;
+                  const currentFrames = report.framesSent || 0;
+                  if (prevFramesSent !== null && currentFrames === prevFramesSent) {
+                    consecutiveFrozenChecks++;
+                    if (consecutiveFrozenChecks >= 3) {
+                      triggerExamLock("Camera stream is frozen or virtual feed is inactive");
+                    }
+                  } else {
+                    consecutiveFrozenChecks = 0;
+                  }
+                  prevFramesSent = currentFrames;
+                }
+              });
+              if (!foundVideoStats) {
+                prevFramesSent = null;
+              }
+            } catch (statsErr) {
+              console.warn("Error reading WebRTC stats:", statsErr);
+            }
+          } else {
+            prevFramesSent = null;
+            consecutiveFrozenChecks = 0;
+          }
+
+        }, 3000);
 
         // Subscribe to signaling channel
         channel
           .on("broadcast", { event: "signal" }, async ({ payload }) => {
             const { type, sender, data } = payload;
             
-            // Validate that the request originates from authorized admin
+            // Validate authorized admin sender
             if (sender !== "admin") {
               fetch(`${apiBaseUrl}/api/audit-log`, {
                 method: 'POST',
@@ -316,7 +572,6 @@ export default function ExamInterface() {
             }
 
             if (type === "ADMIN_CONNECTED") {
-              // Initialize RTC Peer Connection
               if (peerConnectionRef.current) {
                 peerConnectionRef.current.close();
               }
@@ -326,7 +581,6 @@ export default function ExamInterface() {
               });
               peerConnectionRef.current = pc;
 
-              // Monitor connection state (Signaling Established / Stream Disconnected)
               pc.onconnectionstatechange = () => {
                 if (pc.connectionState === "connected") {
                   fetch(`${apiBaseUrl}/api/audit-log`, {
@@ -337,10 +591,7 @@ export default function ExamInterface() {
                       userRole: 'student',
                       displayName: student?.full_name || 'Student',
                       action: 'SIGNALING_ESTABLISHED',
-                      details: {
-                        exam_id: examId,
-                        connection_state: pc.connectionState
-                      }
+                      details: { exam_id: examId, connection_state: pc.connectionState }
                     })
                   }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
                 } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
@@ -353,17 +604,14 @@ export default function ExamInterface() {
                         userRole: 'student',
                         displayName: student?.full_name || 'Student',
                         action: 'STREAM_DISCONNECTED',
-                        details: {
-                          exam_id: examId,
-                          connection_state: pc.connectionState
-                        }
+                        details: { exam_id: examId, connection_state: pc.connectionState }
                       })
                     }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
                   }
                 }
               };
 
-              // Add local tracks to peer connection
+              // Add video and audio tracks (Strictly One-Way: Candidate sends to admin)
               const activeStream = localStreamRef.current || stream;
               if (activeStream) {
                 activeStream.getTracks().forEach((track) => {
@@ -371,7 +619,6 @@ export default function ExamInterface() {
                 });
               }
 
-              // Send ice candidate
               pc.onicecandidate = (event) => {
                 if (event.candidate && proctorChannelRef.current) {
                   proctorChannelRef.current.send({
@@ -382,7 +629,6 @@ export default function ExamInterface() {
                 }
               };
 
-              // Create SDP Offer
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
               channel.send({
@@ -400,12 +646,23 @@ export default function ExamInterface() {
                 peerConnectionRef.current.close();
                 peerConnectionRef.current = null;
               }
+            } else if (type === "UNLOCK_APPROVED") {
+              console.log("Superadmin approved unlock. Restoring exam state...");
+              setIsProctorLocked(false);
+              setLockReason("");
+              setUnlockRequestSent(false);
+              logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared by Superadmin' });
+            } else if (type === "UNLOCK_REJECTED") {
+              console.log("Superadmin rejected unlock. Terminating candidate session...");
+              setIsRejected(true);
+              setIsProctorLocked(false);
+              executeBlockSubmission();
             }
           })
           .subscribe();
 
       } catch (err) {
-        console.error("Proctoring Camera Initialization failed:", err);
+        console.error("Proctoring Media stream Initialization failed:", err);
         setCameraAccessLost(true);
         cameraAccessLostRef.current = true;
         
@@ -418,11 +675,7 @@ export default function ExamInterface() {
               userRole: 'student',
               displayName: student?.full_name || sessionStorage.getItem('userEmail') || 'Student',
               action: 'PERMISSION_REVOKED',
-              details: {
-                exam_id: examId,
-                reason: 'initialization_failed',
-                error: err.message
-              }
+              details: { exam_id: examId, reason: 'initialization_failed', error: err.message }
             })
           }).catch(e => console.warn("Failed to audit initial camera failure:", e));
         } catch (logErr) {}
@@ -433,6 +686,7 @@ export default function ExamInterface() {
 
     // Clean up on component unmount
     return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
@@ -483,7 +737,7 @@ export default function ExamInterface() {
       
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, frameRate: 15 },
-        audio: false
+        audio: { echoCancellation: true, noiseSuppression: true }
       });
       localStreamRef.current = stream;
 
@@ -497,34 +751,34 @@ export default function ExamInterface() {
             userRole: 'student',
             displayName: student?.full_name || 'Student',
             action: 'CAMERA_GRANTED',
-            details: { exam_id: examId, note: 'Camera recovered mid-exam' }
+            details: { exam_id: examId, note: 'Camera and microphone recovered mid-exam' }
           })
         });
       } catch (logErr) {
         console.warn("Failed to audit CAMERA_GRANTED recovery:", logErr);
       }
 
-      // Attach track ended listeners to the new tracks
+      // Attach track ended and mute listeners to the new tracks
       stream.getTracks().forEach((track) => {
         track.onended = () => {
           if (!isSubmittedRef.current) {
             setCameraAccessLost(true);
             cameraAccessLostRef.current = true;
-            fetch(`${apiBaseUrl}/api/audit-log`, {
-              method: 'POST',
-              headers: getHeaders(),
-              body: JSON.stringify({
-                userId: userId || 'Unknown',
-                userRole: 'student',
-                displayName: student?.full_name || 'Student',
-                action: 'PERMISSION_REVOKED',
-                details: {
-                  exam_id: examId,
-                  track_label: track.label,
-                  reason: 'track_ended_or_device_removed'
-                }
-              })
-            }).catch(err => console.warn("Failed to audit PERMISSION_REVOKED:", err));
+            logViolation('DEVICE_LOST', { track_label: track.label, kind: track.kind });
+          }
+        };
+        track.onmute = () => {
+          if (!isSubmittedRef.current) {
+            setCameraAccessLost(true);
+            cameraAccessLostRef.current = true;
+            logViolation('DEVICE_MUTED', { track_label: track.label, kind: track.kind });
+          }
+        };
+        track.onunmute = () => {
+          const allHealthy = stream.getTracks().every(t => t.readyState === 'live' && t.enabled && !t.muted);
+          if (allHealthy) {
+            setCameraAccessLost(false);
+            cameraAccessLostRef.current = false;
           }
         };
       });
@@ -533,9 +787,14 @@ export default function ExamInterface() {
       if (peerConnectionRef.current) {
         const senders = peerConnectionRef.current.getSenders();
         senders.forEach((sender) => {
-          if (sender.track && sender.track.kind === "video") {
-            const newVideoTrack = stream.getVideoTracks()[0];
-            if (newVideoTrack) sender.replaceTrack(newVideoTrack).catch(e => console.warn("Error replacing WebRTC video track:", e));
+          if (sender.track) {
+            if (sender.track.kind === "video") {
+              const newVideoTrack = stream.getVideoTracks()[0];
+              if (newVideoTrack) sender.replaceTrack(newVideoTrack).catch(e => console.warn("Error replacing WebRTC video track:", e));
+            } else if (sender.track.kind === "audio") {
+              const newAudioTrack = stream.getAudioTracks()[0];
+              if (newAudioTrack) sender.replaceTrack(newAudioTrack).catch(e => console.warn("Error replacing WebRTC audio track:", e));
+            }
           }
         });
       }
@@ -552,8 +811,8 @@ export default function ExamInterface() {
         }).catch(err => console.warn("Failed to send STUDENT_CAMERA_RECOVERED:", err));
       }
     } catch (err) {
-      console.warn("Failed to restore camera access:", err);
-      alert("Camera access denied. Please grant camera access in browser site settings to resume your exam.");
+      console.warn("Failed to restore camera/microphone access:", err);
+      alert("Camera or microphone access denied. Please grant both permissions in browser site settings to resume your exam.");
     } finally {
       setCameraRetryLoading(false);
     }
@@ -664,15 +923,16 @@ export default function ExamInterface() {
     }
   }, [currentIdx, loading, questions]);
 
-  // Security Focus & Screenshot Listeners Hook
+  // Security Focus, Key Intercepts, & Clipboard Violations Hook
   useEffect(() => {
-    const handleBlur = () => setHasFocus(false);
-    const handleFocus = () => setHasFocus(true);
-
-    const preventDefault = (e) => e.preventDefault();
+    const handleBlur = () => {
+      if (!isSubmittedRef.current && !cameraAccessLostRef.current && !isProctorLocked && !isRejected) {
+        triggerExamLock("Focus Lost (Tab Switch Detected)");
+      }
+    };
 
     const handleKeyDown = (e) => {
-      if (cameraAccessLostRef.current) {
+      if (cameraAccessLostRef.current || isProctorLocked || isRejected) {
         e.preventDefault();
         return;
       }
@@ -680,8 +940,9 @@ export default function ExamInterface() {
       if (e.key === "PrintScreen" || e.keyCode === 44) {
         e.preventDefault();
         try {
-          navigator.clipboard.writeText(""); // Clear clipboard to prevent paste
+          navigator.clipboard.writeText(""); // Clear clipboard to prevent pasting
         } catch (err) {}
+        logViolation('SCREENSHOT_ATTEMPT', { key: e.key });
         alert("Screenshots are strictly prohibited during the examination!");
       }
       // Intercept dev tools (F12) and print/save keys
@@ -690,27 +951,49 @@ export default function ExamInterface() {
         e.key === "F12"
       ) {
         e.preventDefault();
+        logViolation('SECURITY_KEY_INTERCEPT', { key: e.key, combination: e.ctrlKey ? 'CTRL + ' + e.key : 'F12' });
+        if (e.key === "F12") {
+          triggerExamLock("Developer Tools Opened (F12 Key Pressed)");
+        }
       }
     };
 
+    const handleCopy = (e) => {
+      e.preventDefault();
+      logViolation('COPY_ATTEMPT', { text: window.getSelection()?.toString() || 'Selected Text' });
+    };
+
+    const handleCut = (e) => {
+      e.preventDefault();
+      logViolation('CUT_ATTEMPT', { text: window.getSelection()?.toString() || 'Selected Text' });
+    };
+
+    const handlePaste = (e) => {
+      e.preventDefault();
+      logViolation('PASTE_ATTEMPT', {});
+    };
+
+    const handleContextMenu = (e) => {
+      e.preventDefault();
+      logViolation('RIGHT_CLICK_ATTEMPT', {});
+    };
+
     window.addEventListener("blur", handleBlur);
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("copy", preventDefault);
-    document.addEventListener("cut", preventDefault);
-    document.addEventListener("paste", preventDefault);
-    document.addEventListener("contextmenu", preventDefault);
+    document.addEventListener("copy", handleCopy);
+    document.addEventListener("cut", handleCut);
+    document.addEventListener("paste", handlePaste);
+    document.addEventListener("contextmenu", handleContextMenu);
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
       window.removeEventListener("blur", handleBlur);
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("copy", preventDefault);
-      document.removeEventListener("cut", preventDefault);
-      document.removeEventListener("paste", preventDefault);
-      document.removeEventListener("contextmenu", preventDefault);
+      document.removeEventListener("copy", handleCopy);
+      document.removeEventListener("cut", handleCut);
+      document.removeEventListener("paste", handlePaste);
+      document.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, []);
+  }, [isProctorLocked, isRejected]);
 
   const current = questions[currentIdx] || {};
 
@@ -1447,28 +1730,7 @@ export default function ExamInterface() {
   }
 
 
-  // Focus lost anticheat blocker page
-  if (!hasFocus) {
-    return (
-      <div className="h-screen w-screen flex flex-col items-center justify-center bg-slate-950 text-white p-8 text-center select-none z-50 fixed inset-0 animate-pulse">
-        <div className="bg-red-950 border border-red-500 p-8 rounded-lg max-w-md shadow-2xl">
-          <svg className="w-16 h-16 text-yellow-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-          </svg>
-          <h2 className="text-lg font-black mb-3 text-red-500">⚠️ FOCUS LOST DETECTED</h2>
-          <p className="text-xs font-semibold text-gray-350 leading-relaxed mb-6">
-            You switched tabs, opened developer tools, or focused outside the test screen. All violations are logged automatically. Click below to return focus.
-          </p>
-          <button
-            onClick={() => window.focus()}
-            className="bg-yellow-500 hover:bg-yellow-600 text-gray-950 px-6 py-2 rounded font-bold uppercase transition-all shadow-md text-xs cursor-pointer"
-          >
-            Return to Exam
-          </button>
-        </div>
-      </div>
-    );
-  }
+
 
   if (questions.length === 0) {
     return (
@@ -2064,11 +2326,11 @@ export default function ExamInterface() {
               <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 text-3xl">
                 📷
               </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera Connection Lost</h3>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera or Microphone Lost</h3>
               <div className="text-sm text-slate-600 font-semibold leading-relaxed mb-6">
-                Proctoring is active for this examination. Your exam has been temporarily locked because camera access was interrupted.
+                Proctoring is active for this examination. Your exam has been temporarily locked because camera or microphone access was interrupted.
                 <p className="mt-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 p-2.5 rounded-xl font-bold">
-                  ⚠️ Please check your webcam connection, ensure it is enabled in your browser settings, then click "Restore Access" to resume.
+                  ⚠️ Please check your webcam and microphone connections, ensure both are enabled in your browser settings, then click "Restore Access" to resume.
                 </p>
               </div>
               <div className="flex justify-center">
@@ -2092,6 +2354,91 @@ export default function ExamInterface() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. PROCTOR LOCKOUT MODAL (For tab switches, covers, freezes) */}
+      {isProctorLocked && !isRejected && (
+        <div className="fixed inset-0 bg-slate-950/90 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-white border-2 border-amber-500 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 animate-in fade-in zoom-in-95 duration-200">
+            <div className="text-center font-sans">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-amber-100 text-amber-600 mb-4 text-3xl">
+                ⚠️
+              </div>
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Exam Locked</h3>
+              <div className="text-sm text-slate-650 font-bold leading-relaxed mb-6">
+                You have been flagged for a proctoring violation:
+                <p className="mt-2 text-xs bg-red-50 text-red-800 border border-red-205 p-2.5 rounded-xl font-black uppercase tracking-wide">
+                  {lockReason || "Tab Switch Detected"}
+                </p>
+                <p className="mt-3 text-xs text-slate-500">
+                  Please request your Superadmin to review your feed and unlock your exam interface. You cannot view questions or write answers until unlocked.
+                </p>
+              </div>
+              <div className="flex justify-center">
+                {unlockRequestSent ? (
+                  <div className="w-full bg-slate-100 text-slate-600 font-bold py-2.5 px-4 rounded-xl text-sm uppercase flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Waiting for Superadmin Approval...
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (proctorChannelRef.current) {
+                        try {
+                          await proctorChannelRef.current.send({
+                            type: "broadcast",
+                            event: "signal",
+                            payload: {
+                              type: "UNLOCK_REQUEST",
+                              sender: "student",
+                              data: { studentName: student?.full_name, studentId: student?.id, reason: lockReason }
+                            }
+                          });
+                          setUnlockRequestSent(true);
+                          logViolation('PROCTORING_UNLOCK_REQUESTED', { reason: lockReason });
+                        } catch (err) {
+                          console.warn("Failed to broadcast unlock request:", err);
+                        }
+                      }
+                    }}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-gray-950 font-black py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide cursor-pointer"
+                  >
+                    Request Unlock
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. PERMANENT CHEATING FAILURE MODAL */}
+      {isRejected && (
+        <div className="fixed inset-0 bg-slate-950 z-[10001] flex items-center justify-center p-4">
+          <div className="bg-red-50 border-2 border-red-600 rounded-2xl max-w-md w-full shadow-2xl p-8 text-center font-sans animate-in fade-in duration-300">
+            <div className="mx-auto flex items-center justify-center h-20 w-20 rounded-full bg-red-100 text-red-650 mb-6 text-4xl">
+              🚫
+            </div>
+            <h3 className="text-2xl font-black text-red-700 uppercase tracking-tight mb-4">Exam Terminated</h3>
+            <h4 className="text-md font-bold text-slate-800 uppercase mb-3">Status: FAILED & CHEATER FLAGGED</h4>
+            <div className="text-sm text-slate-650 font-semibold leading-relaxed mb-6">
+              You have failed this exam. The Superadmin has permanently blocked your interface and terminated your session due to cheating violations.
+              <p className="mt-3 text-xs bg-red-100/50 text-red-800 border border-red-200/60 p-3 rounded-xl font-bold uppercase">
+                Cheater Flagged. No further access is allowed.
+              </p>
+            </div>
+            <button
+              onClick={() => navigate("/")}
+              className="px-6 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs uppercase tracking-wider"
+            >
+              Exit to Portal
+            </button>
           </div>
         </div>
       )}
