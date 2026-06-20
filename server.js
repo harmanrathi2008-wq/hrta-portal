@@ -1499,7 +1499,9 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
     // Use the exact verified domain (harmanrathiportal.dpdns.org)
     // to prevent domain/subdomain mismatched link blocks from Gmail spam filters
     const portalDomain = 'https://harmanrathiportal.dpdns.org';
-    const scorecardLink = `${portalDomain}/student/results`;
+    const secret = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026';
+    const secureToken = crypto.createHmac('sha256', secret).update(submissionId).digest('hex');
+    const scorecardLink = `${portalDomain}/student/results?resultId=${submissionId}&token=${secureToken}`;
 
     // Clean, deliverable email — white background, no emojis, simple layout
     // Dark themes and emoji in email body are blocked by many corporate mail servers
@@ -1635,6 +1637,93 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
     res.status(500).json({ error: 'Failed to prepare result email notification: ' + err.message });
   }
 })
+
+// ============ VERIFY SCORECARD TOKEN ============
+app.get('/api/verify-scorecard-token', async (req, res) => {
+  const { resultId, token } = req.query;
+  if (!resultId || !token) {
+    return res.status(400).json({ error: 'Result ID and token are required.' });
+  }
+
+  const secret = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026';
+  const expectedToken = crypto.createHmac('sha256', secret).update(resultId).digest('hex');
+
+  if (token !== expectedToken) {
+    return res.status(403).json({ error: 'Invalid or expired secure scorecard token.' });
+  }
+
+  try {
+    // Fetch result detail and join exams and students using supabaseAdmin to bypass RLS
+    const { data: resultData, error: resultError } = await supabaseAdmin
+      .from('exam_results')
+      .select(`
+        *,
+        students ( id, full_name, email, application_id, date_of_birth, category ),
+        exams (
+          id,
+          title,
+          subject,
+          exam_type,
+          start_datetime,
+          correct_marks,
+          negative_marks
+        )
+      `)
+      .eq('id', resultId)
+      .single();
+
+    if (resultError || !resultData) {
+      console.error('Error fetching result data:', resultError);
+      return res.status(404).json({ error: 'Scorecard not found.' });
+    }
+
+    if (resultData.status !== 'published') {
+      return res.status(403).json({ error: 'This scorecard has not been published yet or is revoked.' });
+    }
+
+    // Now fetch questions for this exam
+    const { data: questionsData, error: questionsError } = await supabaseAdmin
+      .from('questions')
+      .select('*')
+      .eq('exam_id', resultData.exam_id)
+      .order('order_index', { ascending: true });
+
+    if (questionsError) {
+      console.error('Error fetching questions:', questionsError);
+      return res.status(500).json({ error: 'Failed to fetch scorecard questions.' });
+    }
+
+    // Determine the attempt number for this student on this exam
+    const { data: attemptsData, error: attemptsError } = await supabaseAdmin
+      .from('exam_results')
+      .select('id, submitted_at')
+      .eq('student_id', resultData.student_id)
+      .eq('exam_id', resultData.exam_id)
+      .eq('status', 'published');
+
+    let attempt_number = 1;
+    if (!attemptsError && attemptsData) {
+      // Sort attempts chronologically by submitted_at
+      const sorted = [...attemptsData].sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+      const idx = sorted.findIndex(a => a.id === resultId);
+      if (idx !== -1) {
+        attempt_number = idx + 1;
+      }
+    }
+
+    res.json({
+      result: {
+        ...resultData,
+        attempt_number
+      },
+      questions: questionsData || []
+    });
+
+  } catch (error) {
+    console.error('Verify token failed:', error);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
+});
 
 // ============ ADMIN MESSAGE SENDER ============
 app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {

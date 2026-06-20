@@ -480,11 +480,9 @@ const StudentExams = () => {
                       </td>
                       <td className="py-4 px-5 text-center">
                         {exam.result.status === 'published' ? (
-                          <Link to="/student/results">
-                            <button className="bg-blue-50 text-[#1f497d] border border-[#1f497d] hover:bg-[#1f497d] hover:text-white px-4 py-1.5 rounded font-bold transition-colors text-sm">
-                              View Scorecard
-                            </button>
-                          </Link>
+                          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] px-3 py-1.5 rounded-lg font-black uppercase tracking-wider inline-block">
+                            Scorecard Sent via Email
+                          </span>
                         ) : (
                           <button disabled className="bg-gray-200 text-gray-500 px-4 py-1.5 rounded font-bold cursor-not-allowed text-sm border border-gray-300">
                             {exam.result.status === 'blocked' ? 'Revoked' : 'Awaiting'}

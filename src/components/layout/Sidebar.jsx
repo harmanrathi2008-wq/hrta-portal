@@ -31,7 +31,6 @@ const adminLinks = [
 const studentLinks = [
   { path: '/student', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/student/exams', icon: FileText, label: 'My Exams' },
-  { path: '/student/results', icon: BarChart3, label: 'Results' },
   { path: '/student/leaderboard', icon: Award, label: 'Leaderboard' },
   { path: '/student/profile', icon: Settings, label: 'Profile' },
 ]

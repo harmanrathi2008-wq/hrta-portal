@@ -120,83 +120,209 @@ const StudentResults = () => {
   const [selectedResult, setSelectedResult] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [subjectStats, setSubjectStats] = useState({});
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const calculateStats = (qList, resultObj) => {
+    const stats = {};
+    const answers = resultObj.answers || {};
+    const timeSpentObj = resultObj.question_statuses || {};
+
+    qList.forEach(q => {
+      // Group subjects (Physics, Chemistry, Mathematics, Other)
+      const rawTopic = q.topic || resultObj.exams?.subject || 'Other';
+      let subject = 'Other';
+      if (rawTopic.toLowerCase().includes('phys')) subject = 'Physics';
+      else if (rawTopic.toLowerCase().includes('chem')) subject = 'Chemistry';
+      else if (rawTopic.toLowerCase().includes('math')) subject = 'Mathematics';
+      else subject = rawTopic;
+
+      if (!stats[subject]) {
+        stats[subject] = {
+          total_marks: 0,
+          gained_marks: 0,
+          correct: 0,
+          incorrect: 0,
+          unattempted: 0,
+          partial: 0,
+          time_spent: 0
+        };
+      }
+
+      const studentAnswer = answers[q.id];
+      const hasAnswered = studentAnswer !== undefined && studentAnswer !== null && studentAnswer !== "" && (!Array.isArray(studentAnswer) || studentAnswer.length > 0);
+
+      const posMarks = q.positive_marks !== null && q.positive_marks !== undefined && q.positive_marks !== '' 
+        ? parseFloat(q.positive_marks) 
+        : (resultObj.exams?.correct_marks !== null && resultObj.exams?.correct_marks !== undefined && resultObj.exams?.correct_marks !== '' 
+          ? parseFloat(resultObj.exams.correct_marks) 
+          : 4);
+          
+      const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
+        ? parseFloat(q.negative_marks) 
+        : (resultObj.exams?.negative_marks !== null && resultObj.exams?.negative_marks !== undefined && resultObj.exams?.negative_marks !== '' 
+          ? parseFloat(resultObj.exams.negative_marks) 
+          : 0);
+      stats[subject].total_marks += posMarks;
+
+      // Sum time spent
+      const timeSecs = parseInt(timeSpentObj[q.id]) || 0;
+      stats[subject].time_spent += timeSecs;
+
+      if (!hasAnswered) {
+        stats[subject].unattempted++;
+      } else {
+        const qType = q.question_type || q.type;
+
+        let correctList = [];
+        try {
+          correctList = JSON.parse(q.correct_answer);
+          if (!Array.isArray(correctList)) correctList = [correctList];
+        } catch (e) {
+          if (q.correct_answer) correctList = [q.correct_answer];
+        }
+        correctList = correctList.map(item => normalizeOptionForComparison(item));
+
+        let selectedList = [];
+        if (Array.isArray(studentAnswer)) {
+          selectedList = studentAnswer.map(item => normalizeOptionForComparison(item));
+        } else {
+          selectedList = [normalizeOptionForComparison(studentAnswer)];
+        }
+
+        if (qType === "numerical_integer" || qType === "numerical_decimal") {
+          const sNum = parseFloat(studentAnswer);
+          const penalty = negMarks > 0 ? negMarks : 1;
+          
+          if (isNaN(sNum)) {
+            stats[subject].incorrect++;
+            stats[subject].gained_marks -= penalty;
+          } else {
+            const parsedRange = parseNumericalRange(q.correct_answer);
+            if (parsedRange) {
+              const eps = 1e-9;
+              if (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) {
+                stats[subject].correct++;
+                stats[subject].gained_marks += posMarks;
+              } else {
+                stats[subject].incorrect++;
+                stats[subject].gained_marks -= penalty;
+              }
+            } else {
+              const cNum = parseFloat(q.correct_answer);
+              if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+                stats[subject].correct++;
+                stats[subject].gained_marks += posMarks;
+              } else {
+                stats[subject].incorrect++;
+                stats[subject].gained_marks -= penalty;
+              }
+            }
+          }
+        } else if (qType === "mcq_single" || qType === "true_false" || qType === "single") {
+          if (correctList.includes(selectedList[0])) {
+            stats[subject].correct++;
+            stats[subject].gained_marks += posMarks;
+          } else {
+            stats[subject].incorrect++;
+            stats[subject].gained_marks -= negMarks;
+          }
+        } else if (qType === "mcq_multiple" || qType === "multiple" || qType === "subjective") {
+          const hasIncorrect = selectedList.some(item => !correctList.includes(item));
+          if (hasIncorrect) {
+            stats[subject].incorrect++;
+            const penalty = negMarks > 0 ? negMarks : 2;
+            stats[subject].gained_marks -= penalty;
+          } else {
+            const numSel = selectedList.length;
+            const numCor = correctList.length;
+
+            if (numSel === numCor) {
+              stats[subject].correct++;
+              stats[subject].gained_marks += posMarks;
+            } else if (numSel < numCor && numSel > 0) {
+              stats[subject].partial++;
+              let partialScore = 0;
+              if (numCor === 2) {
+                if (numSel === 1) partialScore = 2;
+              } else if (numCor === 3) {
+                if (numSel === 1) partialScore = 1;
+                if (numSel === 2) partialScore = 3;
+              } else if (numCor === 4) {
+                if (numSel === 1) partialScore = 1;
+                if (numSel === 2) partialScore = 2;
+                if (numSel === 3) partialScore = 3;
+              } else {
+                partialScore = numSel;
+              }
+              stats[subject].gained_marks += partialScore;
+            } else {
+              stats[subject].unattempted++;
+            }
+          }
+        } else {
+          if (String(studentAnswer).trim().toLowerCase() === String(q.correct_answer).trim().toLowerCase()) {
+            stats[subject].correct++;
+            stats[subject].gained_marks += posMarks;
+          } else {
+            stats[subject].incorrect++;
+            stats[subject].gained_marks -= negMarks;
+          }
+        }
+      }
+    });
+
+    setSubjectStats(stats);
+  };
 
   useEffect(() => {
     const fetchResults = async () => {
       try {
-        const userId = sessionStorage.getItem('userId');
-        const role = sessionStorage.getItem('role');
+        const queryParams = new URLSearchParams(window.location.search);
+        const resultId = queryParams.get('resultId');
+        const token = queryParams.get('token');
 
-        if (!userId || role !== 'student') {
-          navigate('/');
+        if (!resultId || !token) {
+          setIsBlocked(true);
+          setErrorMessage('Access Denied: Scorecards can only be accessed using the unique link sent to your registered email address.');
+          setLoading(false);
           return;
         }
 
-        // Fetch Student
-        const { data: studentData, error: studentError } = await supabase
-          .from('students')
-          .select('*')
-          .eq('id', userId)
-          .single();
-
-        if (studentError) throw studentError;
-        setStudent(studentData);
-
-        // Fetch Published Results with joined Exam details
-        const { data: resultsData, error: resultsError } = await supabase
-          .from('exam_results')
-          .select(`
-            *,
-            exams (
-              title,
-              subject,
-              exam_type,
-              start_datetime,
-              correct_marks,
-              negative_marks
-            )
-          `)
-          .eq('student_id', userId)
-          .eq('status', 'published')
-          .order('published_at', { ascending: false });
-
-        if (resultsError) throw resultsError;
-
-        let processedResults = [];
-        if (resultsData) {
-          const sortedAsc = [...resultsData].sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
-          const attemptTracker = {};
-          processedResults = sortedAsc.map(r => {
-            attemptTracker[r.exam_id] = (attemptTracker[r.exam_id] || 0) + 1;
-            return {
-              ...r,
-              attempt_number: attemptTracker[r.exam_id]
-            };
-          });
-          processedResults.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
-        }
-
-        setResults(processedResults);
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        const response = await fetch(`${apiBaseUrl}/api/verify-scorecard-token?resultId=${resultId}&token=${token}`);
         
-        // Auto-select the most recent result if exists
-        if (processedResults.length > 0) {
-          setSelectedResult(processedResults[0]);
+        if (!response.ok) {
+          const errData = await response.json();
+          setIsBlocked(true);
+          setErrorMessage(errData.error || 'Invalid or expired secure scorecard token.');
+          setLoading(false);
+          return;
         }
+
+        const data = await response.json();
+        setStudent(data.result.students);
+        setResults([data.result]);
+        setQuestions(data.questions);
+        setSelectedResult(data.result);
+        
+        // Calculate subject stats
+        calculateStats(data.questions, data.result);
 
       } catch (err) {
-        console.error('Error fetching results:', err);
+        console.error('Error fetching scorecard:', err);
+        setIsBlocked(true);
+        setErrorMessage('Failed to load scorecard. Please check your network connection.');
       } finally {
         setLoading(false);
       }
     };
 
     fetchResults();
-  }, [navigate]);
+  }, []);
 
   useEffect(() => {
-    if (selectedResult) {
-      fetchQuestionsAndCalculateStats();
-    }
+    // No-op - calculation is handled directly upon verification endpoint fetch
   }, [selectedResult]);
 
   const parseNumericalRange = (answerStr) => {
@@ -509,6 +635,49 @@ const StudentResults = () => {
     );
   }
 
+  if (isBlocked) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center font-sans p-6 text-white relative overflow-hidden">
+        {/* Dynamic Abstract Tech Grid Background */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:3rem_3rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-35"></div>
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-[120px] pointer-events-none"></div>
+
+        <div className="relative z-10 max-w-lg w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center shadow-2xl backdrop-blur-md">
+          <div className="mx-auto w-20 h-20 bg-red-950/50 border border-red-500/30 rounded-2xl flex items-center justify-center mb-6">
+            <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+
+          <h2 className="text-2xl font-black tracking-tight text-white uppercase mb-3">
+            Secure Scorecard Access Denied
+          </h2>
+
+          <p className="text-slate-400 font-semibold text-sm leading-relaxed mb-6">
+            {errorMessage || 'For security and integrity reasons, candidate scorecards can only be accessed using the unique verification link sent to your registered email address.'}
+          </p>
+
+          <div className="bg-slate-950 border border-slate-800/80 rounded-2xl p-4 mb-6 text-left">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-1.5">
+              💡 Instructions to Access:
+            </h4>
+            <p className="text-slate-400 text-xs leading-relaxed font-medium">
+              Check your registered email inbox (or spam/promotions folder) for the official results publication email from <span className="text-white font-semibold">HRTA Results</span> and click the <span className="text-white font-semibold">"View Scorecard"</span> button.
+            </p>
+          </div>
+
+          <button
+            onClick={() => navigate('/')}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 px-6 rounded-xl border border-slate-700 transition-colors uppercase text-xs tracking-wider"
+          >
+            Return to Portal Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f1f4f9] font-sans pb-12 print:bg-white print:pb-0">
       
@@ -516,8 +685,8 @@ const StudentResults = () => {
       <div className="print:hidden bg-[#1f497d] text-white py-4 px-6 shadow-md border-b-4 border-yellow-500 mb-6">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold uppercase tracking-wider">Candidate Scorecards</h1>
-            <p className="text-sm font-medium opacity-90">View and download your official results</p>
+            <h1 className="text-xl font-bold uppercase tracking-wider">Candidate Scorecard</h1>
+            <p className="text-sm font-medium opacity-90">Official verified examination results</p>
           </div>
           <button 
             onClick={handlePrint}
@@ -532,50 +701,13 @@ const StudentResults = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row gap-6 print:block print:p-0">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col gap-6 print:block print:p-0">
         
-        {/* Left Column: Exam Selection List (Hidden on Print) */}
-        <div className="w-full lg:w-1/4 print:hidden space-y-4">
-          <div className="bg-white rounded border border-gray-300 shadow-sm overflow-hidden">
-            <div className="bg-gray-100 px-4 py-3 border-b border-gray-300 font-bold text-gray-800">
-              Evaluated Exams
-            </div>
-            <div className="max-h-[600px] overflow-y-auto">
-              {results.length === 0 ? (
-                <div className="p-4 text-center text-sm text-gray-500 font-medium">
-                  No published results available.
-                </div>
-              ) : (
-                results.map((res) => (
-                  <button
-                    key={res.id}
-                    onClick={() => setSelectedResult(res)}
-                    className={`w-full text-left p-4 border-b border-gray-200 transition-colors ${
-                      selectedResult?.id === res.id 
-                        ? 'bg-blue-50 border-l-4 border-l-[#1f497d]' 
-                        : 'hover:bg-gray-50 bg-white border-l-4 border-l-transparent'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start gap-1">
-                      <p className="font-bold text-sm text-[#1f497d] truncate flex-1">{res.exams?.title}</p>
-                      <span className="bg-cyan-100 text-cyan-800 text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase shrink-0">
-                        Attempt #{res.attempt_number || 1}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 font-semibold mt-1">Score: {res.total_score} / {res.total_marks}</p>
-                    <p className="text-xs text-gray-400 mt-1">{new Date(res.published_at).toLocaleDateString()}</p>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Exact NTA Style Scorecard (Visible on Print) */}
-        <div className="w-full lg:w-3/4 print:w-full">
+        {/* Right Column: Exact NTA Style Scorecard (Visible on Print) - Set to w-full to hide sidebar and use maximum space */}
+        <div className="w-full">
           {!selectedResult ? (
             <div className="bg-white p-12 text-center text-gray-500 border border-gray-300 rounded shadow-sm print:hidden">
-              Select an exam from the list to view its scorecard.
+              Loading scorecard detail...
             </div>
           ) : (
             <div id="scorecard-print-area" className="bg-white border border-gray-300 rounded shadow-lg p-8 print:shadow-none print:border-none print:p-0">
