@@ -93,10 +93,12 @@ const resendStudent = makeResendClient(process.env.RESEND_API_KEY_STUDENT);
 
 // Dedicated clients for capacity-splitting
 const resendOTPClient = makeResendClient(process.env.RESEND_API_KEY_OTP);
-const resendNotificationClient = makeResendClient(process.env.RESEND_API_KEY_NOTIFICATION);
 
-// Primary verified client for scorecard/result emails (domain: otp.harmanrathiportal.dpdns.org)
-const resendScorecardClient = makeResendClient(process.env.RESEND_API_KEY_SCORECARD);
+// Primary verified client for scorecard/result/update emails (domain: harmanrathiportal.dpdns.org)
+// Defaults to the provided key 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m' if not defined in env
+const resultApiKey = process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY_RESULT || 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m';
+const resendScorecardClient = makeResendClient(resultApiKey);
+const resendNotificationClient = makeResendClient(process.env.RESEND_API_KEY_NOTIFICATION || resultApiKey);
 
 // Fallback client (uses main key as last resort)
 const resendNewFallbackClient = makeResendClient(process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY);
@@ -206,18 +208,18 @@ async function verifyUserJWT(req, res, next) {
 
 // Domain emails
 // harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
-// otp.harmanrathiportal.dpdns.org = verified for result/scorecard emails (verified domain)
-const FROM_EMAIL = 'results@otp.harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'admin@otp.harmanrathiportal.dpdns.org'
+// harmanrathiportal.dpdns.org = verified for result/scorecard/update emails (verified domain)
+const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
 const transporters = [];
 let currentTransporterIndex = 0;
 
-// Use RESEND_API_KEY_SCORECARD if set (must be authorized for otp.harmanrathiportal.dpdns.org)
+// Use resultApiKey if set (must be authorized for result@harmanrathiportal.dpdns.org)
 // Fall back to RESEND_API_KEY if not set
-const smtpResendKey = (process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY || '').trim();
+const smtpResendKey = (process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY_RESULT || 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m').trim();
 if (smtpResendKey) {
   transporters.push({
     email: FROM_EMAIL,
@@ -1494,9 +1496,9 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
       return res.status(400).json({ error: 'Student email is missing from database.' });
     }
 
-    // Use the exact verified subdomain (otp.harmanrathiportal.dpdns.org)
+    // Use the exact verified domain (harmanrathiportal.dpdns.org)
     // to prevent domain/subdomain mismatched link blocks from Gmail spam filters
-    const portalDomain = 'https://otp.harmanrathiportal.dpdns.org';
+    const portalDomain = 'https://harmanrathiportal.dpdns.org';
     const scorecardLink = `${portalDomain}/student/results`;
 
     // Clean, deliverable email — white background, no emojis, simple layout
