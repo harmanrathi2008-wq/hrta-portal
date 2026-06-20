@@ -209,15 +209,15 @@ async function verifyUserJWT(req, res, next) {
 // Domain emails
 // harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
 // harmanrathiportal.dpdns.org = verified for result/scorecard/update emails (verified domain)
-const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
+const FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
 const transporters = [];
 let currentTransporterIndex = 0;
 
-// Use resultApiKey if set (must be authorized for result@harmanrathiportal.dpdns.org)
+// Use resultApiKey if set (must be authorized for results@harmanrathiportal.dpdns.org)
 // Fall back to RESEND_API_KEY if not set
 const smtpResendKey = (process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY_RESULT || 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m').trim();
 if (smtpResendKey) {
