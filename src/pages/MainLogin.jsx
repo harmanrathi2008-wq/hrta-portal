@@ -26,7 +26,7 @@ const MainLogin = () => {
   const [mfaSecretKey, setMfaSecretKey] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
-  const siteKey = window.recaptchaSiteKey || import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
+  const siteKey = '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -146,17 +146,26 @@ const MainLogin = () => {
 
     setLoading(true);
     try {
-      // Ensure grecaptcha is loaded and ready for v3 execution
-      if (!window.grecaptcha || !window.grecaptcha.execute) {
+      // Ensure reCAPTCHA Enterprise is loaded and ready
+      if (!window.grecaptcha || !window.grecaptcha.enterprise || !window.grecaptcha.enterprise.execute) {
         throw new Error('Security service is loading. Please try again in a few seconds.');
       }
 
-      // Generate the v3 verification token dynamically at the moment of submission
-      const token = await window.grecaptcha.execute(siteKey, { action: 'LOGIN' });
+      // Generate the Enterprise verification token at the moment of submission
+      const token = await new Promise((resolve, reject) => {
+        window.grecaptcha.enterprise.ready(async () => {
+          try {
+            const t = await window.grecaptcha.enterprise.execute(siteKey, { action: 'LOGIN' });
+            resolve(t);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
       if (!token) {
         throw new Error('Failed to generate security verification token. Please try again.');
       }
-      console.log('reCAPTCHA token:', token);
+      console.log('TOKEN:', token);
 
       const endpoint = activeTab === 'student' ? '/api/send-student-otp' : '/api/send-superadmin-otp';
       
