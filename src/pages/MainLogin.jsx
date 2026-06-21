@@ -30,6 +30,7 @@ const MainLogin = () => {
   const [recaptchaLoaded, setRecaptchaLoaded] = useState(false);
   const recaptchaContainerRef = useRef(null);
   const widgetIdRef = useRef(null);
+  const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -98,7 +99,7 @@ const MainLogin = () => {
           setRecaptchaToken('');
           
           const widgetId = window.grecaptcha.render(container, {
-            sitekey: '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA',
+            sitekey: siteKey,
             callback: (token) => {
               if (isMounted) setRecaptchaToken(token);
             },
@@ -123,7 +124,7 @@ const MainLogin = () => {
           try {
             setRecaptchaToken('');
             const widgetId = window.grecaptcha.render(retryContainer, {
-              sitekey: '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA',
+              sitekey: siteKey,
               callback: (token) => {
                 if (isMounted) setRecaptchaToken(token);
               },
