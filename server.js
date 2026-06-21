@@ -437,7 +437,7 @@ async function verifyRecaptchaToken(req, res, next) {
       return res.status(400).json({ error: 'Please complete the security challenge.' });
     }
 
-    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'gen-lang-client-0467250813';
     const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
     const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
@@ -488,7 +488,7 @@ app.post('/verify-recaptcha', async (req, res) => {
       return res.status(400).json({ error: 'Missing token' });
     }
 
-    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'gen-lang-client-0467250813';
     const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
     const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
@@ -512,7 +512,7 @@ app.post('/api/verify-recaptcha', async (req, res) => {
       return res.status(400).json({ error: 'Missing token' });
     }
 
-    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'gen-lang-client-0467250813';
     const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
     const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
