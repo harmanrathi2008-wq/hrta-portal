@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
@@ -27,6 +27,9 @@ const MainLogin = () => {
   const [mfaCode, setMfaCode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
   const [recaptchaToken, setRecaptchaToken] = useState('');
+  const [recaptchaLoaded, setRecaptchaLoaded] = useState(false);
+  const recaptchaContainerRef = useRef(null);
+  const widgetIdRef = useRef(null);
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -47,58 +50,118 @@ const MainLogin = () => {
 
   // Dynamically load Google reCAPTCHA v2 Script
   useEffect(() => {
+    // Check if grecaptcha is already loaded
+    if (window.grecaptcha && window.grecaptcha.render) {
+      setRecaptchaLoaded(true);
+      return;
+    }
+
+    // Set global callback
+    window.onRecaptchaLoad = () => {
+      setRecaptchaLoaded(true);
+    };
+
+    // If script is not already in document, add it
     if (!document.querySelector('script[src*="google.com/recaptcha"]')) {
       const script = document.createElement('script');
-      script.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
+      script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
       script.async = true;
       script.defer = true;
       document.body.appendChild(script);
+    } else {
+      // Script tag exists but grecaptcha not loaded yet - it might be in progress.
+      // Make sure the global callback is attached so it fires when done.
+      // But just in case, poll until grecaptcha is available
+      const interval = setInterval(() => {
+        if (window.grecaptcha && window.grecaptcha.render) {
+          setRecaptchaLoaded(true);
+          clearInterval(interval);
+        }
+      }, 100);
+      return () => clearInterval(interval);
     }
   }, []);
 
-  // Explicitly render reCAPTCHA Widget
+  // Explicitly render reCAPTCHA Widget using useRef
   useEffect(() => {
-    let interval;
-    const renderWidget = () => {
-      const container = document.getElementById('recaptcha-container');
-      if (window.grecaptcha && container) {
-        container.innerHTML = '';
+    if (!recaptchaLoaded || step !== 'login') return;
+
+    let isMounted = true;
+    
+    // We want to render the widget on the container ref
+    const container = recaptchaContainerRef.current;
+    if (container) {
+      // Check if we already rendered a widget in this container or if it has children
+      if (container.children.length === 0) {
         try {
-          window.grecaptcha.render(container, {
+          // Reset the recaptcha token state in React
+          setRecaptchaToken('');
+          
+          const widgetId = window.grecaptcha.render(container, {
             sitekey: '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA',
             callback: (token) => {
-              setRecaptchaToken(token);
+              if (isMounted) setRecaptchaToken(token);
             },
             'expired-callback': () => {
-              setRecaptchaToken('');
+              if (isMounted) setRecaptchaToken('');
             },
             'error-callback': () => {
-              setRecaptchaToken('');
+              if (isMounted) setRecaptchaToken('');
             }
           });
+          widgetIdRef.current = widgetId;
         } catch (e) {
           console.warn('reCAPTCHA render error:', e.message);
         }
       }
-    };
-
-    if (step === 'login') {
-      if (window.grecaptcha) {
-        renderWidget();
-      } else {
-        interval = setInterval(() => {
-          if (window.grecaptcha) {
-            renderWidget();
-            clearInterval(interval);
+    } else {
+      // If the container is not in the DOM yet, wait a tiny bit and try again
+      const timeout = setTimeout(() => {
+        if (!isMounted) return;
+        const retryContainer = recaptchaContainerRef.current;
+        if (retryContainer && retryContainer.children.length === 0) {
+          try {
+            setRecaptchaToken('');
+            const widgetId = window.grecaptcha.render(retryContainer, {
+              sitekey: '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA',
+              callback: (token) => {
+                if (isMounted) setRecaptchaToken(token);
+              },
+              'expired-callback': () => {
+                if (isMounted) setRecaptchaToken('');
+              },
+              'error-callback': () => {
+                if (isMounted) setRecaptchaToken('');
+              }
+            });
+            widgetIdRef.current = widgetId;
+          } catch (e) {
+            console.warn('reCAPTCHA render error on retry:', e.message);
           }
-        }, 100);
-      }
+        }
+      }, 50);
+      return () => {
+        isMounted = false;
+        clearTimeout(timeout);
+      };
     }
 
     return () => {
-      if (interval) clearInterval(interval);
+      isMounted = false;
     };
-  }, [step, activeTab]);
+  }, [recaptchaLoaded, step]);
+
+  // Reset reCAPTCHA on tab change to require re-verification cleanly
+  useEffect(() => {
+    if (window.grecaptcha && recaptchaToken) {
+      try {
+        window.grecaptcha.reset();
+        setRecaptchaToken('');
+      } catch (e) {
+        console.warn('reCAPTCHA reset error on tab change:', e);
+      }
+    }
+  }, [activeTab]);
 
   // Canvas Color-Changing Particle System Effect
   useEffect(() => {
@@ -648,7 +711,7 @@ const MainLogin = () => {
 
                     {/* Google reCAPTCHA v2 */}
                     <div className="flex justify-center pt-2">
-                      <div id="recaptcha-container"></div>
+                      <div id="recaptcha-container" ref={recaptchaContainerRef}></div>
                     </div>
                   </div>
 
