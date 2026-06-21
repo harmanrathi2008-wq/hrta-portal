@@ -26,10 +26,6 @@ const MainLogin = () => {
   const [mfaSecretKey, setMfaSecretKey] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
-  const [recaptchaToken, setRecaptchaToken] = useState('');
-  const [recaptchaLoaded, setRecaptchaLoaded] = useState(false);
-  const recaptchaContainerRef = useRef(null);
-  const widgetIdRef = useRef(null);
   const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
   // Generate authentic looking NTA CAPTCHA
@@ -49,120 +45,17 @@ const MainLogin = () => {
     sessionStorage.clear();
   }, [activeTab]);
 
-  // Dynamically load Google reCAPTCHA v2 Script
+  // Dynamically load Google reCAPTCHA v3 Script
   useEffect(() => {
-    // Check if grecaptcha is already loaded
-    if (window.grecaptcha && window.grecaptcha.render) {
-      setRecaptchaLoaded(true);
-      return;
-    }
-
-    // Set global callback
-    window.onRecaptchaLoad = () => {
-      setRecaptchaLoaded(true);
-    };
-
-    // If script is not already in document, add it
+    if (!siteKey) return;
     if (!document.querySelector('script[src*="google.com/recaptcha"]')) {
       const script = document.createElement('script');
-      script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit';
+      script.src = `https://www.google.com/recaptcha/api.js?render=${siteKey}`;
       script.async = true;
       script.defer = true;
       document.body.appendChild(script);
-    } else {
-      // Script tag exists but grecaptcha not loaded yet - it might be in progress.
-      // Make sure the global callback is attached so it fires when done.
-      // But just in case, poll until grecaptcha is available
-      const interval = setInterval(() => {
-        if (window.grecaptcha && window.grecaptcha.render) {
-          setRecaptchaLoaded(true);
-          clearInterval(interval);
-        }
-      }, 100);
-      return () => clearInterval(interval);
     }
-  }, []);
-
-  // Explicitly render reCAPTCHA Widget using useRef
-  useEffect(() => {
-    if (!recaptchaLoaded || step !== 'login') return;
-
-    let isMounted = true;
-    
-    // We want to render the widget on the container ref
-    const container = recaptchaContainerRef.current;
-    if (container) {
-      // Check if we already rendered a widget in this container or if it has children
-      if (container.children.length === 0) {
-        try {
-          // Reset the recaptcha token state in React
-          setRecaptchaToken('');
-          
-          const widgetId = window.grecaptcha.render(container, {
-            sitekey: siteKey,
-            callback: (token) => {
-              if (isMounted) setRecaptchaToken(token);
-            },
-            'expired-callback': () => {
-              if (isMounted) setRecaptchaToken('');
-            },
-            'error-callback': () => {
-              if (isMounted) setRecaptchaToken('');
-            }
-          });
-          widgetIdRef.current = widgetId;
-        } catch (e) {
-          console.warn('reCAPTCHA render error:', e.message);
-        }
-      }
-    } else {
-      // If the container is not in the DOM yet, wait a tiny bit and try again
-      const timeout = setTimeout(() => {
-        if (!isMounted) return;
-        const retryContainer = recaptchaContainerRef.current;
-        if (retryContainer && retryContainer.children.length === 0) {
-          try {
-            setRecaptchaToken('');
-            const widgetId = window.grecaptcha.render(retryContainer, {
-              sitekey: siteKey,
-              callback: (token) => {
-                if (isMounted) setRecaptchaToken(token);
-              },
-              'expired-callback': () => {
-                if (isMounted) setRecaptchaToken('');
-              },
-              'error-callback': () => {
-                if (isMounted) setRecaptchaToken('');
-              }
-            });
-            widgetIdRef.current = widgetId;
-          } catch (e) {
-            console.warn('reCAPTCHA render error on retry:', e.message);
-          }
-        }
-      }, 50);
-      return () => {
-        isMounted = false;
-        clearTimeout(timeout);
-      };
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [recaptchaLoaded, step]);
-
-  // Reset reCAPTCHA on tab change to require re-verification cleanly
-  useEffect(() => {
-    if (window.grecaptcha && recaptchaToken) {
-      try {
-        window.grecaptcha.reset();
-        setRecaptchaToken('');
-      } catch (e) {
-        console.warn('reCAPTCHA reset error on tab change:', e);
-      }
-    }
-  }, [activeTab]);
+  }, [siteKey]);
 
   // Canvas Color-Changing Particle System Effect
   useEffect(() => {
@@ -262,27 +155,33 @@ const MainLogin = () => {
       return;
     }
 
-    if (!recaptchaToken) {
-      setError('Security verification failed. Please complete the reCAPTCHA challenge.');
-      return;
-    }
-
     setLoading(true);
     try {
+      // Ensure grecaptcha is loaded and ready for v3 execution
+      if (!window.grecaptcha || !window.grecaptcha.execute) {
+        throw new Error('Security service is loading. Please try again in a few seconds.');
+      }
+
+      // Generate the v3 verification token dynamically at the moment of submission
+      const token = await window.grecaptcha.execute(siteKey, { action: 'login' });
+      if (!token) {
+        throw new Error('Failed to generate security verification token. Please try again.');
+      }
+
       const endpoint = activeTab === 'student' ? '/api/send-student-otp' : '/api/send-superadmin-otp';
       
       const payload = activeTab === 'student' 
         ? { 
             applicationId: applicationId.trim(), 
             dateOfBirth: dob,
-            recaptchaToken,
-            turnstileToken: recaptchaToken // Backwards compatible fallback
+            recaptchaToken: token,
+            turnstileToken: token // Backwards compatible fallback
           } 
         : { 
             email: email.trim(), 
             secretKey: secretKey.trim(),
-            recaptchaToken,
-            turnstileToken: recaptchaToken // Backwards compatible fallback
+            recaptchaToken: token,
+            turnstileToken: token // Backwards compatible fallback
           };
 
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -710,10 +609,6 @@ const MainLogin = () => {
                       placeholder="Enter Security Pin"
                     />
 
-                    {/* Google reCAPTCHA v2 */}
-                    <div className="flex justify-center pt-2">
-                      <div id="recaptcha-container" ref={recaptchaContainerRef}></div>
-                    </div>
                   </div>
 
                   <button
@@ -727,6 +622,19 @@ const MainLogin = () => {
                       </svg>
                     ) : "Login"}
                   </button>
+
+                  {/* Google reCAPTCHA v3 Notice */}
+                  <div className="text-center text-[10px] text-slate-500 mt-4 leading-relaxed max-w-[280px] mx-auto">
+                    This site is protected by reCAPTCHA and the Google{' '}
+                    <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-cyan-500/80 hover:underline">
+                      Privacy Policy
+                    </a>{' '}
+                    and{' '}
+                    <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" className="text-cyan-500/80 hover:underline">
+                      Terms of Service
+                    </a>{' '}
+                    apply.
+                  </div>
                 </form>
               )}
 
