@@ -23,6 +23,23 @@
         });
       }
     </script>
+
+    <!-- Google reCAPTCHA v3 Loading -->
+    <script>
+      (function() {
+        const siteKey = "%VITE_RECAPTCHA_SITE_KEY%" || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
+        const cleanSiteKey = (siteKey && !siteKey.startsWith('%')) ? siteKey : '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
+        
+        // Define sitekey globally so React can read it
+        window.recaptchaSiteKey = cleanSiteKey;
+
+        const script = document.createElement('script');
+        script.src = 'https://www.google.com/recaptcha/api.js?render=' + cleanSiteKey;
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

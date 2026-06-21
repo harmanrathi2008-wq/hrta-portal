@@ -26,7 +26,7 @@ const MainLogin = () => {
   const [mfaSecretKey, setMfaSecretKey] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
-  const siteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
+  const siteKey = window.recaptchaSiteKey || import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -45,37 +45,6 @@ const MainLogin = () => {
     sessionStorage.clear();
   }, [activeTab]);
 
-  // Dynamically load Google reCAPTCHA v3 Script with strict siteKey matching
-  useEffect(() => {
-    if (!siteKey) return;
-    
-    const existingScripts = document.querySelectorAll('script[src*="google.com/recaptcha"]');
-    const targetSrc = `https://www.google.com/recaptcha/api.js?render=${siteKey}`;
-    
-    let alreadyExists = false;
-    
-    existingScripts.forEach((script) => {
-      // If it's loaded with different parameters (like render=explicit from v2), remove it to clean up the DOM
-      if (script.src !== targetSrc) {
-        script.remove();
-      } else {
-        alreadyExists = true;
-      }
-    });
-
-    if (!alreadyExists) {
-      if (existingScripts.length > 0) {
-        // Clear any global instance initialized with old siteKey parameters
-        window.grecaptcha = undefined;
-      }
-      
-      const script = document.createElement('script');
-      script.src = targetSrc;
-      script.async = true;
-      script.defer = true;
-      document.body.appendChild(script);
-    }
-  }, [siteKey]);
 
   // Canvas Color-Changing Particle System Effect
   useEffect(() => {
