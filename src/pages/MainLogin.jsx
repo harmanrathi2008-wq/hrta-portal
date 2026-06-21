@@ -45,12 +45,32 @@ const MainLogin = () => {
     sessionStorage.clear();
   }, [activeTab]);
 
-  // Dynamically load Google reCAPTCHA v3 Script
+  // Dynamically load Google reCAPTCHA v3 Script with strict siteKey matching
   useEffect(() => {
     if (!siteKey) return;
-    if (!document.querySelector('script[src*="google.com/recaptcha"]')) {
+    
+    const existingScripts = document.querySelectorAll('script[src*="google.com/recaptcha"]');
+    const targetSrc = `https://www.google.com/recaptcha/api.js?render=${siteKey}`;
+    
+    let alreadyExists = false;
+    
+    existingScripts.forEach((script) => {
+      // If it's loaded with different parameters (like render=explicit from v2), remove it to clean up the DOM
+      if (script.src !== targetSrc) {
+        script.remove();
+      } else {
+        alreadyExists = true;
+      }
+    });
+
+    if (!alreadyExists) {
+      if (existingScripts.length > 0) {
+        // Clear any global instance initialized with old siteKey parameters
+        window.grecaptcha = undefined;
+      }
+      
       const script = document.createElement('script');
-      script.src = `https://www.google.com/recaptcha/api.js?render=${siteKey}`;
+      script.src = targetSrc;
       script.async = true;
       script.defer = true;
       document.body.appendChild(script);
