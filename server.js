@@ -209,8 +209,8 @@ async function verifyUserJWT(req, res, next) {
 // Domain emails
 // harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
 // harmanrathiportal.dpdns.org = verified for result/scorecard/update emails (verified domain)
-const FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'results@harmanrathiportal.dpdns.org'
+const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
 
 // Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
@@ -429,33 +429,36 @@ app.get('/api/health', (req, res) => {
 // Temporary store for active MFA login challenges (valid for 5 minutes)
 const mfaStore = new Map();
 
-// Cloudflare Turnstile Verification Middleware
-async function verifyTurnstileToken(req, res, next) {
+// Google reCAPTCHA Verification Middleware
+async function verifyRecaptchaToken(req, res, next) {
   try {
-    const turnstileToken = req.body.turnstileToken;
-    if (!turnstileToken) {
+    const token = req.body.recaptchaToken || req.body.turnstileToken;
+    if (!token) {
       return res.status(400).json({ error: 'Please complete the security challenge.' });
     }
 
     const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
     const ip = rawIp.split(',')[0].trim();
-    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000UN';
+    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
 
-    const response = await axios.post('https://challenges.cloudflare.com/turnstile/v0/siteverify', null, {
-      params: {
-        secret: turnstileSecret,
-        response: turnstileToken,
-        remoteip: ip
+    const response = await axios.post(
+      'https://www.google.com/recaptcha/api/siteverify',
+      `secret=${secretKey}&response=${token}&remoteip=${ip}`,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       }
-    });
+    );
 
     if (!response.data.success) {
+      console.warn('reCAPTCHA verification failed:', response.data);
       return res.status(400).json({ error: 'Security challenge verification failed. Please try again.' });
     }
     next();
   } catch (err) {
-    console.error('Turnstile verification error (falling back to pass):', err.message);
-    next(); // Fallback to avoid complete denial if Cloudflare service is down
+    console.error('reCAPTCHA verification error (falling back to pass):', err.message);
+    next(); // Fallback to avoid complete denial if Google service is down
   }
 }
 
@@ -763,7 +766,7 @@ app.post('/api/setup-mfa', authLimiter, [
 });
 
 // ============ ADMIN OTP ============
-app.post('/api/send-admin-otp', authLimiter, verifyTurnstileToken, validateEmailInput, async (req, res) => {
+app.post('/api/send-admin-otp', authLimiter, verifyRecaptchaToken, validateEmailInput, async (req, res) => {
   const { email } = req.body
 
   if (!email) {
@@ -825,7 +828,7 @@ app.post('/api/send-admin-otp', authLimiter, verifyTurnstileToken, validateEmail
 })
 
 // ============ SUPER ADMIN OTP ============
-app.post('/api/send-superadmin-otp', authLimiter, verifyTurnstileToken, validateEmailInput, async (req, res) => {
+app.post('/api/send-superadmin-otp', authLimiter, verifyRecaptchaToken, validateEmailInput, async (req, res) => {
   const { email, secretKey } = req.body
 
   if (!email || !secretKey) {
@@ -896,7 +899,7 @@ app.post('/api/send-superadmin-otp', authLimiter, verifyTurnstileToken, validate
 })
 
 // ============ STUDENT OTP ============
-app.post('/api/send-student-otp', authLimiter, verifyTurnstileToken, async (req, res) => {
+app.post('/api/send-student-otp', authLimiter, verifyRecaptchaToken, async (req, res) => {
   const { applicationId, dateOfBirth } = req.body
 
   if (!applicationId || !dateOfBirth) {
@@ -1581,8 +1584,12 @@ app.post('/api/send-result-published-email', verifyAdminJWT, async (req, res) =>
           <tr>
             <td style="background-color:#f4f7fb; padding:20px 32px; text-align:center; border-top:1px solid #dce3ee;">
               <p style="margin:0; font-size:12px; color:#999999; line-height:1.6;">
-                This is an automated notification from <strong>Harman Rathi Testing Agency</strong>.<br>
+                This is an automated transactional notification from <strong>Harman Rathi Testing Agency</strong>.<br>
                 Please do not reply to this email.
+              </p>
+              <p style="margin:8px 0 0; font-size:10px; color:#aaaaaa; line-height:1.5;">
+                HRTA HQ: Sector 62, IIT Kanpur Outreach Centre, Noida, UP, India.<br>
+                To opt-out of future transactional alerts, please notify your exam coordinator.
               </p>
               <p style="margin:8px 0 0; font-size:11px; color:#bbbbbb;">Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.</p>
             </td>

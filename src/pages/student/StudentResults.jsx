@@ -744,7 +744,7 @@ const StudentResults = () => {
                       <td className="w-1/4 bg-gray-100 p-2 font-bold text-gray-700 border-r border-gray-300">Application Number :</td>
                       <td className="w-1/4 p-2 font-bold border-r border-gray-300">{student?.application_id}</td>
                       <td className="w-1/4 bg-gray-100 p-2 font-bold text-gray-700 border-r border-gray-300">Roll Number :</td>
-                      <td className="w-1/4 p-2 font-bold">{student?.application_id.replace('HRTA', 'RL')}</td>
+                      <td className="w-1/4 p-2 font-bold">{student?.application_id?.replace('HRTA', 'RL') || ''}</td>
                     </tr>
                     <tr className="border-b border-gray-300">
                       <td className="bg-gray-100 p-2 font-bold text-gray-700 border-r border-gray-300">Candidate's Name :</td>

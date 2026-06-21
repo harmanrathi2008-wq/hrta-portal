@@ -106,13 +106,15 @@ function App() {
           <Route element={<ProtectedRoute allowedRoles={['student']} />}>
             <Route path="/student/dashboard" element={<StudentDashboard />} />
             <Route path="/student/exams" element={<StudentExams />} />
-            <Route path="/student/results" element={<StudentResults />} />
             <Route path="/student/leaderboard" element={<Leaderboard />} />
             <Route path="/student/profile" element={<StudentProfile />} />
             <Route path="/student/messages" element={<StudentMessages />} />
             <Route path="/student/materials" element={<StudentMaterials />} />
             <Route path="/student/tasks" element={<StudentTasks />} />
           </Route>
+
+          {/* Secure Public Scorecard Route (Verifies token inside component) */}
+          <Route path="/student/results" element={<StudentResults />} />
 
           {/* Exam Routes (No Layout) */}
           <Route path="/student/exam/:examId/login" element={<ExamLogin />} />

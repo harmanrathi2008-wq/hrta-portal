@@ -26,7 +26,7 @@ const MainLogin = () => {
   const [mfaSecretKey, setMfaSecretKey] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [pendingLoginData, setPendingLoginData] = useState(null);
-  const [turnstileToken, setTurnstileToken] = useState('');
+  const [recaptchaToken, setRecaptchaToken] = useState('');
 
   // Generate authentic looking NTA CAPTCHA
   const generateCaptcha = () => {
@@ -45,49 +45,49 @@ const MainLogin = () => {
     sessionStorage.clear();
   }, [activeTab]);
 
-  // Dynamically load Cloudflare Turnstile Script
+  // Dynamically load Google reCAPTCHA v2 Script
   useEffect(() => {
-    if (!document.querySelector('script[src*="challenges.cloudflare.com"]')) {
+    if (!document.querySelector('script[src*="google.com/recaptcha"]')) {
       const script = document.createElement('script');
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
       script.async = true;
       script.defer = true;
       document.body.appendChild(script);
     }
   }, []);
 
-  // Explicitly render Turnstile Widget
+  // Explicitly render reCAPTCHA Widget
   useEffect(() => {
     let interval;
     const renderWidget = () => {
-      const container = document.getElementById('turnstile-container');
-      if (window.turnstile && container) {
+      const container = document.getElementById('recaptcha-container');
+      if (window.grecaptcha && container) {
         container.innerHTML = '';
         try {
-          window.turnstile.render(container, {
-            sitekey: '1x00000000000000000000AA', // Official Cloudflare Testing Sitekey
+          window.grecaptcha.render(container, {
+            sitekey: '6LePisStAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA',
             callback: (token) => {
-              setTurnstileToken(token);
+              setRecaptchaToken(token);
             },
             'expired-callback': () => {
-              setTurnstileToken('');
+              setRecaptchaToken('');
             },
             'error-callback': () => {
-              setTurnstileToken('');
+              setRecaptchaToken('');
             }
           });
         } catch (e) {
-          console.warn('Turnstile render error:', e.message);
+          console.warn('reCAPTCHA render error:', e.message);
         }
       }
     };
 
     if (step === 'login') {
-      if (window.turnstile) {
+      if (window.grecaptcha) {
         renderWidget();
       } else {
         interval = setInterval(() => {
-          if (window.turnstile) {
+          if (window.grecaptcha) {
             renderWidget();
             clearInterval(interval);
           }
@@ -198,8 +198,8 @@ const MainLogin = () => {
       return;
     }
 
-    if (!turnstileToken) {
-      setError('Security verification failed. Please complete the Turnstile challenge.');
+    if (!recaptchaToken) {
+      setError('Security verification failed. Please complete the reCAPTCHA challenge.');
       return;
     }
 
@@ -211,12 +211,14 @@ const MainLogin = () => {
         ? { 
             applicationId: applicationId.trim(), 
             dateOfBirth: dob,
-            turnstileToken
+            recaptchaToken,
+            turnstileToken: recaptchaToken // Backwards compatible fallback
           } 
         : { 
             email: email.trim(), 
             secretKey: secretKey.trim(),
-            turnstileToken
+            recaptchaToken,
+            turnstileToken: recaptchaToken // Backwards compatible fallback
           };
 
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -644,9 +646,9 @@ const MainLogin = () => {
                       placeholder="Enter Security Pin"
                     />
 
-                    {/* Cloudflare Turnstile */}
+                    {/* Google reCAPTCHA v2 */}
                     <div className="flex justify-center pt-2">
-                      <div id="turnstile-container" data-theme="dark"></div>
+                      <div id="recaptcha-container"></div>
                     </div>
                   </div>
 
