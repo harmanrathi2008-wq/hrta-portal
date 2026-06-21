@@ -429,7 +429,7 @@ app.get('/api/health', (req, res) => {
 // Temporary store for active MFA login challenges (valid for 5 minutes)
 const mfaStore = new Map();
 
-// Google reCAPTCHA Verification Middleware
+// Google reCAPTCHA Enterprise Verification Middleware
 async function verifyRecaptchaToken(req, res, next) {
   try {
     const token = req.body.recaptchaToken || req.body.turnstileToken || req.body.token;
@@ -437,39 +437,50 @@ async function verifyRecaptchaToken(req, res, next) {
       return res.status(400).json({ error: 'Please complete the security challenge.' });
     }
 
-    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
-    const ip = rawIp.split(',')[0].trim();
-    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
+    const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
     const response = await axios.post(
-      'https://www.google.com/recaptcha/api/siteverify',
-      `secret=${secretKey}&response=${token}&remoteip=${ip}`,
+      `https://recaptchaenterprise.googleapis.com/v1/projects/${projectId}/assessments?key=${apiKey}`,
       {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+        event: {
+          token,
+          siteKey,
+          expectedAction: 'LOGIN'
         }
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
       }
     );
 
-    if (!response.data.success) {
-      console.warn('reCAPTCHA verification failed:', response.data);
+    const assessment = response.data;
+    console.log('reCAPTCHA Enterprise assessment:', JSON.stringify(assessment));
+
+    const tokenValid = assessment?.tokenProperties?.valid;
+    if (!tokenValid) {
+      const reason = assessment?.tokenProperties?.invalidReason || 'UNKNOWN';
+      console.warn('reCAPTCHA Enterprise token invalid:', reason);
       return res.status(400).json({ error: 'Security challenge verification failed. Please try again.' });
     }
 
     // A score of 1.0 is very likely a human, 0.0 is very likely a bot.
-    if (response.data.score !== undefined && response.data.score < 0.4) {
-      console.warn('reCAPTCHA score too low:', response.data.score);
+    const score = assessment?.riskAnalysis?.score;
+    if (score !== undefined && score < 0.4) {
+      console.warn('reCAPTCHA Enterprise score too low:', score);
       return res.status(400).json({ error: 'High security risk detected. Access denied.' });
     }
 
     next();
   } catch (err) {
-    console.error('reCAPTCHA verification error (falling back to pass):', err.message);
+    console.error('reCAPTCHA Enterprise verification error (falling back to pass):', err.message);
+    if (err.response) console.error('Enterprise API response:', JSON.stringify(err.response.data));
     next(); // Fallback to avoid complete denial if Google service is down
   }
 }
 
-// Public endpoint for raw reCAPTCHA token verification testing
+// Public endpoint for raw reCAPTCHA Enterprise token verification testing
 app.post('/verify-recaptcha', async (req, res) => {
   try {
     const token = req.body.token || req.body.recaptchaToken;
@@ -477,21 +488,19 @@ app.post('/verify-recaptcha', async (req, res) => {
       return res.status(400).json({ error: 'Missing token' });
     }
 
-    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
+    const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
     const response = await axios.post(
-      'https://www.google.com/recaptcha/api/siteverify',
-      `secret=${secretKey}&response=${token}`,
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
+      `https://recaptchaenterprise.googleapis.com/v1/projects/${projectId}/assessments?key=${apiKey}`,
+      { event: { token, siteKey, expectedAction: 'LOGIN' } },
+      { headers: { 'Content-Type': 'application/json' } }
     );
 
     res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, detail: err.response?.data });
   }
 });
 
@@ -503,21 +512,19 @@ app.post('/api/verify-recaptcha', async (req, res) => {
       return res.status(400).json({ error: 'Missing token' });
     }
 
-    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
+    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'harman-rathi-testing-agency';
+    const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
+    const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
 
     const response = await axios.post(
-      'https://www.google.com/recaptcha/api/siteverify',
-      `secret=${secretKey}&response=${token}`,
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
+      `https://recaptchaenterprise.googleapis.com/v1/projects/${projectId}/assessments?key=${apiKey}`,
+      { event: { token, siteKey, expectedAction: 'LOGIN' } },
+      { headers: { 'Content-Type': 'application/json' } }
     );
 
     res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, detail: err.response?.data });
   }
 });
 
