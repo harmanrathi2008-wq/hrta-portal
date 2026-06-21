@@ -432,7 +432,7 @@ const mfaStore = new Map();
 // Google reCAPTCHA Verification Middleware
 async function verifyRecaptchaToken(req, res, next) {
   try {
-    const token = req.body.recaptchaToken || req.body.turnstileToken;
+    const token = req.body.recaptchaToken || req.body.turnstileToken || req.body.token;
     if (!token) {
       return res.status(400).json({ error: 'Please complete the security challenge.' });
     }
@@ -455,12 +455,71 @@ async function verifyRecaptchaToken(req, res, next) {
       console.warn('reCAPTCHA verification failed:', response.data);
       return res.status(400).json({ error: 'Security challenge verification failed. Please try again.' });
     }
+
+    // A score of 1.0 is very likely a human, 0.0 is very likely a bot.
+    if (response.data.score !== undefined && response.data.score < 0.4) {
+      console.warn('reCAPTCHA score too low:', response.data.score);
+      return res.status(400).json({ error: 'High security risk detected. Access denied.' });
+    }
+
     next();
   } catch (err) {
     console.error('reCAPTCHA verification error (falling back to pass):', err.message);
     next(); // Fallback to avoid complete denial if Google service is down
   }
 }
+
+// Public endpoint for raw reCAPTCHA token verification testing
+app.post('/verify-recaptcha', async (req, res) => {
+  try {
+    const token = req.body.token || req.body.recaptchaToken;
+    if (!token) {
+      return res.status(400).json({ error: 'Missing token' });
+    }
+
+    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
+
+    const response = await axios.post(
+      'https://www.google.com/recaptcha/api/siteverify',
+      `secret=${secretKey}&response=${token}`,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    res.json(response.data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Also support /api/verify-recaptcha for consistency with the rest of the API
+app.post('/api/verify-recaptcha', async (req, res) => {
+  try {
+    const token = req.body.token || req.body.recaptchaToken;
+    if (!token) {
+      return res.status(400).json({ error: 'Missing token' });
+    }
+
+    const secretKey = process.env.RECAPTCHA_SECRET_KEY || '6LePisStAAAAAO5IcGtpR2KS1wqunJ4SN1OTyGOD';
+
+    const response = await axios.post(
+      'https://www.google.com/recaptcha/api/siteverify',
+      `secret=${secretKey}&response=${token}`,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    res.json(response.data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Validator Helper for Express-Validator Results
 const handleValidationErrors = (req, res, next) => {

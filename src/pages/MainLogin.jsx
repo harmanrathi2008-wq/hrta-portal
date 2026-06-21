@@ -152,10 +152,11 @@ const MainLogin = () => {
       }
 
       // Generate the v3 verification token dynamically at the moment of submission
-      const token = await window.grecaptcha.execute(siteKey, { action: 'login' });
+      const token = await window.grecaptcha.execute(siteKey, { action: 'LOGIN' });
       if (!token) {
         throw new Error('Failed to generate security verification token. Please try again.');
       }
+      console.log('reCAPTCHA token:', token);
 
       const endpoint = activeTab === 'student' ? '/api/send-student-otp' : '/api/send-superadmin-otp';
       
