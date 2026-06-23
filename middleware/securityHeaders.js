@@ -7,7 +7,6 @@ const helmetMiddleware = helmet({
       defaultSrc: ["'self'"],
       scriptSrc: [
         "'self'", 
-        "'unsafe-inline'", 
         "https://www.google.com/recaptcha/", 
         "https://www.gstatic.com/recaptcha/"
       ],
@@ -33,6 +32,8 @@ const helmetMiddleware = helmet({
       childSrc: ["'self'", "blob:", "https://www.google.com/recaptcha/", "https://recaptcha.google.com/"],
       mediaSrc: ["'self'", "blob:", "data:"],
       workerSrc: ["'self'", "blob:"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
     },
@@ -56,8 +57,8 @@ export const configureSecurityHeaders = (req, res, next) => {
     // Set Permissions-Policy (allow camera & microphone for self, deny others)
     res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
 
-    // Remove headers to prevent information exposure
-    res.removeHeader('Server');
+    // Clean headers to prevent information exposure
+    res.setHeader('Server', 'HRTA Secure Server');
     res.removeHeader('X-Powered-By');
 
     next();

@@ -14,15 +14,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('Service Worker registered successfully:', reg.scope))
-            .catch(err => console.log('Service Worker registration failed:', err));
-        });
-      }
-    </script>
+
 
     <!-- Google reCAPTCHA Enterprise Loading -->
     <script src="https://www.google.com/recaptcha/enterprise.js?render=6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA" async defer></script>
