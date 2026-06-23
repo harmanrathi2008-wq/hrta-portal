@@ -903,8 +903,7 @@ app.post('/api/send-superadmin-otp', authLimiter, verifyRecaptchaToken, validate
 
   const incomingKey = secretKey.trim();
   const isMatch = incomingKey === SUPER_ADMIN_SECRET || 
-                  incomingKey.toLowerCase() === SUPER_ADMIN_SECRET.toLowerCase() ||
-                  incomingKey === 'HRTA_SUPER_SECRET_2026';
+                  incomingKey.toLowerCase() === SUPER_ADMIN_SECRET.toLowerCase();
 
   if (!isMatch) {
     return res.status(401).json({ error: 'Invalid secret key' })
