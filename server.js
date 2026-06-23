@@ -1927,6 +1927,11 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
 });
 
 // ============ SERVE STATIC FILES ============
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send("User-agent: *\nDisallow: /");
+});
+
 if (existsSync(join(__dirname, 'dist'))) {
   app.use(express.static(join(__dirname, 'dist')))
   app.get('*', (req, res) => {
