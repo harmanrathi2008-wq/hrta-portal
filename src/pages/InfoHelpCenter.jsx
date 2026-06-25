@@ -91,12 +91,25 @@ export default function InfoHelpCenter() {
   const handleContactSubmit = async (e) => {
     e.preventDefault();
     setFormSubmitting(true);
-    // Simulate sending contact message
-    setTimeout(() => {
-      setFormSubmitting(false);
+    try {
+      const { error } = await supabase
+        .from('support_tickets')
+        .insert([{
+          name: contactForm.name,
+          email: contactForm.email,
+          subject: contactForm.subject,
+          message: contactForm.message
+        }]);
+
+      if (error) throw error;
       setFormSubmitted(true);
       setContactForm({ name: '', email: '', subject: '', message: '' });
-    }, 1200);
+    } catch (err) {
+      console.error("Error submitting support ticket:", err.message);
+      alert("Failed to submit support ticket. Please try again. Error: " + err.message);
+    } finally {
+      setFormSubmitting(false);
+    }
   };
 
   const handleTabChange = (tabId) => {

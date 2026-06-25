@@ -285,8 +285,8 @@ function normalizeDateOfBirth(dob) {
 // Robust, self-healing email dispatch helper
 // preferSmtp=true: tries SMTP relay first, falls back to Resend API
 // preferSmtp=false (default): tries Resend first, SMTP as fallback (OTPs)
-async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false, preferSmtp = false }) {
-  const fromDomain = isOtp ? OTP_FROM_EMAIL : FROM_EMAIL;
+async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false, preferSmtp = false, fromEmailOverride = null }) {
+  const fromDomain = fromEmailOverride || (isOtp ? OTP_FROM_EMAIL : FROM_EMAIL);
   const fromAddress = `${fromName} <${fromDomain}>`;
 
 
@@ -301,12 +301,12 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
         console.log(`[SMTP] Attempting via SMTP Relay: ${email}`);
         
         const mailFrom = preferSmtp 
-          ? `"${fromName}" <${FROM_EMAIL}>` 
+          ? `"${fromName}" <${fromDomain}>` 
           : `"${fromName}" <${email}>`;
 
         await transporter.sendMail({
           from: mailFrom,
-          replyTo: FROM_EMAIL,
+          replyTo: fromDomain,
           to, subject, html,
           ...(text ? { text } : {})
         });
@@ -1708,7 +1708,114 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
     console.error('Failed to prepare result notification:', err.message);
     res.status(500).json({ error: 'Failed to prepare result email notification: ' + err.message });
   }
-})
+});
+
+// ============ REPLY TO SUPPORT TICKET ============
+app.post('/api/reply-support-ticket', verifyAdminJWT, async (req, res) => {
+  const { ticketId, replyMessage } = req.body;
+  if (!ticketId || !replyMessage) {
+    return res.status(400).json({ error: 'Ticket ID and reply message are required.' });
+  }
+
+  try {
+    // 1. Fetch ticket details using admin bypass client
+    const { data: ticket, error: ticketErr } = await supabaseAdmin
+      .from('support_tickets')
+      .select('*')
+      .eq('id', ticketId)
+      .single();
+
+    if (ticketErr || !ticket) {
+      return res.status(404).json({ error: 'Support ticket not found.' });
+    }
+
+    // 2. Format the response email body
+    const formattedHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #dce3ee; border-radius: 8px; background-color: #ffffff; color: #222222;">
+        <div style="background-color: #1a3a6b; padding: 20px; text-align: center; border-radius: 6px 6px 0 0; margin-bottom: 24px;">
+          <h2 style="color: #ffffff; margin: 0; font-size: 20px; letter-spacing: 0.5px;">HRTA Help Desk Support</h2>
+          <p style="color: #a8c0e8; font-size: 11px; margin: 4px 0 0 0; letter-spacing: 1px;">OFFICIAL RESPONSE</p>
+        </div>
+        <p style="font-size: 14px; line-height: 1.6; margin: 0 0 16px;">Dear <strong>${ticket.name}</strong>,</p>
+        <p style="font-size: 14px; line-height: 1.6; margin: 0 0 20px;">Thank you for contacting the HRTA Help Desk. Below is the official response regarding your support ticket:</p>
+        
+        <div style="background-color: #f4f7fb; border-left: 4px solid #1a3a6b; padding: 16px; margin: 20px 0; border-radius: 4px;">
+          <p style="margin: 0; font-size: 14px; color: #111111; line-height: 1.6; white-space: pre-wrap;">${replyMessage}</p>
+        </div>
+
+        <div style="margin-top: 28px; border-top: 1px solid #dce3ee; padding-top: 20px;">
+          <p style="font-size: 12px; font-weight: bold; color: #666666; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px;">Original Concern Details</p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="font-size: 12px; color: #555555; line-height: 1.5;">
+            <tr>
+              <td style="padding: 4px 0; font-weight: bold; width: 90px; color: #666666;">Subject:</td>
+              <td style="padding: 4px 0; color: #222222;">${ticket.subject}</td>
+            </tr>
+            <tr>
+              <td style="padding: 4px 0; font-weight: bold; color: #666666;">Submitted:</td>
+              <td style="padding: 4px 0; color: #222222;">${new Date(ticket.created_at).toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; font-weight: bold; color: #666666; vertical-align: top;">Concern:</td>
+              <td style="padding: 6px 0; color: #222222; white-space: pre-wrap;">${ticket.message}</td>
+            </tr>
+          </table>
+        </div>
+
+        <div style="margin-top: 28px; text-align: center; font-size: 11px; color: #999999; border-top: 1px solid #f0f0f0; padding-top: 16px; line-height: 1.4;">
+          This is an automated support response from <strong>response@harmanrathiportal.dpdns.org</strong>.<br>
+          Please do not reply directly to this mail.
+        </div>
+      </div>
+    `;
+
+    const plainText = `HRTA HELP DESK SUPPORT - OFFICIAL RESPONSE
+
+Dear ${ticket.name},
+
+Thank you for contacting the HRTA Help Desk. Below is the official response to your concern:
+
+--------------------------------------------------
+${replyMessage}
+--------------------------------------------------
+
+ORIGINAL CONCERN DETAILS
+Subject: ${ticket.subject}
+Submitted: ${new Date(ticket.created_at).toLocaleString()}
+Concern: ${ticket.message}
+
+---
+This is an automated support response from response@harmanrathiportal.dpdns.org.
+Please do not reply directly to this mail.`;
+
+    // 3. Send email using our helper function and new domain email override
+    await sendEmail({
+      to: ticket.email,
+      subject: `[HRTA Support] Re: ${ticket.subject}`,
+      html: formattedHtml,
+      text: plainText,
+      fromName: 'HRTA Support Desk',
+      fromEmailOverride: 'response@harmanrathiportal.dpdns.org',
+      preferSmtp: false
+    });
+
+    // 4. Update the ticket status in Supabase database using supabaseAdmin
+    const { error: updateErr } = await supabaseAdmin
+      .from('support_tickets')
+      .update({
+        status: 'completed',
+        resolved_at: new Date().toISOString(),
+        admin_notes: replyMessage
+      })
+      .eq('id', ticketId);
+
+    if (updateErr) throw updateErr;
+
+    res.json({ success: true, message: 'Reply sent and support ticket resolved successfully.' });
+  } catch (error) {
+    console.error('Error replying to support ticket:', error);
+    res.status(500).json({ error: error.message || 'Failed to send reply' });
+  }
+});
 
 // ============ VERIFY SCORECARD TOKEN ============
 app.get('/api/verify-scorecard-token', async (req, res) => {

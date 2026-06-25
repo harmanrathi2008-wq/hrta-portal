@@ -21,6 +21,7 @@ import AdminCertificates from './pages/admin/AdminCertificates'
 import StudyMaterials from './pages/admin/StudyMaterials'
 import AdminScorecard from './pages/admin/AdminScorecard'
 import AdminMessages from './pages/admin/AdminMessages'
+import ManageSupportTickets from './pages/admin/ManageSupportTickets'
 
 // Student Pages
 import StudentDashboard from './pages/student/StudentDashboard'
@@ -101,6 +102,7 @@ function App() {
             <Route path="/admin/certificates" element={<AdminCertificates />} />
             <Route path="/admin/materials" element={<StudyMaterials />} />
             <Route path="/admin/messages" element={<AdminMessages />} />
+            <Route path="/admin/support" element={<ManageSupportTickets />} />
           </Route>
 
           {/* Student Routes */}

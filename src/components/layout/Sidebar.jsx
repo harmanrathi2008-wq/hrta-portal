@@ -25,6 +25,7 @@ const adminLinks = [
   { path: '/admin/students', icon: Users, label: 'Students' },
   { path: '/admin/exams', icon: FileText, label: 'Exams' },
   { path: '/admin/results', icon: BarChart3, label: 'Results' },
+  { path: '/admin/support', icon: ClipboardList, label: 'Support Tickets' },
   { path: '/admin/admins', icon: UserCog, label: 'Manage Admins' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ]
