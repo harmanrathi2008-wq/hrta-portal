@@ -34,6 +34,7 @@ import StudentMessages from './pages/student/StudentMessages'
 import StudentMaterials from './pages/student/StudentMaterials'
 import StudentTasks from './pages/student/StudentTasks'
 import ExamLogin from './pages/student/ExamLogin'
+import InfoHelpCenter from './pages/InfoHelpCenter'
 
 // Components
 import ProtectedRoute from './components/ProtectedRoute'
@@ -115,6 +116,7 @@ function App() {
 
           {/* Secure Public Scorecard Route (Verifies token inside component) */}
           <Route path="/student/results" element={<StudentResults />} />
+          <Route path="/info" element={<InfoHelpCenter />} />
 
           {/* Exam Routes (No Layout) */}
           <Route path="/student/exam/:examId/login" element={<ExamLogin />} />

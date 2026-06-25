@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
 const MainLogin = () => {
@@ -785,7 +785,7 @@ const MainLogin = () => {
             
             <div className="bg-transparent border-t border-white/5 py-4 px-6 flex justify-between items-center text-xs font-bold text-slate-400">
                <span>Forgot Password? Contact Admin.</span>
-               <a href="#" className="text-cyan-400 hover:underline">Help Desk</a>
+               <Link to="/info" className="text-cyan-400 hover:underline">Help Desk & Guidelines</Link>
             </div>
           </div>
         </div>
@@ -796,9 +796,10 @@ const MainLogin = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center text-xs font-medium">
           <p>© {new Date().getFullYear()} HARMAN RATHI TESTING AGENCY. All Rights Reserved.</p>
           <div className="flex space-x-6 mt-3 md:mt-0">
-            <span className="hover:text-slate-350 cursor-pointer transition-colors">Disclaimer</span>
-            <span className="hover:text-slate-350 cursor-pointer transition-colors">Privacy Policy</span>
-            <span className="hover:text-slate-350 cursor-pointer transition-colors">Terms of Use</span>
+            <Link to="/info?tab=legal" className="hover:text-slate-300 transition-colors">Disclaimer</Link>
+            <Link to="/info?tab=legal" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
+            <Link to="/info?tab=legal" className="hover:text-slate-300 transition-colors">Terms of Use</Link>
+            <Link to="/info" className="hover:text-slate-300 text-cyan-400 transition-colors font-bold">Info & Help Center</Link>
           </div>
         </div>
       </footer>

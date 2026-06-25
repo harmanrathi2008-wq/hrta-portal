@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Shield,
   UserCog,
+  HelpCircle,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -33,6 +34,7 @@ const studentLinks = [
   { path: '/student/exams', icon: FileText, label: 'My Exams' },
   { path: '/student/leaderboard', icon: Award, label: 'Leaderboard' },
   { path: '/student/profile', icon: Settings, label: 'Profile' },
+  { path: '/info', icon: HelpCircle, label: 'Info & Help' },
 ]
 
 export default function Sidebar({ role, user }) {
