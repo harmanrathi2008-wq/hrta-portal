@@ -174,7 +174,15 @@ export default function ManageSupportTickets() {
         })
       });
 
-      const resData = await response.json();
+      let resData = {};
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        resData = await response.json();
+      } else {
+        const errText = await response.text();
+        throw new Error(errText || `Server returned non-JSON response (Status: ${response.status})`);
+      }
+
       if (!response.ok) {
         throw new Error(resData.error || 'Failed to send support email reply.');
       }
