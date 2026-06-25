@@ -24,6 +24,8 @@ const AdminDashboard = () => {
   const [logsError, setLogsError] = useState(false);
   const [lateRequests, setLateRequests] = useState([]);
   const [requestsError, setRequestsError] = useState(false);
+  const [supportTickets, setSupportTickets] = useState([]);
+  const [ticketsError, setTicketsError] = useState(false);
 
   // Proctoring States
   const [activeSessions, setActiveSessions] = useState([]);
@@ -675,6 +677,7 @@ const AdminDashboard = () => {
     fetchDashboardData();
     loadAllResults();
     loadProctorLocks();
+    loadSupportTickets();
 
     // Subscribe to real-time updates of exam_results
     const realtimeChannel = supabase
@@ -709,9 +712,26 @@ const AdminDashboard = () => {
       )
       .subscribe();
 
+    // Subscribe to real-time updates of support_tickets
+    const ticketsRealtimeChannel = supabase
+      .channel('admin-support-tickets-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'support_tickets'
+        },
+        () => {
+          loadSupportTickets();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(realtimeChannel);
       supabase.removeChannel(locksRealtimeChannel);
+      supabase.removeChannel(ticketsRealtimeChannel);
     };
   }, [navigate]);
 
@@ -773,6 +793,21 @@ const AdminDashboard = () => {
       }
     } catch (err) {
       console.error("Error loading proctor locks:", err);
+    }
+  };
+
+  const loadSupportTickets = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('support_tickets')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setSupportTickets(data || []);
+      setTicketsError(false);
+    } catch (err) {
+      console.warn("Failed to load support tickets:", err.message);
+      setTicketsError(true);
     }
   };
 
@@ -1493,6 +1528,62 @@ CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests
                   <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">⚙️</span>
                   Platform Settings & Limits
                 </Link>
+              </div>
+            </div>
+
+            {/* Support Tickets Dashboard Widget */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+              <div className="bg-transparent border-b border-white/5 px-5 py-4 flex justify-between items-center">
+                <h2 className="font-bold text-white uppercase tracking-wider text-xs">Support Tickets</h2>
+                <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  {supportTickets.filter(t => t.status === 'pending').length} Pending
+                </span>
+              </div>
+              <div className="p-4 space-y-3">
+                {ticketsError ? (
+                  <div className="p-4 bg-amber-500/5 border border-amber-500/10 text-amber-300 text-[10px] rounded-xl leading-normal space-y-2">
+                    <p className="font-bold text-amber-400">Database Table Migration Required!</p>
+                    <p>To record and view support tickets, please copy the DDL script in <code>scratch/create_support_tickets.sql</code> and execute it in your Supabase SQL Editor.</p>
+                  </div>
+                ) : supportTickets.length === 0 ? (
+                  <div className="text-center py-6 text-slate-500 text-xs font-semibold">
+                    No support tickets logged.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {supportTickets.slice(0, 3).map((ticket) => (
+                      <div 
+                        key={ticket.id} 
+                        onClick={() => navigate('/admin/support')}
+                        className="bg-white/5 hover:bg-white/[0.08] border border-white/5 rounded-xl p-3 cursor-pointer transition-all flex flex-col gap-1.5"
+                      >
+                        <div className="flex justify-between items-start">
+                          <strong className="text-white text-xs block font-bold leading-normal truncate max-w-[150px]">{ticket.subject}</strong>
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
+                            ticket.status === 'pending'
+                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}>
+                            {ticket.status}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-normal truncate">{ticket.message}</p>
+                        <div className="flex justify-between items-center text-[8px] text-slate-500 font-medium">
+                          <span>👤 {ticket.name}</span>
+                          <span>⏰ {new Date(ticket.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {supportTickets.length > 3 && (
+                      <Link 
+                        to="/admin/support" 
+                        className="block text-center text-[10px] font-bold text-cyan-400 hover:text-cyan-300 hover:underline uppercase tracking-wider py-1 mt-2"
+                      >
+                        View All {supportTickets.length} Tickets &rarr;
+                      </Link>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

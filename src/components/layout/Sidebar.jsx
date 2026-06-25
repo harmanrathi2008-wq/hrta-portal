@@ -21,7 +21,7 @@ import {
 import { useAuth } from '@/hooks/useAuth'
 
 const adminLinks = [
-  { path: '/admin', icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/admin/students', icon: Users, label: 'Students' },
   { path: '/admin/exams', icon: FileText, label: 'Exams' },
   { path: '/admin/results', icon: BarChart3, label: 'Results' },
@@ -54,7 +54,7 @@ export default function Sidebar({ role, user }) {
         if (link.path === '/admin/admins' && !isSuperAdmin) return null
         
         const isActive = location.pathname === link.path ||
-          (link.path !== '/admin' && link.path !== '/student' && location.pathname.startsWith(link.path))
+          (link.path !== '/admin/dashboard' && link.path !== '/student' && location.pathname.startsWith(link.path))
         
         return (
           <Link
