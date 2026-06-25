@@ -9,7 +9,7 @@ import nodemailer from 'nodemailer'
 import axios from 'axios'
 import { existsSync } from 'fs'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
-import { apiLimiter, authLimiter, heavyRequestLimiter } from './middleware/rateLimiters.js'
+import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
 import crypto from 'crypto'
 import { body, validationResult } from 'express-validator'
@@ -1922,6 +1922,358 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
   } catch (err) {
     console.error('Admin message error:', err);
     res.status(500).json({ error: err.message || 'Failed to send message' });
+  }
+});
+
+// ============ SECURE SERVER-SIDE GRADING UTILITIES ============
+const parseOption = (opt) => {
+  if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
+  if (typeof opt !== 'string') {
+    return { text: String(opt), image_url: '', image_public_id: '' };
+  }
+  const trimmed = opt.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return {
+        text: parsed.text !== undefined && parsed.text !== null ? String(parsed.text) : '',
+        image_url: parsed.image_url || '',
+        image_public_id: parsed.image_public_id || ''
+      };
+    } catch (e) {}
+  }
+  return { text: opt, image_url: '', image_public_id: '' };
+};
+
+const normalizeOptionForComparison = (opt) => {
+  const parsed = parseOption(opt);
+  const val = (parsed.text.trim() || parsed.image_url.trim());
+  return val.toLowerCase();
+};
+
+const parseNumericalRange = (answerStr) => {
+  if (!answerStr) return null;
+  const clean = String(answerStr).trim();
+
+  if (/\s+to\s+/i.test(clean)) {
+    const parts = clean.split(/\s+to\s+/i);
+    const min = parseFloat(parts[0]);
+    const max = parseFloat(parts[1]);
+    if (!isNaN(min) && !isNaN(max)) {
+      return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+    }
+  }
+
+  const rangeMatch = clean.match(/^(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)$/);
+  if (rangeMatch) {
+    const min = parseFloat(rangeMatch[1]);
+    const max = parseFloat(rangeMatch[2]);
+    if (!isNaN(min) && !isNaN(max)) {
+      return { min: Math.min(min, max), max: Math.max(min, max), isRange: true };
+    }
+  }
+
+  const val = parseFloat(clean);
+  if (!isNaN(val)) {
+    return { min: val, max: val, isRange: false };
+  }
+
+  return null;
+};
+
+// ============ SECURE EXAM SUBMISSION ENDPOINT ============
+app.post('/api/submit-exam', submitExamLimiter, verifyUserJWT, async (req, res) => {
+  const { draftId, answers: incomingAnswers } = req.body;
+  const user = req.user;
+
+  if (!draftId) {
+    return res.status(400).json({ error: 'Draft ID is required.' });
+  }
+
+  try {
+    // 1. Fetch current draft from database using admin bypass client
+    const { data: draft, error: draftErr } = await supabaseAdmin
+      .from('exam_results')
+      .select('*')
+      .eq('id', draftId)
+      .single();
+
+    if (draftErr || !draft) {
+      return res.status(404).json({ error: 'Exam attempt not found.' });
+    }
+
+    // Authorization check
+    if (draft.student_id !== user.id) {
+      return res.status(403).json({ error: 'Access Denied: You do not own this attempt.' });
+    }
+
+    // 2. Idempotency Check: Prevent double submissions
+    if (draft.status === 'submitted') {
+      return res.status(409).json({ 
+        message: 'Exam has already been submitted.', 
+        alreadySubmitted: true,
+        data: {
+          total_score: draft.total_score,
+          correct_count: draft.correct_count,
+          wrong_count: draft.wrong_count,
+          unattempted_count: draft.unattempted_count
+        }
+      });
+    }
+
+    // 3. Load Exam config and questions
+    const { data: exam, error: examErr } = await supabaseAdmin
+      .from('exams')
+      .select('*')
+      .eq('id', draft.exam_id)
+      .single();
+
+    if (examErr || !exam) {
+      return res.status(404).json({ error: 'Exam configuration not found.' });
+    }
+
+    const { data: questions, error: qErr } = await supabaseAdmin
+      .from('questions')
+      .select('*')
+      .eq('exam_id', draft.exam_id)
+      .order('order_index', { ascending: true });
+
+    if (qErr || !questions) {
+      return res.status(400).json({ error: 'Failed to load exam questions for scoring.' });
+    }
+
+    // 4. Merge incoming answers with already synced answers (use the newest version to prevent last-second data loss)
+    const dbAnswers = draft.answers || {};
+    const finalAnswers = { ...dbAnswers, ...incomingAnswers };
+
+    // 5. Timer Validation
+    const durationMin = parseFloat(exam.duration) || 180;
+    const startedAtTime = new Date(draft.started_at).getTime();
+    const expiresAtTime = startedAtTime + durationMin * 60 * 1000;
+    const gracePeriodMs = 5 * 60 * 1000; // 5 minutes grace period
+    const isExpired = Date.now() > (expiresAtTime + gracePeriodMs);
+
+    // 6. Advanced JEE Evaluation Engine (Server-Side)
+    let totalScore = 0;
+    let totalMarks = 0;
+    let correctCount = 0;
+    let wrongCount = 0;
+    let unattemptedCount = 0;
+
+    questions.forEach((q) => {
+      const qStatus = q.status;
+      if (qStatus !== "dropped") {
+        totalMarks += q.positive_marks || exam.correct_marks || 4;
+      }
+
+      const studentAnswer = finalAnswers[q.id];
+      const hasAnswered =
+        studentAnswer !== undefined &&
+        studentAnswer !== null &&
+        studentAnswer !== "" &&
+        (!Array.isArray(studentAnswer) || studentAnswer.length > 0);
+
+      if (!hasAnswered) {
+        unattemptedCount++;
+      } else if (qStatus !== "dropped") {
+        const qType = q.question_type || q.type;
+        const posMarks = parseFloat(q.positive_marks) || parseFloat(exam.correct_marks) || 4;
+        const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
+          ? parseFloat(q.negative_marks) 
+          : (exam.negative_marks !== null && exam.negative_marks !== undefined && exam.negative_marks !== '' 
+            ? parseFloat(exam.negative_marks) 
+            : 0);
+
+        // Parse correct list
+        let correctList = [];
+        try {
+          correctList = JSON.parse(q.correct_answer);
+          if (!Array.isArray(correctList)) correctList = [correctList];
+        } catch (e) {
+          if (q.correct_answer) correctList = [q.correct_answer];
+        }
+        correctList = correctList.map((item) => normalizeOptionForComparison(item));
+
+        // Parse selected list
+        let selectedList = [];
+        if (Array.isArray(studentAnswer)) {
+          selectedList = studentAnswer.map((item) => normalizeOptionForComparison(item));
+        } else {
+          selectedList = [normalizeOptionForComparison(studentAnswer)];
+        }
+
+        // 1. Numerical comparison (NAT Marking Scheme with Range Support)
+        if (qType === "numerical_integer" || qType === "numerical_decimal") {
+          const sNum = parseFloat(studentAnswer);
+          const penalty = negMarks;
+          
+          if (isNaN(sNum)) {
+            wrongCount++;
+            totalScore -= penalty;
+          } else {
+            const parsedRange = parseNumericalRange(q.correct_answer);
+            if (parsedRange) {
+              const eps = 1e-9;
+              if (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) {
+                correctCount++;
+                totalScore += posMarks;
+              } else {
+                wrongCount++;
+                totalScore -= penalty;
+              }
+            } else {
+              const cNum = parseFloat(q.correct_answer);
+              if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
+                correctCount++;
+                totalScore += posMarks;
+              } else {
+                wrongCount++;
+                totalScore -= penalty;
+              }
+            }
+          }
+        }
+        // 2. MCQ Single Correct
+        else if (qType === "mcq_single" || qType === "true_false" || qType === "single") {
+          if (correctList.includes(selectedList[0])) {
+            correctCount++;
+            totalScore += posMarks;
+          } else {
+            wrongCount++;
+            totalScore -= negMarks;
+          }
+        }
+        // 3. MCQ Multiple Correct (JEE Advanced Partial Marking)
+        else if (qType === "mcq_multiple" || qType === "multiple" || qType === "subjective") {
+          const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
+          if (hasIncorrect) {
+            wrongCount++;
+            totalScore -= negMarks;
+          } else {
+            const numSel = selectedList.length;
+            const numCor = correctList.length;
+
+            if (numSel === numCor) {
+              correctCount++;
+              totalScore += posMarks;
+            } else if (numSel < numCor && numSel > 0) {
+              correctCount++;
+              let partialScore = 0;
+              if (numCor === 2) {
+                if (numSel === 1) partialScore = 2;
+              } else if (numCor === 3) {
+                if (numSel === 1) partialScore = 1;
+                if (numSel === 2) partialScore = 3;
+              } else if (numCor === 4) {
+                if (numSel === 1) partialScore = 1;
+                if (numSel === 2) partialScore = 2;
+                if (numSel === 3) partialScore = 3;
+              } else {
+                partialScore = numSel;
+              }
+              totalScore += partialScore;
+            } else {
+              unattemptedCount++;
+            }
+          }
+        }
+      }
+    });
+
+    const finalTotalMarks = exam.total_marks ? parseFloat(exam.total_marks) : totalMarks;
+    const percentage = finalTotalMarks > 0 ? Math.round((totalScore / finalTotalMarks) * 100) : 0;
+
+    // Calculate attempt number
+    const { data: existingAttempts } = await supabaseAdmin
+      .from('exam_results')
+      .select('id')
+      .eq('student_id', user.id)
+      .eq('exam_id', draft.exam_id);
+    const attemptNumber = existingAttempts ? existingAttempts.length + 1 : 1;
+
+    // 7. Atomic DB Updates (Update exam_results, complete assignments, audit log)
+    const { error: updateErr } = await supabaseAdmin
+      .from('exam_results')
+      .update({
+        answers: finalAnswers,
+        status: 'submitted',
+        total_score: Math.max(0, totalScore), // enforce check check_score_non_negative
+        total_marks: finalTotalMarks,
+        percentage,
+        correct_count: correctCount,
+        wrong_count: wrongCount,
+        unattempted_count: unattemptedCount,
+        submitted_at: new Date().toISOString(),
+        attempt_number: attemptNumber
+      })
+      .eq('id', draftId);
+
+    if (updateErr) throw updateErr;
+
+    // Mark personal assignment completed if active
+    try {
+      const { data: activeAssign } = await supabaseAdmin
+        .from('personal_assignments')
+        .select('id')
+        .eq('student_id', user.id)
+        .eq('exam_id', draft.exam_id)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (activeAssign) {
+        await supabaseAdmin
+          .from('personal_assignments')
+          .update({ status: 'completed', updated_at: new Date().toISOString() })
+          .eq('id', activeAssign.id);
+      }
+    } catch (e) {
+      console.error('Error completing personal assignment in background:', e.message);
+    }
+
+    // 8. Anti-Cheating Logs & Audit Logs
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+    const userAgentString = req.headers['user-agent'] || 'Unknown';
+
+    // Log the normal/auto submission audit event
+    const actionName = isExpired ? 'EXAM_AUTO_SUBMITTED_EXPIRED' : 'EXAM_SUBMITTED';
+    try {
+      await supabaseAdmin
+        .from('audit_logs')
+        .insert({
+          user_id: user.id,
+          user_role: 'student',
+          display_name: user.email || 'Student',
+          action: actionName,
+          details: { 
+            exam_id: draft.exam_id, 
+            exam_title: exam.title, 
+            ip_address: ip, 
+            user_agent: userAgentString,
+            submitted_post_expiry: isExpired,
+            score: Math.max(0, totalScore)
+          },
+          ip_address: ip
+        });
+    } catch (logErr) {
+      console.error('Failed to write exam submission audit log:', logErr.message);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        total_score: Math.max(0, totalScore),
+        total_marks: finalTotalMarks,
+        percentage,
+        correct_count: correctCount,
+        wrong_count: wrongCount,
+        unattempted_count: unattemptedCount
+      }
+    });
+
+  } catch (err) {
+    console.error('Exam submission scoring error:', err);
+    res.status(500).json({ error: 'Internal server error during exam scoring: ' + err.message });
   }
 });
 

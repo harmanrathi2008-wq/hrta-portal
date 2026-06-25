@@ -27,3 +27,13 @@ export const heavyRequestLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Stricter rate limiter specifically for exam submissions (max 5 requests per 1 minute)
+export const submitExamLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 5,
+  message: { error: 'You are submitting the exam too quickly. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+

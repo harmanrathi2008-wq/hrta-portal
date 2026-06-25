@@ -278,7 +278,7 @@ export default function ExamInterface() {
           supabase.from("exams").select("*").eq("id", examId).single(),
           supabase
             .from("questions")
-            .select("*")
+            .select("id, exam_id, type, question_type, text, options, order_index, topic, image_url, positive_marks, negative_marks, status")
             .eq("exam_id", examId)
             .order("order_index", { ascending: true }),
         ]);
@@ -1327,225 +1327,30 @@ export default function ExamInterface() {
         finalCommittedResponses[currentQ.id] = responses[currentQ.id];
       }
 
-      // Advanced JEE evaluation engine
-      let totalScore = 0;
-      let totalMarks = 0;
-      let correctCount = 0;
-      let wrongCount = 0;
-      let unattemptedCount = 0;
+      // Call secure server-side scoring API
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
 
-      questions.forEach((q) => {
-        if (q.status !== "dropped") {
-          totalMarks += q.positive_marks || exam.correct_marks || 4;
-        }
-
-        const studentAnswer = finalCommittedResponses[q.id];
-        const hasAnswered =
-          studentAnswer !== undefined &&
-          studentAnswer !== null &&
-          studentAnswer !== "" &&
-          (!Array.isArray(studentAnswer) || studentAnswer.length > 0);
-
-        if (!hasAnswered) {
-          unattemptedCount++;
-        } else {
-          const qType = q.question_type || q.type;
-          const posMarks = parseFloat(q.positive_marks) || parseFloat(exam.correct_marks) || 4;
-          const negMarks = q.negative_marks !== null && q.negative_marks !== undefined && q.negative_marks !== '' 
-            ? parseFloat(q.negative_marks) 
-            : (exam?.negative_marks !== null && exam?.negative_marks !== undefined && exam?.negative_marks !== '' 
-              ? parseFloat(exam.negative_marks) 
-              : 0);
-          const policy = q.scoring_policy || "exact_match";
-
-          // Parse correct list
-          let correctList = [];
-          try {
-            correctList = JSON.parse(q.correct_answer);
-            if (!Array.isArray(correctList)) correctList = [correctList];
-          } catch (e) {
-            if (q.correct_answer) correctList = [q.correct_answer];
-          }
-          correctList = correctList.map((item) => normalizeOptionForComparison(item));
-
-          // Parse selected list
-          let selectedList = [];
-          if (Array.isArray(studentAnswer)) {
-            selectedList = studentAnswer.map((item) => normalizeOptionForComparison(item));
-          } else {
-            selectedList = [normalizeOptionForComparison(studentAnswer)];
-          }
-
-          // 1. Numerical comparison (NAT Marking Scheme with Range Support)
-          if (qType === "numerical_integer" || qType === "numerical_decimal") {
-            const sNum = parseFloat(studentAnswer);
-            const penalty = negMarks;
-            
-            if (isNaN(sNum)) {
-              wrongCount++;
-              totalScore -= penalty;
-            } else {
-              const parsedRange = parseNumericalRange(q.correct_answer);
-              if (parsedRange) {
-                const eps = 1e-9;
-                if (sNum >= parsedRange.min - eps && sNum <= parsedRange.max + eps) {
-                  correctCount++;
-                  totalScore += posMarks;
-                } else {
-                  wrongCount++;
-                  totalScore -= penalty;
-                }
-              } else {
-                const cNum = parseFloat(q.correct_answer);
-                if (!isNaN(cNum) && Math.abs(sNum - cNum) < 0.0101) {
-                  correctCount++;
-                  totalScore += posMarks;
-                } else {
-                  wrongCount++;
-                  totalScore -= penalty;
-                }
-              }
-            }
-          }
-          // 2. MCQ Single Correct or True/False
-          else if (qType === "mcq_single" || qType === "true_false" || qType === "single") {
-            if (correctList.includes(selectedList[0])) {
-              correctCount++;
-              totalScore += posMarks;
-            } else {
-              wrongCount++;
-              totalScore -= negMarks;
-            }
-          }
-          // 3. MCQ Multiple Correct (JEE Advanced Marking Scheme)
-          else if (qType === "mcq_multiple" || qType === "multiple" || qType === "subjective") {
-            const hasIncorrect = selectedList.some((item) => !correctList.includes(item));
-            if (hasIncorrect) {
-              wrongCount++;
-              const penalty = negMarks;
-              totalScore -= penalty;
-            } else {
-              const numSel = selectedList.length;
-              const numCor = correctList.length;
-
-              if (numSel === numCor) {
-                // Exact Match
-                correctCount++;
-                totalScore += posMarks;
-              } else if (numSel < numCor && numSel > 0) {
-                // Partial correctness according to JEE Advanced scheme
-                correctCount++;
-                let partialScore = 0;
-                if (numCor === 2) {
-                  if (numSel === 1) partialScore = 2;
-                } else if (numCor === 3) {
-                  if (numSel === 1) partialScore = 1;
-                  if (numSel === 2) partialScore = 3;
-                } else if (numCor === 4) {
-                  if (numSel === 1) partialScore = 1;
-                  if (numSel === 2) partialScore = 2;
-                  if (numSel === 3) partialScore = 3;
-                } else {
-                  partialScore = numSel; // fallback: +1 per correct choice
-                }
-                totalScore += partialScore;
-              } else {
-                unattemptedCount++;
-              }
-            }
-          }
-          // Fallback string match
-          else {
-            if (String(studentAnswer).trim().toLowerCase() === String(q.correct_answer).trim().toLowerCase()) {
-              correctCount++;
-              totalScore += posMarks;
-            } else {
-              wrongCount++;
-              totalScore -= negMarks;
-            }
-          }
-        }
+      const response = await fetch(`${apiBaseUrl}/api/submit-exam`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          draftId: draftId,
+          answers: finalCommittedResponses
+        })
       });
 
-      // Retrieve target total marks if defined by the admin
-      const finalTotalMarks = exam && exam.total_marks ? parseFloat(exam.total_marks) : totalMarks;
-      const percentage = finalTotalMarks > 0 ? Math.round((totalScore / finalTotalMarks) * 100) : 0;
-      const timerKey = `exam_start_time_${examId}`;
-      const startTime = sessionStorage.getItem(timerKey) || Date.now().toString();
-
-      // Calculate attempt number
-      let attemptNumber = 1;
-      try {
-        const { data: existingAttempts } = await supabase
-          .from("exam_results")
-          .select("id")
-          .eq("student_id", userId)
-          .eq("exam_id", examId);
-        if (existingAttempts) {
-          attemptNumber = existingAttempts.length + 1;
-        }
-      } catch (e) {
-        console.error("Error fetching attempt count:", e);
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to submit exam.');
       }
-
-      const resultPayload = {
-        student_id: userId,
-        exam_id: examId,
-        answers: finalCommittedResponses,
-        status: "submitted",
-        total_score: totalScore,
-        total_marks: finalTotalMarks,
-        percentage: percentage,
-        correct_count: correctCount,
-        wrong_count: wrongCount,
-        unattempted_count: unattemptedCount,
-        started_at: new Date(parseInt(startTime, 10)).toISOString(),
-        submitted_at: new Date().toISOString(),
-        question_statuses: timeSpent,
-        attempt_number: attemptNumber
-      };
-
-      let error;
-      if (draftId) {
-        const res = await supabase
-          .from("exam_results")
-          .update(resultPayload)
-          .eq("id", draftId);
-        error = res.error;
-      } else {
-        const res = await supabase.from("exam_results").insert([resultPayload]);
-        error = res.error;
-      }
-      if (error) throw error;
 
       // Mark as submitted to prevent UNEXPECTED_TAB_CLOSE logging
       isSubmittedRef.current = true;
-
-      // Log audit event: EXAM_SUBMITTED or EXAM_AUTO_SUBMITTED
-      try {
-        const action = isAuto ? 'EXAM_AUTO_SUBMITTED' : 'EXAM_SUBMITTED';
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-        await fetch(`${apiBaseUrl}/api/audit-log`, {
-          method: 'POST',
-          headers: getHeaders(),
-          body: JSON.stringify({
-            userId: userId || 'Unknown',
-            userRole: 'student',
-            displayName: student?.full_name || 'Student',
-            action: action,
-            details: {
-              exam_id: examId,
-              exam_title: exam?.title,
-              attempt_number: attemptNumber,
-              total_score: totalScore,
-              total_marks: finalTotalMarks,
-              percentage: percentage
-            }
-          })
-        });
-      } catch (logErr) {
-        console.warn("Failed to audit exam submission event:", logErr);
-      }
 
       // Complete active personal assignment if it exists
       try {
