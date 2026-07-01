@@ -128,8 +128,7 @@ const MainLogin = () => {
       }
 
       // 2. Initialize particles scattered in a chaotic nebula
-      // Bright neon base palette: Pink/Magenta, Violet, Blue, Cyan, Teal
-      const hues = [340, 280, 220, 195, 170];
+      // Assign each particle a Gemini color seed (0 = Blue, 1 = Red, 2 = Yellow, 3 = Green, 4 = Orange)
       for (let i = 0; i < count; i++) {
         const r = Math.random() * 500 + 400;
         const theta = Math.random() * Math.PI * 2;
@@ -140,7 +139,7 @@ const MainLogin = () => {
         const nebulaZ = r * Math.cos(phi);
         
         const target = targets[i % targets.length];
-        const baseHue = hues[Math.floor(Math.random() * hues.length)] + (Math.random() - 0.5) * 15;
+        const colorSeed = Math.floor(Math.random() * 5);
         
         particles.push({
           cx: nebulaX,
@@ -162,7 +161,7 @@ const MainLogin = () => {
           
           size: Math.random() * 1.3 + 0.7,
           alpha: Math.random() * 0.5 + 0.5,
-          baseHue
+          colorSeed
         });
       }
     };
@@ -194,8 +193,8 @@ const MainLogin = () => {
         ease = 0; // hold nebula
       }
       
-      // Slow global color spectrum rotation over time
-      const hueOffset = (Date.now() - startTime) * 0.015;
+      // Dynamic Gemini color rotation index over time
+      const timeFactor = (Date.now() - startTime) * 0.0018;
       
       // Auto-rotation increments
       angleY += 0.005;
@@ -253,23 +252,39 @@ const MainLogin = () => {
           projY += (dy / dist) * force;
         }
         
-        // 7. Styling mapping depth and dynamic hue offsets
+        // 7. Dynamic Gemini color selection based on particle seed and time
+        const colorIndex = Math.floor(p.colorSeed + timeFactor) % 5;
+        let hue = 217;
+        let sat = 89;
+        let light = 61;
+        
+        if (colorIndex === 0) { // Blue
+          hue = 217; sat = 89; light = 61;
+        } else if (colorIndex === 1) { // Red
+          hue = 5; sat = 81; light = 56;
+        } else if (colorIndex === 2) { // Yellow
+          hue = 45; sat = 96; light = 50;
+        } else if (colorIndex === 3) { // Green
+          hue = 136; sat = 53; light = 45;
+        } else { // Orange
+          hue = 26; sat = 96; light = 54;
+        }
+        
         const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
-        const pColorHue = Math.round(p.baseHue + hueOffset) % 360;
-        const brightness = 75 - (depthNorm + 1) * 15; // Closer is brighter
+        const brightness = Math.max(20, Math.min(95, light - (depthNorm + 1) * 12)); // Depth shading
         
         // 8. Render Bloom (subtle glow layer for closer particles)
         if (depthNorm < 0.2) {
           ctx.beginPath();
           ctx.arc(projX, projY, p.size * scale * 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${pColorHue}, 100%, ${brightness}%, ${p.alpha * 0.12})`;
+          ctx.fillStyle = `hsla(${hue}, ${sat}%, ${brightness}%, ${p.alpha * 0.12})`;
           ctx.fill();
         }
         
         // 9. Draw core particle
         ctx.beginPath();
         ctx.arc(projX, projY, p.size * scale, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${pColorHue}, 100%, ${brightness}%, ${p.alpha * scale * 1.3})`;
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${brightness}%, ${p.alpha * scale * 1.3})`;
         ctx.fill();
       });
       
