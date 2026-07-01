@@ -252,22 +252,35 @@ const MainLogin = () => {
           projY += (dy / dist) * force;
         }
         
-        // 7. Dynamic Gemini color selection based on particle seed and time
-        const colorIndex = Math.floor(p.colorSeed + timeFactor) % 5;
+        // 7. Spatial Gemini color mapping based on current rotated coordinates (x1, y2, z2)
+        // This keeps Red/Orange at the top, Green at the bottom, Blue at corners, and Yellow/Orange inside
+        const radXZ = Math.sqrt(x1 * x1 + z1 * z1);
+        const wave = Math.sin((Date.now() - startTime) * 0.0025 + x1 * 0.04) * 4;
+        
         let hue = 217;
         let sat = 89;
         let light = 61;
         
-        if (colorIndex === 0) { // Blue
-          hue = 217; sat = 89; light = 61;
-        } else if (colorIndex === 1) { // Red
-          hue = 5; sat = 81; light = 56;
-        } else if (colorIndex === 2) { // Yellow
-          hue = 45; sat = 96; light = 50;
-        } else if (colorIndex === 3) { // Green
-          hue = 136; sat = 53; light = 45;
-        } else { // Orange
-          hue = 26; sat = 96; light = 54;
+        if (y2 < -20 + wave) {
+          // Upper part: Red with little bit of Orange
+          if (x1 > 30) {
+            hue = 26; sat = 96; light = 54; // Orange
+          } else {
+            hue = 5; sat = 81; light = 56; // Red
+          }
+        } else if (y2 > 20 + wave) {
+          // Down part: Green
+          hue = 136; sat = 53; light = 45; // Green
+        } else if (radXZ > 90 + wave) {
+          // Corners/Sides: Blue
+          hue = 217; sat = 89; light = 61; // Blue
+        } else {
+          // Central core: Yellow/Orange
+          if (z1 > 15) {
+            hue = 26; sat = 96; light = 54; // Orange
+          } else {
+            hue = 45; sat = 96; light = 50; // Yellow
+          }
         }
         
         const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
