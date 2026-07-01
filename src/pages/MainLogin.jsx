@@ -46,7 +46,7 @@ const MainLogin = () => {
   }, [activeTab]);
 
 
-  // Canvas Color-Changing Particle System Effect
+  // 3D Particle Morphing Animation Effect (Chaotic Nebula to Wireframe Hexagonal Logo)
   useEffect(() => {
     const canvas = document.getElementById('cosmic-canvas');
     if (!canvas) return;
@@ -55,7 +55,18 @@ const MainLogin = () => {
 
     let animationFrameId;
     let particles = [];
+    const startTime = Date.now();
     
+    // Rotation angles
+    let angleX = 0;
+    let angleY = 0;
+    
+    // Mouse coords
+    let mouseX = -1000;
+    let mouseY = -1000;
+    let currentRotX = 0;
+    let currentRotY = 0;
+
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -63,54 +74,182 @@ const MainLogin = () => {
     };
 
     const initParticles = () => {
+      const count = 750;
       particles = [];
-      // Guaranteeing 200+ active color-shifting particles
-      const particleCount = 220;
-      for (let i = 0; i < particleCount; i++) {
-        particles.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          radius: Math.random() * 3 + 1.2,
-          hue: Math.random() * 360,
-          hueSpeed: Math.random() * 0.4 + 0.2, // Speed of color transition
-          vx: (Math.random() - 0.5) * 0.7,
-          vy: (Math.random() - 0.5) * 0.7,
-          alpha: Math.random() * 0.6 + 0.3,
-          dAlpha: (Math.random() - 0.5) * 0.006
+      
+      // 1. Generate Target Wireframe Geometric Logo (Hexagonal Prism + Concentric Sphere)
+      const targets = [];
+      const hexRadius = 145;
+      const hexHeight = 65;
+      
+      const topVerts = [];
+      const bottomVerts = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI) / 3;
+        topVerts.push({ x: hexRadius * Math.cos(angle), y: -hexHeight, z: hexRadius * Math.sin(angle) });
+        bottomVerts.push({ x: hexRadius * Math.cos(angle), y: hexHeight, z: hexRadius * Math.sin(angle) });
+      }
+      
+      const pointsPerEdge = 25;
+      // Top & Bottom edges
+      for (let i = 0; i < 6; i++) {
+        const t1 = topVerts[i];
+        const t2 = topVerts[(i + 1) % 6];
+        const b1 = bottomVerts[i];
+        const b2 = bottomVerts[(i + 1) % 6];
+        
+        for (let j = 0; j < pointsPerEdge; j++) {
+          const r = j / pointsPerEdge;
+          targets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
+          targets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
+        }
+      }
+      // Vertical edges
+      for (let i = 0; i < 6; i++) {
+        const t = topVerts[i];
+        const b = bottomVerts[i];
+        for (let j = 0; j < pointsPerEdge; j++) {
+          const r = j / pointsPerEdge;
+          targets.push({ x: t.x, y: t.y + (b.y - t.y) * r, z: t.z });
+        }
+      }
+      
+      // Center concentric sphere core
+      const coreCount = count - targets.length;
+      const sphereRadius = 60;
+      for (let i = 0; i < coreCount; i++) {
+        const phi = Math.acos(Math.random() * 2 - 1);
+        const theta = Math.random() * Math.PI * 2;
+        targets.push({
+          x: sphereRadius * Math.sin(phi) * Math.cos(theta),
+          y: sphereRadius * Math.sin(phi) * Math.sin(theta),
+          z: sphereRadius * Math.cos(phi)
         });
       }
+
+      // 2. Initialize particles scattered in a chaotic nebula
+      for (let i = 0; i < count; i++) {
+        const r = Math.random() * 500 + 400;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(Math.random() * 2 - 1);
+        
+        const nebulaX = r * Math.sin(phi) * Math.cos(theta);
+        const nebulaY = r * Math.sin(phi) * Math.sin(theta);
+        const nebulaZ = r * Math.cos(phi);
+        
+        const target = targets[i % targets.length];
+        
+        particles.push({
+          cx: nebulaX,
+          cy: nebulaY,
+          cz: nebulaZ,
+          
+          nebulaX,
+          nebulaY,
+          nebulaZ,
+          
+          logoX: target.x,
+          logoY: target.y,
+          logoZ: target.z,
+          
+          phaseX: Math.random() * Math.PI * 2,
+          phaseY: Math.random() * Math.PI * 2,
+          phaseSpeed: Math.random() * 0.05 + 0.03,
+          amplitude: Math.random() * 3 + 1.5,
+          
+          size: Math.random() * 1.3 + 0.7,
+          alpha: Math.random() * 0.5 + 0.5
+        });
+      }
+    };
+
+    const handleMouseMove = (e) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
     };
 
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
+      // Calculate morph progress (morphing smoothly over 3.5 seconds)
+      const elapsed = (Date.now() - startTime) / 3500;
+      const progress = Math.min(1, elapsed);
+      const ease = 1 - Math.pow(1 - progress, 4); // easeOutQuart
+      
+      // Auto-rotation increments
+      angleY += 0.005;
+      angleX += 0.002;
+      
+      // Fluid mouse tilt response
+      const targetRotX = (mouseY - canvas.height / 2) * 0.0012;
+      const targetRotY = (mouseX - canvas.width / 2) * 0.0012;
+      currentRotX += (targetRotX - currentRotX) * 0.05;
+      currentRotY += (targetRotY - currentRotY) * 0.05;
+      
+      const rx = currentRotX + angleX;
+      const ry = currentRotY + angleY;
+      
       particles.forEach((p) => {
-        // Move particle
-        p.x += p.vx;
-        p.y += p.vy;
+        // 1. High frequency fluid vibrations
+        p.phaseX += p.phaseSpeed;
+        p.phaseY += p.phaseSpeed;
+        const vibX = Math.sin(p.phaseX) * p.amplitude;
+        const vibY = Math.cos(p.phaseY) * p.amplitude;
+        const vibZ = Math.sin(p.phaseX + p.phaseY) * p.amplitude;
         
-        // Bounce off sides
-        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
-        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+        // 2. Interpolate base coordinate from nebula to logo
+        p.cx = p.nebulaX + (p.logoX - p.nebulaX) * ease;
+        p.cy = p.nebulaY + (p.logoY - p.nebulaY) * ease;
+        p.cz = p.nebulaZ + (p.logoZ - p.nebulaZ) * ease;
         
-        // Color transition (Hue shifting)
-        p.hue = (p.hue + p.hueSpeed) % 360;
+        // 3. Coordinate translation with noise
+        const nx = p.cx + vibX;
+        const ny = p.cy + vibY;
+        const nz = p.cz + vibZ;
         
-        // Pulse alpha
-        p.alpha += p.dAlpha;
-        if (p.alpha < 0.2 || p.alpha > 0.8) p.dAlpha *= -1;
+        // 4. Apply 3D Rotation (Y rotation then X rotation)
+        let x1 = nx * Math.cos(ry) - nz * Math.sin(ry);
+        let z1 = nx * Math.sin(ry) + nz * Math.cos(ry);
+        let y2 = ny * Math.cos(rx) - z1 * Math.sin(rx);
+        let z2 = ny * Math.sin(rx) + z1 * Math.cos(rx);
         
-        // Draw particle with outer glow
+        // 5. 3D Perspective Projection
+        const fov = 400;
+        const distance = 280;
+        const scale = fov / (fov + z2 + distance);
+        let projX = canvas.width / 2 + x1 * scale * 1.6;
+        let projY = canvas.height / 2 + y2 * scale * 1.6;
+        
+        // 6. Fluid Cursor Repulsion
+        const dx = projX - mouseX;
+        const dy = projY - mouseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 110) {
+          const force = (110 - dist) / 110 * 18;
+          projX += (dx / dist) * force;
+          projY += (dy / dist) * force;
+        }
+        
+        // 7. Monochromatic styling mapping depth (z2) to Hue
+        // Depth range: roughly -150 to 150. Normalize to [-1, 1]
+        const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
+        
+        // Hue mapping: violet (265) to cyan (195)
+        const hue = 230 + depthNorm * 35;
+        const brightness = 75 - (depthNorm + 1) * 15; // Closer is brighter
+        
+        // 8. Render Bloom (subtle glow layer for closer particles)
+        if (depthNorm < 0.2) {
+          ctx.beginPath();
+          ctx.arc(projX, projY, p.size * scale * 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = `hsla(${hue}, 100%, ${brightness}%, ${p.alpha * 0.12})`;
+          ctx.fill();
+        }
+        
+        // 9. Draw core particle
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        
-        // HSL coloring for vibrant colors
-        const colorString = `hsla(${p.hue}, 95%, 65%, ${p.alpha})`;
-        const glowString = `hsla(${p.hue}, 95%, 65%, 0.8)`;
-        
-        ctx.fillStyle = colorString;
-        ctx.shadowBlur = p.radius * 4;
-        ctx.shadowColor = glowString;
+        ctx.arc(projX, projY, p.size * scale, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hue}, 100%, ${brightness}%, ${p.alpha * scale * 1.3})`;
         ctx.fill();
       });
       
@@ -118,12 +257,15 @@ const MainLogin = () => {
     };
 
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('mousemove', handleMouseMove);
+    
     resizeCanvas();
     animate();
 
     return () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', resizeCanvas);
+      window.removeEventListener('mousemove', handleMouseMove);
     };
   }, []);
 
@@ -399,7 +541,7 @@ const MainLogin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#020205] text-slate-100 font-sans flex flex-col relative overflow-hidden selection:bg-cyan-500 selection:text-slate-950">
+    <div className="min-h-screen bg-[#000000] text-slate-100 font-sans flex flex-col relative overflow-hidden selection:bg-cyan-500 selection:text-slate-950">
       
       {/* CANVAS COLOR-CHANGING PARTICLES BACKGROUND */}
       <canvas id="cosmic-canvas" className="fixed inset-0 w-full h-full pointer-events-none z-0" />
