@@ -128,6 +128,8 @@ const MainLogin = () => {
       }
 
       // 2. Initialize particles scattered in a chaotic nebula
+      // Bright neon base palette: Pink/Magenta, Violet, Blue, Cyan, Teal
+      const hues = [340, 280, 220, 195, 170];
       for (let i = 0; i < count; i++) {
         const r = Math.random() * 500 + 400;
         const theta = Math.random() * Math.PI * 2;
@@ -138,6 +140,7 @@ const MainLogin = () => {
         const nebulaZ = r * Math.cos(phi);
         
         const target = targets[i % targets.length];
+        const baseHue = hues[Math.floor(Math.random() * hues.length)] + (Math.random() - 0.5) * 15;
         
         particles.push({
           cx: nebulaX,
@@ -158,7 +161,8 @@ const MainLogin = () => {
           amplitude: Math.random() * 3 + 1.5,
           
           size: Math.random() * 1.3 + 0.7,
-          alpha: Math.random() * 0.5 + 0.5
+          alpha: Math.random() * 0.5 + 0.5,
+          baseHue
         });
       }
     };
@@ -171,10 +175,27 @@ const MainLogin = () => {
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Calculate morph progress (morphing smoothly over 3.5 seconds)
-      const elapsed = (Date.now() - startTime) / 3500;
-      const progress = Math.min(1, elapsed);
-      const ease = 1 - Math.pow(1 - progress, 4); // easeOutQuart
+      // Calculate morph loop timeline (9-second cycle)
+      // 0.0s - 2.5s: Morphing to Logo (progress 0 -> 1)
+      // 2.5s - 4.5s: Holding Logo shape (progress 1)
+      // 4.5s - 7.0s: Exploding/Dissolving back to Nebula (progress 1 -> 0)
+      // 7.0s - 9.0s: Holding chaotic Nebula state (progress 0)
+      const cycleTime = (Date.now() - startTime) % 9000;
+      let ease = 0;
+      if (cycleTime < 2500) {
+        const t = cycleTime / 2500;
+        ease = 1 - Math.pow(1 - t, 4); // morph in
+      } else if (cycleTime < 4500) {
+        ease = 1; // hold logo
+      } else if (cycleTime < 7000) {
+        const t = (cycleTime - 4500) / 2500;
+        ease = Math.pow(1 - t, 4); // explode out
+      } else {
+        ease = 0; // hold nebula
+      }
+      
+      // Slow global color spectrum rotation over time
+      const hueOffset = (Date.now() - startTime) * 0.015;
       
       // Auto-rotation increments
       angleY += 0.005;
@@ -232,26 +253,23 @@ const MainLogin = () => {
           projY += (dy / dist) * force;
         }
         
-        // 7. Monochromatic styling mapping depth (z2) to Hue
-        // Depth range: roughly -150 to 150. Normalize to [-1, 1]
+        // 7. Styling mapping depth and dynamic hue offsets
         const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
-        
-        // Hue mapping: violet (265) to cyan (195)
-        const hue = 230 + depthNorm * 35;
+        const pColorHue = Math.round(p.baseHue + hueOffset) % 360;
         const brightness = 75 - (depthNorm + 1) * 15; // Closer is brighter
         
         // 8. Render Bloom (subtle glow layer for closer particles)
         if (depthNorm < 0.2) {
           ctx.beginPath();
           ctx.arc(projX, projY, p.size * scale * 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${hue}, 100%, ${brightness}%, ${p.alpha * 0.12})`;
+          ctx.fillStyle = `hsla(${pColorHue}, 100%, ${brightness}%, ${p.alpha * 0.12})`;
           ctx.fill();
         }
         
         // 9. Draw core particle
         ctx.beginPath();
         ctx.arc(projX, projY, p.size * scale, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${hue}, 100%, ${brightness}%, ${p.alpha * scale * 1.3})`;
+        ctx.fillStyle = `hsla(${pColorHue}, 100%, ${brightness}%, ${p.alpha * scale * 1.3})`;
         ctx.fill();
       });
       
