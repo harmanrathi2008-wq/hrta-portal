@@ -217,6 +217,8 @@ const MainLogin = () => {
         const fov = 400;
         const distance = 280;
         const scale = fov / (fov + z2 + distance);
+        if (scale <= 0 || isNaN(scale)) return; // Clip particles that are behind the camera viewport
+        
         let projX = canvas.width / 2 + x1 * scale * 1.6;
         let projY = canvas.height / 2 + y2 * scale * 1.6;
         
