@@ -278,7 +278,7 @@ export default function ExamInterface() {
           supabase.from("exams").select("*").eq("id", examId).single(),
           supabase
             .from("questions")
-            .select("id, exam_id, type, question_type, text, options, order_index, topic, image_url, positive_marks, negative_marks, status")
+            .select("id, exam_id, question_type, text, options, order_index, topic, image_url, positive_marks, negative_marks, status")
             .eq("exam_id", examId)
             .order("order_index", { ascending: true }),
         ]);
