@@ -857,9 +857,8 @@ const ExamQuestions = () => {
               }
             `}</style>
 
-            {/* Header Banner - HRTA style */}
-            <div className="border-b-2 border-black pb-4 mb-6 flex justify-between items-center">
-              <img src="/assets/emblem.png" alt="Emblem" className="h-16 w-auto object-contain" />
+             {/* Header Banner - HRTA style */}
+            <div className="border-b-2 border-black pb-4 mb-6 flex justify-center items-center">
               <div className="text-center flex-1 px-4">
                 <h2 className="text-[#005fa7] text-2xl font-black uppercase tracking-wide">Harman Rathi Testing Agency</h2>
                 <p className="text-gray-700 font-bold text-xs mt-0.5 uppercase tracking-wider">Excellence in Assessment</p>
@@ -874,7 +873,6 @@ const ExamQuestions = () => {
                   <span>Total Questions: {questions.length}</span>
                 </div>
               </div>
-              <img src="/assets/nta_logo.png" alt="Logo" className="h-12 w-auto object-contain" />
             </div>
 
             {/* General Instructions */}

@@ -425,8 +425,7 @@ const AdminScorecard = () => {
         `}</style>
 
         {/* NTA Scorecard Header */}
-        <div className="border-b-2 border-[#005fa7] pb-4 mb-6 text-center flex justify-between items-center">
-          <img src="/assets/emblem.png" alt="Emblem" className="h-20 w-12 object-contain" />
+        <div className="border-b-2 border-[#005fa7] pb-4 mb-6 text-center flex justify-center items-center">
           <div className="flex-1 px-4">
             <h2 className="text-[#005fa7] text-2xl font-black uppercase tracking-wide">Harman Rathi Testing Agency</h2>
             <p className="text-gray-700 font-bold text-xs mt-0.5 uppercase">Excellence in Assessment</p>
@@ -434,7 +433,6 @@ const AdminScorecard = () => {
               {exam?.title} (Attempt #{attemptNumber}) - OFFICIAL SCORECARD
             </p>
           </div>
-          <img src="/assets/nta_logo.png" alt="Logo" className="h-16 w-auto object-contain" />
         </div>
 
         {/* Candidate Details */}

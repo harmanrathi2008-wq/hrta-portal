@@ -1691,14 +1691,6 @@ export default function ExamInterface() {
           </span>
         </div>
 
-        {/* Center-Right: Ministry of Education Emblem */}
-        <div className="hidden lg:flex items-center space-x-2.5 border-l border-gray-300 pl-6">
-          <img src="/assets/emblem.png" alt="Emblem of India" className="h-10 w-auto object-contain" />
-          <div className="flex flex-col text-left leading-tight">
-            <span className="text-gray-800 font-extrabold text-xs uppercase tracking-wide">Ministry of Education</span>
-            <span className="text-gray-500 font-bold text-[10px]">Government of India</span>
-          </div>
-        </div>
 
       </div>
 

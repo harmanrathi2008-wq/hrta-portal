@@ -722,8 +722,7 @@ const StudentResults = () => {
               `}</style>
 
               {/* NTA Scorecard Header */}
-              <div className="border-b-2 border-[#005fa7] pb-4 mb-6 text-center relative flex justify-between items-center">
-                <img src="/assets/emblem.png" alt="Satyameva Jayate" className="h-20 w-12 object-contain" />
+              <div className="border-b-2 border-[#005fa7] pb-4 mb-6 text-center relative flex justify-center items-center">
                 
                 <div className="flex-1 px-4">
                   <h2 className="text-[#005fa7] text-2xl font-black uppercase tracking-wide">Harman Rathi Testing Agency</h2>
@@ -733,7 +732,6 @@ const StudentResults = () => {
                   </p>
                 </div>
                 
-                <img src="/assets/nta_logo.png" alt="NTA Logo" className="h-16 w-auto object-contain" />
               </div>
 
               {/* Candidate Details Grid */}

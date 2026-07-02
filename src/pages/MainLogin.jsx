@@ -611,9 +611,6 @@ const MainLogin = () => {
               <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider mt-0.5">Department of Higher Education</h2>
             </div>
           </div>
-          <div className="flex items-center space-x-6">
-            <img src="/assets/nta_logo.png" alt="NTA" className="h-14 brightness-115 filter drop-shadow-[0_0_8px_rgba(6,182,212,0.25)]" />
-          </div>
         </div>
       </div>
 
