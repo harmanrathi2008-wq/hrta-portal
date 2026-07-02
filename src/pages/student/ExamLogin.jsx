@@ -186,15 +186,6 @@ export default function ExamLogin() {
             Excellence in Assessment
           </span>
         </div>
-
-        <div className="hidden md:flex items-center space-x-2 border-l border-gray-300 pl-4">
-          <img src="/assets/emblem.png" alt="Emblem of India" className="h-9 w-auto object-contain" />
-          <div className="flex flex-col text-left leading-tight">
-            <span className="text-gray-800 font-extrabold text-[10px] uppercase">Ministry of Education</span>
-            <span className="text-gray-400 font-bold text-[8px]">Government of India</span>
-          </div>
-        </div>
-
       </div>
 
       {/* 3. CANDIDATE VERIFICATION BAR */}
