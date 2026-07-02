@@ -1319,6 +1319,7 @@ export default function ExamInterface() {
     try {
       const userId = sessionStorage.getItem("userId");
       if (!userId) throw new Error("No student session found.");
+      const timerKey = `exam_start_time_${examId}`;
 
       // Automatically commit the current question's active selection if it exists in responses but not yet committed
       const finalCommittedResponses = { ...committedResponses };
