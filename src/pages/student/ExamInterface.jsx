@@ -1700,10 +1700,6 @@ export default function ExamInterface() {
           </div>
         </div>
 
-        {/* Right: Azadi ka Amrit Mahotsav Logo */}
-        <div className="hidden sm:flex items-center border-l border-gray-300 pl-4 md:pl-6 ml-4 md:ml-6">
-          <img src="/assets/amrit.png" alt="Azadi Ka Amrit Mahotsav" className="h-10 md:h-11 w-auto object-contain" />
-        </div>
       </div>
 
       {/* 3. CANDIDATE PROFILE & EXAM SPEC DETAILS BAR */}

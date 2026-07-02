@@ -605,7 +605,7 @@ const MainLogin = () => {
       <div className="bg-transparent border-b border-white/5 z-10 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
           <div className="flex items-center space-x-4">
-            <img src="/assets/emblem.png" alt="Satyameva Jayate" className="h-16 brightness-110 contrast-125" />
+            <img src="/assets/hrta_circle_logo.png" alt="HRTA Logo" className="h-16 brightness-110 contrast-125" />
             <div className="hidden md:block">
               <h1 className="text-cyan-400 font-extrabold text-xl leading-tight uppercase tracking-wide">Harman Rathi Testing Agency</h1>
               <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider mt-0.5">Department of Higher Education</h2>
@@ -613,7 +613,6 @@ const MainLogin = () => {
           </div>
           <div className="flex items-center space-x-6">
             <img src="/assets/nta_logo.png" alt="NTA" className="h-14 brightness-115 filter drop-shadow-[0_0_8px_rgba(6,182,212,0.25)]" />
-            <img src="/assets/amrit.png" alt="Amrit Mahotsav" className="h-12 hidden md:block opacity-60" />
           </div>
         </div>
       </div>

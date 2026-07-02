@@ -195,9 +195,6 @@ export default function ExamLogin() {
           </div>
         </div>
 
-        <div className="flex items-center border-l border-gray-300 pl-4 ml-4">
-          <img src="/assets/amrit.png" alt="Azadi Ka Amrit Mahotsav" className="h-10 w-auto object-contain" />
-        </div>
       </div>
 
       {/* 3. CANDIDATE VERIFICATION BAR */}
