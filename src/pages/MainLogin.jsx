@@ -115,9 +115,32 @@ const MainLogin = () => {
         const linB = (5329 * wt_top + 676 * wt_left + 11881 * wt_bottom + 64516 * wt_right + 54756 * wt_center) / totalWt;
 
         // Convert back to standard sRGB space (Math.sqrt)
-        dot.baseR = Math.sqrt(linR);
-        dot.baseG = Math.sqrt(linG);
-        dot.baseB = Math.sqrt(linB);
+        const baseR = Math.sqrt(linR);
+        const baseG = Math.sqrt(linG);
+        const baseB = Math.sqrt(linB);
+
+        // Convert RGB to HSL coordinates (ignoring base lightness L, as we dynamically pulse L from 35% to 85%)
+        const rNorm = baseR / 255;
+        const gNorm = baseG / 255;
+        const bNorm = baseB / 255;
+        const max = Math.max(rNorm, gNorm, bNorm);
+        const min = Math.min(rNorm, gNorm, bNorm);
+        let h = 0, s = 0;
+        const l = (max + min) / 2;
+
+        if (max !== min) {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case rNorm: h = (gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0); break;
+            case gNorm: h = (bNorm - rNorm) / d + 2; break;
+            case bNorm: h = (rNorm - gNorm) / d + 4; break;
+          }
+          h /= 6;
+        }
+
+        dot.h = h * 360;
+        dot.s = s * 100;
       });
     };
 
@@ -196,23 +219,10 @@ const MainLogin = () => {
           const maxRadiusVal = 5.5;
           const rVal = minRadius + (maxRadiusVal - minRadius) * opacity;
           
-          // Interpolate base color towards Pure White (255, 255, 255) based on wave opacity
-          // Interpolate in Linear space for the white pulse so it remains vibrant!
-          const baseLinR = dot.baseR * dot.baseR;
-          const baseLinG = dot.baseG * dot.baseG;
-          const baseLinB = dot.baseB * dot.baseB;
+          // High-Luminosity Sparkle (No White): Idle L = 35% -> Peak L = 85%
+          const lightness = 35 + 50 * opacity;
           
-          const whiteLin = 255 * 255;
-          
-          const finalLinR = baseLinR + (whiteLin - baseLinR) * opacity;
-          const finalLinG = baseLinG + (whiteLin - baseLinG) * opacity;
-          const finalLinB = baseLinB + (whiteLin - baseLinB) * opacity;
-          
-          const finalR = Math.sqrt(finalLinR);
-          const finalG = Math.sqrt(finalLinG);
-          const finalB = Math.sqrt(finalLinB);
-          
-          ctx.fillStyle = `rgba(${Math.round(finalR)}, ${Math.round(finalG)}, ${Math.round(finalB)}, ${opacity.toFixed(3)})`;
+          ctx.fillStyle = `hsla(${Math.round(dot.h)}, ${Math.round(dot.s)}%, ${Math.round(lightness)}%, ${opacity.toFixed(3)})`;
           ctx.beginPath();
           ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
           ctx.fill();
