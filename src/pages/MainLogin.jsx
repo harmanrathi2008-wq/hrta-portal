@@ -131,23 +131,29 @@ const MainLogin = () => {
         tempCtx.fillStyle = '#000000';
         tempCtx.fillRect(0, 0, 1000, 600);
         
-        // Draw single text item in the center
+        // Draw single text item with stroke and fill for maximum thickness
         tempCtx.fillStyle = '#ffffff';
-        tempCtx.font = t.font || 'bold 36px "Courier New", monospace';
+        tempCtx.strokeStyle = '#ffffff';
+        tempCtx.lineWidth = 3.5;
+        
+        const fontStr = t.font || 'bold 36px "Arial", sans-serif';
+        tempCtx.font = fontStr.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
         tempCtx.textAlign = t.align || 'center';
         tempCtx.textBaseline = 'middle';
-        tempCtx.fillText(t.text, t.x, t.y);
         
-        // Scan active coordinates for this text item
+        tempCtx.fillText(t.text, t.x, t.y);
+        tempCtx.strokeText(t.text, t.x, t.y);
+        
+        // Scan active coordinates for this text item at higher resolution
         const imgData = tempCtx.getImageData(0, 0, 1000, 600);
-        const step = 4;
+        const step = 3;
         for (let y = 0; y < 600; y += step) {
           for (let x = 0; x < 1000; x += step) {
             const index = (y * 1000 + x) * 4;
             if (imgData.data[index] > 128) {
               coords.push({
-                x: (x - 500) * 0.6,
-                y: (y - 300) * 0.6,
+                x: (x - 500) * 0.38,
+                y: (y - 300) * 0.38,
                 z: 0
               });
             }
@@ -165,104 +171,98 @@ const MainLogin = () => {
       const tempCtx = tempCanvas.getContext('2d');
       const coords = [];
 
+      const drawTextHelper = (ctx, text, x, y, font) => {
+        const fontStr = font.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
+        ctx.font = fontStr;
+        ctx.fillText(text, x, y);
+        ctx.strokeText(text, x, y);
+      };
+
       const drawers = [
         // 1. Top Left: ∫ sin(x) dx = -cos(x) + C
         (ctx) => {
-          ctx.font = 'bold 22px "Courier New", monospace';
-          ctx.fillText('∫ sin(x) dx = -cos(x) + C', 280, 100);
+          drawTextHelper(ctx, '∫ sin(x) dx = -cos(x) + C', 280, 100, 'bold 22px "Arial", sans-serif');
         },
         // 2. Top Right: ∫ e^x dx = e^x + C
         (ctx) => {
-          ctx.font = 'bold 22px "Courier New", monospace';
-          ctx.fillText('∫ e^x dx = e^x + C', 720, 100);
+          drawTextHelper(ctx, '∫ e^x dx = e^x + C', 720, 100, 'bold 22px "Arial", sans-serif');
         },
         // 3. Top Center: ∫ 1/x dx = ln|x| + C
         (ctx) => {
-          ctx.font = 'bold 32px "Courier New", monospace';
-          ctx.fillText('∫', 430, 100);
-          ctx.font = 'bold 16px "Courier New", monospace';
-          ctx.fillText('1', 465, 87);
+          drawTextHelper(ctx, '∫', 430, 100, 'bold 32px "Arial", sans-serif');
+          drawTextHelper(ctx, '1', 465, 87, 'bold 16px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(455, 100);
           ctx.lineTo(475, 100);
           ctx.stroke();
-          ctx.fillText('x', 465, 113);
-          ctx.font = 'bold 22px "Courier New", monospace';
-          ctx.fillText('dx = ln|x| + C', 550, 100);
+          drawTextHelper(ctx, 'x', 465, 113, 'bold 16px "Arial", sans-serif');
+          drawTextHelper(ctx, 'dx = ln|x| + C', 550, 100, 'bold 22px "Arial", sans-serif');
         },
         // 4. Main Antiderivative Formula (Middle): ∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C
         (ctx) => {
-          ctx.font = 'bold 55px "Courier New", monospace';
-          ctx.fillText('∫', 280, 230);
-          ctx.font = 'bold 24px "Courier New", monospace';
-          ctx.fillText('1', 345, 200);
+          drawTextHelper(ctx, '∫', 280, 230, 'bold 55px "Arial", sans-serif');
+          drawTextHelper(ctx, '1', 345, 200, 'bold 24px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(315, 230);
           ctx.lineTo(375, 230);
           ctx.stroke();
-          ctx.fillText('x² - a²', 345, 260);
-          ctx.font = 'bold 30px "Courier New", monospace';
-          ctx.fillText('dx  =', 435, 230);
-          ctx.fillText('1', 510, 200);
+          drawTextHelper(ctx, 'x² - a²', 345, 260, 'bold 24px "Arial", sans-serif');
+          drawTextHelper(ctx, 'dx  =', 435, 230, 'bold 30px "Arial", sans-serif');
+          drawTextHelper(ctx, '1', 510, 200, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(490, 230);
           ctx.lineTo(530, 230);
           ctx.stroke();
-          ctx.fillText('2a', 510, 260);
-          ctx.fillText('ln', 570, 230);
+          drawTextHelper(ctx, '2a', 510, 260, 'bold 30px "Arial", sans-serif');
+          drawTextHelper(ctx, 'ln', 570, 230, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(605, 175);
           ctx.lineTo(605, 285);
           ctx.stroke();
-          ctx.fillText('x - a', 660, 200);
+          drawTextHelper(ctx, 'x - a', 660, 200, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(620, 230);
           ctx.lineTo(700, 230);
           ctx.stroke();
-          ctx.fillText('x + a', 660, 260);
+          drawTextHelper(ctx, 'x + a', 660, 260, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(715, 175);
           ctx.lineTo(715, 285);
           ctx.stroke();
-          ctx.fillText('+ C', 765, 230);
+          drawTextHelper(ctx, '+ C', 765, 230, 'bold 30px "Arial", sans-serif');
         },
         // 5. Bottom Formula (Derivative)
         (ctx) => {
-          ctx.font = 'bold 30px "Courier New", monospace';
-          ctx.fillText('d', 240, 390);
+          drawTextHelper(ctx, 'd', 240, 390, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(220, 420);
           ctx.lineTo(260, 420);
           ctx.stroke();
-          ctx.fillText('dx', 240, 450);
-          ctx.font = 'bold 50px "Courier New", monospace';
-          ctx.fillText('[', 285, 415);
-          ctx.font = 'bold 30px "Courier New", monospace';
-          ctx.fillText('ln', 320, 420);
+          drawTextHelper(ctx, 'dx', 240, 450, 'bold 30px "Arial", sans-serif');
+          drawTextHelper(ctx, '[', 285, 415, 'bold 50px "Arial", sans-serif');
+          drawTextHelper(ctx, 'ln', 320, 420, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(350, 365);
           ctx.lineTo(350, 475);
           ctx.stroke();
-          ctx.fillText('x - a', 400, 390);
+          drawTextHelper(ctx, 'x - a', 400, 390, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(365, 420);
           ctx.lineTo(435, 420);
           ctx.stroke();
-          ctx.fillText('x + a', 400, 450);
+          drawTextHelper(ctx, 'x + a', 400, 450, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(450, 365);
           ctx.lineTo(450, 475);
           ctx.stroke();
-          ctx.font = 'bold 50px "Courier New", monospace';
-          ctx.fillText(']', 480, 415);
-          ctx.font = 'bold 30px "Courier New", monospace';
-          ctx.fillText('=', 525, 420);
-          ctx.fillText('2a', 605, 390);
+          drawTextHelper(ctx, ']', 480, 415, 'bold 50px "Arial", sans-serif');
+          drawTextHelper(ctx, '=', 525, 420, 'bold 30px "Arial", sans-serif');
+          drawTextHelper(ctx, '2a', 605, 390, 'bold 30px "Arial", sans-serif');
           ctx.beginPath();
           ctx.moveTo(565, 420);
           ctx.lineTo(645, 420);
           ctx.stroke();
-          ctx.fillText('x² - a²', 605, 450);
+          drawTextHelper(ctx, 'x² - a²', 605, 450, 'bold 30px "Arial", sans-serif');
         }
       ];
 
@@ -271,21 +271,21 @@ const MainLogin = () => {
         tempCtx.fillRect(0, 0, 1000, 600);
         tempCtx.strokeStyle = '#ffffff';
         tempCtx.fillStyle = '#ffffff';
-        tempCtx.lineWidth = 2.5;
+        tempCtx.lineWidth = 3.5;
         tempCtx.textAlign = 'center';
         tempCtx.textBaseline = 'middle';
 
         drawer(tempCtx);
 
         const imgData = tempCtx.getImageData(0, 0, 1000, 600);
-        const step = 4;
+        const step = 3;
         for (let y = 0; y < 600; y += step) {
           for (let x = 0; x < 1000; x += step) {
             const index = (y * 1000 + x) * 4;
             if (imgData.data[index] > 128) {
               coords.push({
-                x: (x - 500) * 0.6,
-                y: (y - 300) * 0.6,
+                x: (x - 500) * 0.38,
+                y: (y - 300) * 0.38,
                 z: 0
               });
             }
@@ -349,16 +349,19 @@ const MainLogin = () => {
       textCtx.fillStyle = '#000000';
       textCtx.fillRect(0, 0, 1100, 600);
       textCtx.fillStyle = '#ffffff';
-      textCtx.font = 'bold 20px "Courier New", monospace';
+      textCtx.strokeStyle = '#ffffff';
+      textCtx.lineWidth = 3.5;
+      textCtx.font = 'bold 20px "Arial", sans-serif';
       textCtx.textAlign = 'center';
       textCtx.textBaseline = 'middle';
       
       const tx = cx + r * 1.45 * Math.cos(topAngle);
       const ty = cy + r * 1.45 * Math.sin(topAngle);
       textCtx.fillText(groupText, tx, ty);
+      textCtx.strokeText(groupText, tx, ty);
       
       const imgData = textCtx.getImageData(0, 0, 1100, 600);
-      const step = 4;
+      const step = 3;
       for (let y = 0; y < 600; y += step) {
         for (let x = 0; x < 1100; x += step) {
           const index = (y * 1100 + x) * 4;
@@ -397,10 +400,10 @@ const MainLogin = () => {
       const coords = [];
 
       const leftBenz = generateAnalyticalBenzene(260, 300, 85, leftGroup);
-      leftBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.58, y: (pt.y - 300) * 0.58, z: 0 }));
+      leftBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.36, y: (pt.y - 300) * 0.36, z: 0 }));
 
       const rightBenz = generateAnalyticalBenzene(840, 300, 85, rightGroup);
-      rightBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.58, y: (pt.y - 300) * 0.58, z: 0 }));
+      rightBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.36, y: (pt.y - 300) * 0.36, z: 0 }));
 
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = 1100;
@@ -423,19 +426,23 @@ const MainLogin = () => {
       tempCtx.lineTo(600, 312);
       tempCtx.stroke();
 
-      tempCtx.font = 'bold 20px "Courier New", monospace';
-      tempCtx.fillText(reagent, 550, 260);
-      
-      tempCtx.font = 'bold 26px "Courier New", monospace';
-      tempCtx.fillText(label, 550, 480);
+      const drawTextHelper = (ctx, text, x, y, font) => {
+        const fontStr = font.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
+        ctx.font = fontStr;
+        ctx.fillText(text, x, y);
+        ctx.strokeText(text, x, y);
+      };
+
+      drawTextHelper(tempCtx, reagent, 550, 260, 'bold 20px "Arial", sans-serif');
+      drawTextHelper(tempCtx, label, 550, 480, 'bold 26px "Arial", sans-serif');
 
       const imgData = tempCtx.getImageData(0, 0, 1100, 600);
-      const step = 4;
+      const step = 3;
       for (let y = 0; y < 600; y += step) {
         for (let x = 0; x < 1100; x += step) {
           const index = (y * 1100 + x) * 4;
           if (imgData.data[index] > 128) {
-            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
+            coords.push({ x: (x - 550) * 0.36, y: (y - 300) * 0.36, z: 0 });
           }
         }
       }
@@ -443,7 +450,7 @@ const MainLogin = () => {
       return coords;
     };
 
-    const calculateConnections = (coords, maxDist = 8.0) => {
+    const calculateConnections = (coords, maxDist = 5.5) => {
       const connections = [];
       const N = coords.length;
       for (let i = 0; i < N; i++) {
@@ -630,7 +637,6 @@ const MainLogin = () => {
         return;
       }
 
-      // Project all active coordinates into 2D screen space
       const projected = [];
       const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
       const scaleMultiplier = 2.45 * sizeFactor;
@@ -638,22 +644,42 @@ const MainLogin = () => {
       const centerY = canvas.height / 2;
 
       activeCoords.forEach((pt) => {
-        // Apply 3D Rotation (Y rotation then X rotation)
-        let x1 = pt.x * Math.cos(ry) - pt.z * Math.sin(ry);
-        let z1 = pt.x * Math.sin(ry) + pt.z * Math.cos(ry);
-        let y2 = pt.y * Math.cos(rx) - z1 * Math.sin(rx);
-        let z2 = pt.y * Math.sin(rx) + z1 * Math.cos(rx);
+        let projX = 0;
+        let projY = 0;
+        let zVal = 0;
 
-        const fov = 400;
-        const distance = 280;
-        const scale = fov / (fov + z2 + distance);
-        if (scale <= 0 || isNaN(scale)) {
-          projected.push(null);
-          return;
+        if (cycleTime < 33000) {
+          // Math, Physics, Chemistry: Render in 100% Flat 2D for perfect legibility!
+          // Apply a gentle 2D floating sway to the entire plane
+          const floatX = Math.sin(timeFactor * 0.4) * 12;
+          const floatY = Math.cos(timeFactor * 0.4) * 12;
+
+          // Gentle 2D mouse slide
+          const mouseSlideX = (mouseX === -1000) ? 0 : (mouseX - canvas.width / 2) * 0.08;
+          const mouseSlideY = (mouseX === -1000) ? 0 : (mouseY - canvas.height / 2) * 0.08;
+
+          projX = centerX + pt.x * scaleMultiplier + floatX + mouseSlideX;
+          projY = centerY + pt.y * scaleMultiplier + floatY + mouseSlideY;
+          zVal = pt.z;
+        } else {
+          // HRTA Logo: Full 3D spinning wireframe
+          let x1 = pt.x * Math.cos(ry) - pt.z * Math.sin(ry);
+          let z1 = pt.x * Math.sin(ry) + pt.z * Math.cos(ry);
+          let y2 = pt.y * Math.cos(rx) - z1 * Math.sin(rx);
+          let z2 = pt.y * Math.sin(rx) + z1 * Math.cos(rx);
+
+          const fov = 400;
+          const distance = 280;
+          const scale = fov / (fov + z2 + distance);
+          if (scale <= 0 || isNaN(scale)) {
+            projected.push(null);
+            return;
+          }
+
+          projX = centerX + x1 * scale * scaleMultiplier;
+          projY = centerY + y2 * scale * scaleMultiplier;
+          zVal = z2;
         }
-
-        let projX = centerX + x1 * scale * scaleMultiplier;
-        let projY = centerY + y2 * scale * scaleMultiplier;
 
         // Fluid Cursor Repulsion
         const dx = projX - mouseX;
@@ -665,7 +691,7 @@ const MainLogin = () => {
           projY += (dy / dist) * force;
         }
 
-        projected.push({ x: projX, y: projY, z: z2, scale });
+        projected.push({ x: projX, y: projY, z: zVal });
       });
 
       // Define HSL colors per phase
