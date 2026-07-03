@@ -46,7 +46,7 @@ const MainLogin = () => {
   }, [activeTab]);
 
 
-  // Professional Micro-Particle AI Flow Background Animation (Ultra-High Performance 144 FPS Engine)
+  // Static Grid Ripple Background Animation (Google AI Studio aesthetic)
   useEffect(() => {
     const canvas = document.getElementById('cosmic-canvas');
     if (!canvas) return;
@@ -54,114 +54,95 @@ const MainLogin = () => {
     if (!ctx) return;
 
     let animationFrameId;
-    const PARTICLE_COUNT = 450;
-    const particles = [];
+    const COLS = 28;
+    const ROWS = 18;
+    const dots = [];
     const startTime = Date.now();
     
     // Mouse interaction states
     let mouseX = -1000;
     let mouseY = -1000;
 
+    // Build the grid structure
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        dots.push({
+          col: c,
+          row: r,
+          x: 0,
+          y: 0
+        });
+      }
+    }
+
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-    };
 
-    // Diagonal flow direction (approx 36 degrees angle flow)
-    const flowAngle = Math.PI / 5;
-    const flowX = Math.cos(flowAngle);
-    const flowY = Math.sin(flowAngle);
+      // Recalculate grid spacing to span the entire viewport perfectly
+      const spacingX = canvas.width / (COLS + 1);
+      const spacingY = canvas.height / (ROWS + 1);
 
-    // Initialize particles uniformly along the flow line so the canvas starts full
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      particles.push({
-        flowDist: Math.random() * 2200 - 400, // distributed along flow length
-        lateralOffset: (Math.random() - 0.5) * window.innerHeight * 1.6, // distributed across width
-        z: (Math.random() - 0.5) * 80, // depth layer offset
-        speed: Math.random() * 0.6 + 1.25, // varying speed for organic overlapping flow
-        baseSize: Math.random() * 1.6 + 2.8,
-        pulseOffset: Math.random() * Math.PI * 2
+      dots.forEach((dot) => {
+        dot.x = (dot.col + 1) * spacingX;
+        dot.y = (dot.row + 1) * spacingY;
       });
-    }
+    };
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
       mouseY = e.clientY;
     };
 
+    const handleMouseLeave = () => {
+      mouseX = -1000;
+      mouseY = -1000;
+    };
+
+    // Smooth origin tracking coordinates
+    let ox = window.innerWidth / 2;
+    let oy = window.innerHeight / 2;
+
     const animate = () => {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // Use screen composite mode for high-end layered graphics look
+      // Use screen composite mode for high-end glowing overlay aesthetic
       ctx.globalCompositeOperation = 'screen';
       
       const elapsed = Date.now() - startTime;
-      const timeFactor = elapsed * 0.0015;
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
+      const timeFactor = elapsed * 0.0012;
       
-      // Max flow distance before recycling
-      const maxDistance = canvas.width * 1.4 + 400;
+      // Track target origin (lerp coordinates for a smooth, high-fidelity cursor lag wave trail)
+      const targetX = mouseX !== -1000 ? mouseX : canvas.width / 2;
+      const targetY = mouseY !== -1000 ? mouseY : canvas.height / 2;
+      ox += (targetX - ox) * 0.08;
+      oy += (targetY - oy) * 0.08;
 
-      particles.forEach((p) => {
-        // Move particle forward constantly along the diagonal path
-        p.flowDist += p.speed;
+      dots.forEach((dot) => {
+        // Distance calculation (Pythagoras) from current ripple origin
+        const dx = dot.x - ox;
+        const dy = dot.y - oy;
+        const d = Math.sqrt(dx * dx + dy * dy);
         
-        // Wrap back to start when off-screen: past particles lost, fresh new ones spawn!
-        if (p.flowDist > maxDistance) {
-          p.flowDist = -400;
-          p.lateralOffset = (Math.random() - 0.5) * canvas.height * 1.6;
-          p.z = (Math.random() - 0.5) * 80;
-          p.speed = Math.random() * 0.6 + 1.25;
-        }
-
-        // Calculate absolute grid positions relative to canvas center
-        const baseX = p.flowDist * flowX - p.lateralOffset * flowY;
-        const baseY = p.flowDist * flowY + p.lateralOffset * flowX - 300; // offset vertically for canvas balance
+        // Circular ripple sine wave calculation (repeating and smooth)
+        const waveVal = Math.sin(d * 0.013 - timeFactor * 4.2);
         
-        // Transverse fluid wave ripples flowing perpendicularly to flow direction
-        const wave = Math.sin(p.flowDist * 0.0075 - timeFactor * 3.5) * 25;
-        let targetX = baseX - wave * flowY;
-        let targetY = baseY + wave * flowX;
+        // Narrow, high-frequency pulse curve (exponent of 7.5 to make wave peaks sharp)
+        const pulse = Math.max(0, Math.pow((waveVal + 1) / 2, 7.5));
         
-        // 3D Depth wave jitter oscillation (Z-axis)
-        const zOffset = Math.cos(p.flowDist * 0.008 - timeFactor * 2.2) * 35;
-        const targetZ = p.z + zOffset;
+        // Distance-Based Scaling (base: 1.1px, wave: 5.2px)
+        const minRadius = 1.1;
+        const maxRadius = 5.2;
+        const rVal = minRadius + (maxRadius - minRadius) * pulse;
         
-        // Gentle HSL lightness breathing shimmer (smooth 68% to 92% transition)
-        const shimmer = Math.sin(p.flowDist * 0.009 - timeFactor * 3.0 + p.pulseOffset) * 0.5 + 0.5;
-        const lightness = 68 + 24 * shimmer;
+        // HSL Lightness breathing: from muted Sky Blue (55%) to Brilliant White (100%)
+        const lightness = 55 + 45 * pulse;
         
-        // Interactive Cursor Repulsion in 2D Space
-        if (mouseX !== -1000) {
-          const diffX = targetX - (mouseX - centerX) * 0.35;
-          const diffY = targetY - (mouseY - centerY) * 0.35;
-          const dist2D = Math.sqrt(diffX * diffX + diffY * diffY);
-          if (dist2D < 110) {
-            const pushForce = (110 - dist2D) / 110 * 20;
-            targetX += (diffX / (dist2D || 1)) * pushForce;
-            targetY += (diffY / (dist2D || 1)) * pushForce;
-          }
-        }
-        
-        // 3D Perspective Projection
-        const fov = 350;
-        const distance = 250;
-        const scale = fov / (fov + targetZ + distance);
-        
-        const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
-        const scaleMultiplier = 2.45 * sizeFactor;
-        
-        const projX = centerX + targetX * scale * scaleMultiplier;
-        const projY = centerY + targetY * scale * scaleMultiplier;
-        
-        // Render as beautiful glowing micro-orbs (circles) scaled by depth
-        const particleSize = Math.max(0.8, p.baseSize * scale * (0.85 + shimmer * 0.3));
-        
-        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.75)`;
+        // Render isolated dot (grid lines are invisible, stroke is disabled)
+        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.8)`;
         ctx.beginPath();
-        ctx.arc(projX, projY, particleSize, 0, Math.PI * 2);
+        ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
         ctx.fill();
       });
       
@@ -171,6 +152,7 @@ const MainLogin = () => {
 
     window.addEventListener('resize', resizeCanvas);
     window.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseleave', handleMouseLeave);
     
     resizeCanvas();
     animate();
@@ -179,6 +161,9 @@ const MainLogin = () => {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', resizeCanvas);
       window.removeEventListener('mousemove', handleMouseMove);
+      if (canvas) {
+        canvas.removeEventListener('mouseleave', handleMouseLeave);
+      }
     };
   }, []);
 
