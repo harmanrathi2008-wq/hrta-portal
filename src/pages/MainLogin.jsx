@@ -81,7 +81,7 @@ const MainLogin = () => {
           gridX,
           gridY,
           z: (Math.random() - 0.5) * 60, // depth layer offset
-          baseSize: 1.5,
+          baseSize: Math.random() * 1.5 + 2.8, // increased base size for more visibility
           wavePhase: gridX * 0.015 + gridY * 0.02
         });
       }
@@ -107,28 +107,38 @@ const MainLogin = () => {
       ctx.globalCompositeOperation = 'screen';
       
       const elapsed = Date.now() - startTime;
-      const cycleTime = elapsed % 18000;
-      const phaseIndex = Math.floor(cycleTime / 4500); // 0, 1, 2, 3
-      const phaseTime = cycleTime % 4500;
-      
       let gridCx = 0;
       let gridCy = 0;
       let isHolding = false;
       let holdProgress = 0;
       
-      if (phaseTime < 3000) {
-        // Hold Phase at Corner: Shimmering sinusoidal vibration
+      if (elapsed < 3000) {
+        // Startup Intro Phase: Sits centered on screen and sways gently
         isHolding = true;
-        holdProgress = phaseTime / 3000;
-        gridCx = corners[phaseIndex].p0.x;
-        gridCy = corners[phaseIndex].p0.y;
+        holdProgress = elapsed / 3000;
+        gridCx = 0;
+        gridCy = 0;
       } else {
-        // Bezier Interpolation Transition Phase
-        const t = (phaseTime - 3000) / 1500;
-        const curve = corners[phaseIndex];
-        const mt = 1 - t;
-        gridCx = mt * mt * curve.p0.x + 2 * mt * t * curve.p1.x + t * t * curve.p2.x;
-        gridCy = mt * mt * curve.p0.y + 2 * mt * t * curve.p1.y + t * t * curve.p2.y;
+        // Normal Corner Hold / Transition Phase
+        const loopElapsed = elapsed - 3000;
+        const cycleTime = loopElapsed % 18000;
+        const phaseIndex = Math.floor(cycleTime / 4500); // 0, 1, 2, 3
+        const phaseTime = cycleTime % 4500;
+        
+        if (phaseTime < 3000) {
+          // Hold Phase at Corner: Shimmering sinusoidal vibration
+          isHolding = true;
+          holdProgress = phaseTime / 3000;
+          gridCx = corners[phaseIndex].p0.x;
+          gridCy = corners[phaseIndex].p0.y;
+        } else {
+          // Bezier Interpolation Transition Phase
+          const t = (phaseTime - 3000) / 1500;
+          const curve = corners[phaseIndex];
+          const mt = 1 - t;
+          gridCx = mt * mt * curve.p0.x + 2 * mt * t * curve.p1.x + t * t * curve.p2.x;
+          gridCy = mt * mt * curve.p0.y + 2 * mt * t * curve.p1.y + t * t * curve.p2.y;
+        }
       }
       
       const timeFactor = elapsed * 0.0015;
@@ -182,11 +192,13 @@ const MainLogin = () => {
         const projX = centerX + targetX * scale * scaleMultiplier;
         const projY = centerY + targetY * scale * scaleMultiplier;
         
-        // Render as dense micro-pixels (no gradients, ultra-low GPU overhead!)
-        const particleSize = Math.max(1, Math.round(p.baseSize * scale * (isHolding ? 1.0 + (vibrationAmp / 4.5) * 0.4 : 1.0)));
+        // Render as beautiful glowing micro-orbs (circles) scaled by depth
+        const particleSize = Math.max(0.8, p.baseSize * scale * (isHolding ? 1.0 + (vibrationAmp / 4.5) * 0.4 : 1.0));
         
-        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.7)`;
-        ctx.fillRect(projX - particleSize / 2, projY - particleSize / 2, particleSize, particleSize);
+        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.75)`;
+        ctx.beginPath();
+        ctx.arc(projX, projY, particleSize, 0, Math.PI * 2);
+        ctx.fill();
       });
       
       ctx.globalCompositeOperation = 'source-over';
