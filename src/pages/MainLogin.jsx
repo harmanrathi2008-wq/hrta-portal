@@ -46,7 +46,7 @@ const MainLogin = () => {
   }, [activeTab]);
 
 
-  // 3D Particle Morphing Animation Effect (Chaotic Nebula to Wireframe Hexagonal Logo)
+  // 3D Particle Morphing Animation Effect (PCM Topics: Math, Physics, Chemistry, and HRTA Logo)
   useEffect(() => {
     const canvas = document.getElementById('cosmic-canvas');
     if (!canvas) return;
@@ -73,12 +73,45 @@ const MainLogin = () => {
       initParticles();
     };
 
+    const generateTextCoords = (textList) => {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 600;
+      tempCanvas.height = 400;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.fillStyle = '#000000';
+      tempCtx.fillRect(0, 0, 600, 400);
+      
+      tempCtx.fillStyle = '#ffffff';
+      
+      textList.forEach(t => {
+        tempCtx.font = t.font || 'bold 18px "Courier New", monospace';
+        tempCtx.textAlign = t.align || 'center';
+        tempCtx.fillText(t.text, t.x, t.y);
+      });
+      
+      const imgData = tempCtx.getImageData(0, 0, 600, 400);
+      const coords = [];
+      for (let y = 0; y < 400; y += 2) {
+        for (let x = 0; x < 600; x += 2) {
+          const index = (y * 600 + x) * 4;
+          if (imgData.data[index] > 128) {
+            coords.push({
+              x: (x - 300) * 0.9,
+              y: (y - 200) * 0.9,
+              z: (Math.random() - 0.5) * 15
+            });
+          }
+        }
+      }
+      return coords;
+    };
+
     const initParticles = () => {
-      const count = 750;
+      const count = 2000;
       particles = [];
       
       // 1. Generate Target Wireframe Geometric Logo (Hexagonal Prism + Concentric Sphere)
-      const targets = [];
+      const logoTargets = [];
       const hexRadius = 145;
       const hexHeight = 65;
       
@@ -90,7 +123,7 @@ const MainLogin = () => {
         bottomVerts.push({ x: hexRadius * Math.cos(angle), y: hexHeight, z: hexRadius * Math.sin(angle) });
       }
       
-      const pointsPerEdge = 25;
+      const pointsPerEdge = 40;
       // Top & Bottom edges
       for (let i = 0; i < 6; i++) {
         const t1 = topVerts[i];
@@ -100,8 +133,8 @@ const MainLogin = () => {
         
         for (let j = 0; j < pointsPerEdge; j++) {
           const r = j / pointsPerEdge;
-          targets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
-          targets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
+          logoTargets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
+          logoTargets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
         }
       }
       // Vertical edges
@@ -110,25 +143,208 @@ const MainLogin = () => {
         const b = bottomVerts[i];
         for (let j = 0; j < pointsPerEdge; j++) {
           const r = j / pointsPerEdge;
-          targets.push({ x: t.x, y: t.y + (b.y - t.y) * r, z: t.z });
+          logoTargets.push({ x: t.x, y: t.y + (b.y - t.y) * r, z: t.z });
         }
       }
       
       // Center concentric sphere core
-      const coreCount = count - targets.length;
+      const coreCount = count - logoTargets.length;
       const sphereRadius = 60;
       for (let i = 0; i < coreCount; i++) {
         const phi = Math.acos(Math.random() * 2 - 1);
         const theta = Math.random() * Math.PI * 2;
-        targets.push({
+        logoTargets.push({
           x: sphereRadius * Math.sin(phi) * Math.cos(theta),
           y: sphereRadius * Math.sin(phi) * Math.sin(theta),
           z: sphereRadius * Math.cos(phi)
         });
       }
 
-      // 2. Initialize particles scattered in a chaotic nebula
-      // Assign each particle a Gemini color seed (0 = Blue, 1 = Red, 2 = Yellow, 3 = Green, 4 = Orange)
+      // 2. Generate Mathematics Targets (Floating integration/differentiation antiderivative formulas)
+      const mathText = [
+        { text: '∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C', x: 300, y: 150, font: 'bold 20px "Courier New", monospace' },
+        { text: 'd/dx [ ln|(x-a)/(x+a)| ] = 2a/(x²-a²)', x: 300, y: 200, font: 'bold 20px "Courier New", monospace' },
+        { text: '∫ sin(x) dx = -cos(x) + C', x: 170, y: 80, font: 'bold 13px "Courier New", monospace' },
+        { text: '∫ e^x dx = e^x + C', x: 430, y: 80, font: 'bold 13px "Courier New", monospace' },
+        { text: '∫ 1/x dx = ln|x| + C', x: 300, y: 280, font: 'bold 15px "Courier New", monospace' }
+      ];
+      
+      const mathCoordsRaw = generateTextCoords(mathText);
+      const mathTargets = [];
+      for (let i = 0; i < count; i++) {
+        const c = mathCoordsRaw[i % mathCoordsRaw.length];
+        mathTargets.push({
+          x: c.x + (Math.random() - 0.5) * 1.5,
+          y: c.y + (Math.random() - 0.5) * 1.5,
+          z: c.z
+        });
+      }
+
+      // 3. Generate Physics Targets (Rotating concentric disc diagram with formulas)
+      const physText = [
+        { text: 'τ = I α', x: 140, y: 100, font: 'bold 24px "Courier New", monospace' },
+        { text: 'L = I ω', x: 460, y: 100, font: 'bold 24px "Courier New", monospace' },
+        { text: 'ROTATING DISC', x: 300, y: 320, font: 'bold 18px "Courier New", monospace' }
+      ];
+      
+      const physTextCoords = generateTextCoords(physText);
+      const physTargets = [];
+      const discCoords = [];
+      const rings = [
+        { r: 40, pts: 100 },
+        { r: 65, pts: 150 },
+        { r: 90, pts: 200 },
+        { r: 115, pts: 250 },
+        { r: 140, pts: 300 }
+      ];
+      rings.forEach(ring => {
+        for (let j = 0; j < ring.pts; j++) {
+          const theta = (j / ring.pts) * Math.PI * 2;
+          discCoords.push({
+            x: ring.r * Math.cos(theta),
+            y: 30 + (Math.random() - 0.5) * 3,
+            z: ring.r * Math.sin(theta)
+          });
+        }
+      });
+      for (let j = 0; j < 150; j++) {
+        const yVal = -130 + j * 1.8;
+        discCoords.push({ x: 0, y: yVal, z: 0 });
+      }
+      for (let j = 0; j < 40; j++) {
+        const phi = (j / 40) * Math.PI * 2;
+        discCoords.push({ x: 10 * Math.cos(phi), y: -120, z: 10 * Math.sin(phi) });
+      }
+      const physCombined = [...physTextCoords, ...discCoords];
+      for (let i = 0; i < count; i++) {
+        const c = physCombined[i % physCombined.length];
+        physTargets.push({
+          x: c.x + (Math.random() - 0.5) * 1.5,
+          y: c.y + (Math.random() - 0.5) * 1.5,
+          z: c.z || 0
+        });
+      }
+
+      // 4. Generate Chemistry Targets (Benzene structure and reaction products: Benzene, Nitrobenzene, Aniline, Phenol)
+      const ringCoords = [];
+      const cx = [];
+      const cy = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI) / 3;
+        cx.push(90 * Math.cos(angle));
+        cy.push(90 * Math.sin(angle));
+      }
+      const bondPoints = 35;
+      for (let i = 0; i < 6; i++) {
+        const x1 = cx[i], y1 = cy[i];
+        const x2 = cx[(i + 1) % 6], y2 = cy[(i + 1) % 6];
+        for (let j = 0; j < bondPoints; j++) {
+          const r = j / bondPoints;
+          ringCoords.push({ x: x1 + (x2 - x1) * r, y: y1 + (y2 - y1) * r - 20, z: 0 });
+        }
+        if (i % 2 === 0) {
+          for (let j = 0; j < bondPoints; j++) {
+            const r = j / bondPoints;
+            ringCoords.push({ x: (x1 + (x2 - x1) * r) * 0.88, y: (y1 + (y2 - y1) * r) * 0.88 - 20, z: 0 });
+          }
+        }
+      }
+      for (let i = 1; i < 6; i++) {
+        const hx = cx[i] * 1.35;
+        const hy = cy[i] * 1.35;
+        for (let j = 0; j < 10; j++) {
+          const r = j / 10;
+          ringCoords.push({ x: cx[i] + (hx - cx[i]) * r, y: cy[i] + (hy - cy[i]) * r - 20, z: 0 });
+        }
+      }
+      
+      const buildChemTargets = (funcGroupCoords, textList) => {
+        const textCoords = generateTextCoords(textList);
+        const combined = [...ringCoords, ...funcGroupCoords, ...textCoords];
+        const res = [];
+        for (let i = 0; i < count; i++) {
+          const c = combined[i % combined.length];
+          res.push({
+            x: c.x + (Math.random() - 0.5) * 1.5,
+            y: c.y + (Math.random() - 0.5) * 1.5,
+            z: c.z || 0
+          });
+        }
+        return res;
+      };
+
+      // Product 0: Benzene (H top)
+      const group0 = [];
+      const h0x = cx[0] * 1.35, h0y = cy[0] * 1.35;
+      for (let j = 0; j < 25; j++) {
+        const r = j / 25;
+        group0.push({ x: cx[0] + (h0x - cx[0]) * r, y: cy[0] + (h0y - cy[0]) * r - 20, z: 0 });
+      }
+      const chemText0 = [
+        { text: 'BENZENE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
+        { text: 'C₆H₆', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
+      ];
+      const chemTargets0 = buildChemTargets(group0, chemText0);
+
+      // Product 1: Nitrobenzene (-NO2)
+      const group1 = [];
+      const n1x = cx[0] * 1.3, n1y = cy[0] * 1.3;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group1.push({ x: cx[0] + (n1x - cx[0]) * r, y: cy[0] + (n1y - cy[0]) * r - 20, z: 0 });
+      }
+      const o1x = n1x + 25, o1y = n1y + 15;
+      const o2x = n1x + 25, o2y = n1y - 15;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group1.push({ x: n1x + (o1x - n1x) * r, y: n1y + (o1y - n1y) * r - 20, z: 0 });
+        group1.push({ x: n1x + (o2x - n1x) * r, y: n1y + (o2y - n1y) * r - 20, z: 0 });
+      }
+      const chemText1 = [
+        { text: 'NITROBENZENE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
+        { text: 'C₆H₅NO₂', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
+      ];
+      const chemTargets1 = buildChemTargets(group1, chemText1);
+
+      // Product 2: Aniline (-NH2)
+      const group2 = [];
+      const n2x = cx[0] * 1.3, n2y = cy[0] * 1.3;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group2.push({ x: cx[0] + (n2x - cx[0]) * r, y: cy[0] + (n2y - cy[0]) * r - 20, z: 0 });
+      }
+      const h1x_ = n2x + 20, h1y_ = n2y + 12, h1z_ = 6;
+      const h2x_ = n2x + 20, h2y_ = n2y - 12, h2z_ = -6;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group2.push({ x: n2x + (h1x_ - n2x) * r, y: n2y + (h1y_ - n2y) * r - 20, z: r * h1z_ });
+        group2.push({ x: n2x + (h2x_ - n2x) * r, y: n2y + (h2y_ - n2y) * r - 20, z: r * h2z_ });
+      }
+      const chemText2 = [
+        { text: 'ANILINE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
+        { text: 'C₆H₅NH₂', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
+      ];
+      const chemTargets2 = buildChemTargets(group2, chemText2);
+
+      // Product 3: Phenol (-OH)
+      const group3 = [];
+      const o3x = cx[0] * 1.3, o3y = cy[0] * 1.3;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group3.push({ x: cx[0] + (o3x - cx[0]) * r, y: cy[0] + (o3y - cy[0]) * r - 20, z: 0 });
+      }
+      const h3x = o3x + 18, h3y = o3y + 10, h3z = 3;
+      for (let j = 0; j < 15; j++) {
+        const r = j / 15;
+        group3.push({ x: o3x + (h3x - o3x) * r, y: o3y + (h3y - o3y) * r - 20, z: r * h3z });
+      }
+      const chemText3 = [
+        { text: 'PHENOL', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
+        { text: 'C₆H₅OH', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
+      ];
+      const chemTargets3 = buildChemTargets(group3, chemText3);
+
+      // Initialize all particles in a scattered nebula, storing targets for all 4 states
       for (let i = 0; i < count; i++) {
         const r = Math.random() * 500 + 400;
         const theta = Math.random() * Math.PI * 2;
@@ -138,7 +354,6 @@ const MainLogin = () => {
         const nebulaY = r * Math.sin(phi) * Math.sin(theta);
         const nebulaZ = r * Math.cos(phi);
         
-        const target = targets[i % targets.length];
         const colorSeed = Math.floor(Math.random() * 5);
         
         particles.push({
@@ -150,9 +365,21 @@ const MainLogin = () => {
           nebulaY,
           nebulaZ,
           
-          logoX: target.x,
-          logoY: target.y,
-          logoZ: target.z,
+          logoX: logoTargets[i].x,
+          logoY: logoTargets[i].y,
+          logoZ: logoTargets[i].z,
+          
+          mathX: mathTargets[i].x,
+          mathY: mathTargets[i].y,
+          mathZ: mathTargets[i].z,
+          
+          physX: physTargets[i].x,
+          physY: physTargets[i].y,
+          physZ: physTargets[i].z,
+          
+          chemX: [chemTargets0[i].x, chemTargets1[i].x, chemTargets2[i].x, chemTargets3[i].x],
+          chemY: [chemTargets0[i].y, chemTargets1[i].y, chemTargets2[i].y, chemTargets3[i].y],
+          chemZ: [chemTargets0[i].z, chemTargets1[i].z, chemTargets2[i].z, chemTargets3[i].z],
           
           phaseX: Math.random() * Math.PI * 2,
           phaseY: Math.random() * Math.PI * 2,
@@ -174,29 +401,28 @@ const MainLogin = () => {
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Calculate morph loop timeline (9-second cycle)
-      // 0.0s - 2.5s: Morphing to Logo (progress 0 -> 1)
-      // 2.5s - 4.5s: Holding Logo shape (progress 1)
-      // 4.5s - 7.0s: Exploding/Dissolving back to Nebula (progress 1 -> 0)
-      // 7.0s - 9.0s: Holding chaotic Nebula state (progress 0)
-      const cycleTime = (Date.now() - startTime) % 9000;
+      // Calculate morph loop timeline (44-second cycle)
+      // Each phase is 11 seconds long:
+      // - 0s to 2.5s: Morph in (ease 0 -> 1)
+      // - 2.5s to 9.5s: Hold shape (ease 1, 7 seconds hold)
+      // - 9.5s to 11s: Dissolve/explode out (ease 1 -> 0)
+      const cycleTime = (Date.now() - startTime) % 44000;
+      const phaseTime = cycleTime % 11000;
+      
       let ease = 0;
-      if (cycleTime < 2500) {
-        const t = cycleTime / 2500;
+      if (phaseTime < 2500) {
+        const t = phaseTime / 2500;
         ease = 1 - Math.pow(1 - t, 4); // morph in
-      } else if (cycleTime < 4500) {
-        ease = 1; // hold logo
-      } else if (cycleTime < 7000) {
-        const t = (cycleTime - 4500) / 2500;
-        ease = Math.pow(1 - t, 4); // explode out
+      } else if (phaseTime < 9500) {
+        ease = 1; // hold shape (7 seconds stable hold)
       } else {
-        ease = 0; // hold nebula
+        const t = (phaseTime - 9500) / 1500;
+        ease = Math.pow(1 - t, 4); // dissolve out
       }
       
-      // Dynamic Gemini color rotation index over time
       const timeFactor = (Date.now() - startTime) * 0.0018;
       
-      // Auto-rotation increments
+      // Auto-rotation
       angleY += 0.005;
       angleX += 0.002;
       
@@ -210,39 +436,75 @@ const MainLogin = () => {
       const ry = currentRotY + angleY;
       
       particles.forEach((p) => {
-        // 1. High frequency fluid vibrations
+        // High frequency vibrations
         p.phaseX += p.phaseSpeed;
         p.phaseY += p.phaseSpeed;
         const vibX = Math.sin(p.phaseX) * p.amplitude;
         const vibY = Math.cos(p.phaseY) * p.amplitude;
         const vibZ = Math.sin(p.phaseX + p.phaseY) * p.amplitude;
         
-        // 2. Interpolate base coordinate from nebula to logo
-        p.cx = p.nebulaX + (p.logoX - p.nebulaX) * ease;
-        p.cy = p.nebulaY + (p.logoY - p.nebulaY) * ease;
-        p.cz = p.nebulaZ + (p.logoZ - p.nebulaZ) * ease;
+        // Select target coordinates based on active phase
+        let targetX = 0;
+        let targetY = 0;
+        let targetZ = 0;
         
-        // 3. Coordinate translation with noise
+        if (cycleTime < 11000) {
+          // Phase 1: Math (Integration Formulas)
+          targetX = p.mathX;
+          targetY = p.mathY;
+          targetZ = p.mathZ;
+        } else if (cycleTime < 22000) {
+          // Phase 2: Physics (Rotating Disc Diagram)
+          targetX = p.physX;
+          targetY = p.physY;
+          targetZ = p.physZ;
+        } else if (cycleTime < 33000) {
+          // Phase 3: Chemistry (Benzene Reaction Products Loop)
+          // Cycle through Benzene -> Nitrobenzene -> Aniline -> Phenol inside the 7-second hold
+          const holdElapsed = Math.max(0, phaseTime - 2500); // 0 to 7000ms
+          let subPhase = 0;
+          if (phaseTime < 2500) {
+            subPhase = 0; // Morphing in starts as Benzene
+          } else if (phaseTime >= 9500) {
+            subPhase = 3; // Dissolving out finishes as Phenol
+          } else {
+            subPhase = Math.min(3, Math.floor(holdElapsed / 1750));
+          }
+          targetX = p.chemX[subPhase];
+          targetY = p.chemY[subPhase];
+          targetZ = p.chemZ[subPhase];
+        } else {
+          // Phase 4: HRTA Agency Logo
+          targetX = p.logoX;
+          targetY = p.logoY;
+          targetZ = p.logoZ;
+        }
+        
+        // Interpolate base coordinates
+        p.cx = p.nebulaX + (targetX - p.nebulaX) * ease;
+        p.cy = p.nebulaY + (targetY - p.nebulaY) * ease;
+        p.cz = p.nebulaZ + (targetZ - p.nebulaZ) * ease;
+        
         const nx = p.cx + vibX;
         const ny = p.cy + vibY;
         const nz = p.cz + vibZ;
         
-        // 4. Apply 3D Rotation (Y rotation then X rotation)
+        // Apply 3D Rotation (Y rotation then X rotation)
         let x1 = nx * Math.cos(ry) - nz * Math.sin(ry);
         let z1 = nx * Math.sin(ry) + nz * Math.cos(ry);
         let y2 = ny * Math.cos(rx) - z1 * Math.sin(rx);
         let z2 = ny * Math.sin(rx) + z1 * Math.cos(rx);
         
-        // 5. 3D Perspective Projection
+        // 3D Perspective Projection
         const fov = 400;
         const distance = 280;
         const scale = fov / (fov + z2 + distance);
-        if (scale <= 0 || isNaN(scale)) return; // Clip particles that are behind the camera viewport
+        if (scale <= 0 || isNaN(scale)) return;
         
         let projX = canvas.width / 2 + x1 * scale * 1.6;
         let projY = canvas.height / 2 + y2 * scale * 1.6;
         
-        // 6. Fluid Cursor Repulsion
+        // Fluid Cursor Repulsion
         const dx = projX - mouseX;
         const dy = projY - mouseY;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -252,41 +514,62 @@ const MainLogin = () => {
           projY += (dy / dist) * force;
         }
         
-        // 7. Spatial Gemini color mapping based on current rotated coordinates (x1, y2, z2)
-        // This keeps Red/Orange at the top, Green at the bottom, Blue at corners, and Yellow/Orange inside
-        const radXZ = Math.sqrt(x1 * x1 + z1 * z1);
-        const wave = Math.sin((Date.now() - startTime) * 0.0025 + x1 * 0.04) * 4;
-        
+        // Define color schemes per phase
         let hue = 217;
         let sat = 89;
         let light = 61;
         
-        if (y2 < -20 + wave) {
-          // Upper part: Red with little bit of Orange
-          if (x1 > 30) {
-            hue = 26; sat = 96; light = 54; // Orange
+        if (cycleTime < 11000) {
+          // Math Phase: Glowing Neon Cyan & Blue
+          const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
+          if (x1 + wave > 0) {
+            hue = 188; sat = 95; light = 55; // Neon Cyan
           } else {
-            hue = 5; sat = 81; light = 56; // Red
+            hue = 210; sat = 90; light = 50; // Electric Blue
           }
-        } else if (y2 > 20 + wave) {
-          // Down part: Green
-          hue = 136; sat = 53; light = 45; // Green
-        } else if (radXZ > 90 + wave) {
-          // Corners/Sides: Blue
-          hue = 217; sat = 89; light = 61; // Blue
-        } else {
-          // Central core: Yellow/Orange
-          if (z1 > 15) {
-            hue = 26; sat = 96; light = 54; // Orange
+        } else if (cycleTime < 22000) {
+          // Physics Phase: Glowing Rotational Red & Gold
+          const wave = Math.sin(timeFactor + y2 * 0.03) * 15;
+          if (y2 + wave < 0) {
+            hue = 5; sat = 85; light = 55; // Laser Red
           } else {
-            hue = 45; sat = 96; light = 50; // Yellow
+            hue = 32; sat = 95; light = 52; // Golden Orange
+          }
+        } else if (cycleTime < 33000) {
+          // Chemistry Phase: Glowing Organic Green & Acid Yellow
+          const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
+          if (x1 + wave > 0) {
+            hue = 135; sat = 75; light = 48; // Acid Green
+          } else {
+            hue = 50; sat = 95; light = 50; // Yellow
+          }
+        } else {
+          // HRTA Logo Phase: Full Gemini color blend
+          const radXZ = Math.sqrt(x1 * x1 + z1 * z1);
+          const wave = Math.sin(timeFactor * 1.3 + x1 * 0.04) * 4;
+          if (y2 < -20 + wave) {
+            if (x1 > 30) {
+              hue = 26; sat = 96; light = 54;
+            } else {
+              hue = 5; sat = 81; light = 56;
+            }
+          } else if (y2 > 20 + wave) {
+            hue = 136; sat = 53; light = 45;
+          } else if (radXZ > 90 + wave) {
+            hue = 217; sat = 89; light = 61;
+          } else {
+            if (z1 > 15) {
+              hue = 26; sat = 96; light = 54;
+            } else {
+              hue = 45; sat = 96; light = 50;
+            }
           }
         }
         
         const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
-        const brightness = Math.max(20, Math.min(95, light - (depthNorm + 1) * 12)); // Depth shading
+        const brightness = Math.max(20, Math.min(95, light - (depthNorm + 1) * 12));
         
-        // 8. Render Bloom (subtle glow layer for closer particles)
+        // Render Bloom (Subtle glow backplate)
         if (depthNorm < 0.2) {
           ctx.beginPath();
           ctx.arc(projX, projY, p.size * scale * 3.5, 0, Math.PI * 2);
@@ -294,7 +577,7 @@ const MainLogin = () => {
           ctx.fill();
         }
         
-        // 9. Draw core particle
+        // Draw core particle
         ctx.beginPath();
         ctx.arc(projX, projY, p.size * scale, 0, Math.PI * 2);
         ctx.fillStyle = `hsla(${hue}, ${sat}%, ${brightness}%, ${p.alpha * scale * 1.3})`;
