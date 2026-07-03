@@ -519,12 +519,25 @@ const MainLogin = () => {
         const scale = fov / (fov + z2 + distance);
         if (scale <= 0 || isNaN(scale)) return;
         
-        // Responsive Scaling: Make it large on desktop (x2.1), auto-scale down on smaller viewports
+        // Responsive Scaling: Make it large on desktop (x2.45), auto-scale down on smaller viewports
+        const isDesktop = canvas.width >= 1024;
         const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
-        const scaleMultiplier = 2.2 * sizeFactor;
+        const scaleMultiplier = 2.45 * sizeFactor;
         
-        let projX = canvas.width / 2 + x1 * scale * scaleMultiplier;
-        let projY = canvas.height / 2 + y2 * scale * scaleMultiplier;
+        // Shift projection center: left-shifted on desktop to sit directly behind the left instruction card
+        // Shifted upwards on mobile to float in the empty space above the login form
+        let centerX = canvas.width / 2;
+        let centerY = canvas.height / 2;
+        if (isDesktop) {
+          centerX = canvas.width * 0.32;
+        } else if (canvas.width < 768) {
+          centerY = canvas.height * 0.25; // float above login card on mobile
+        } else {
+          centerX = canvas.width * 0.3; // tablet
+        }
+        
+        let projX = centerX + x1 * scale * scaleMultiplier;
+        let projY = centerY + y2 * scale * scaleMultiplier;
         
         // Fluid Cursor Repulsion
         const dx = projX - mouseX;
@@ -545,25 +558,25 @@ const MainLogin = () => {
           // Math Phase: Glowing Neon Cyan & Blue
           const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
           if (x1 + wave > 0) {
-            hue = 188; sat = 95; light = 55; // Neon Cyan
+            hue = 188; sat = 95; light = 58; // Neon Cyan
           } else {
-            hue = 210; sat = 90; light = 50; // Electric Blue
+            hue = 210; sat = 95; light = 55; // Electric Blue
           }
         } else if (cycleTime < 22000) {
           // Physics Phase: Glowing Rotational Red & Gold
           const wave = Math.sin(timeFactor + y2 * 0.03) * 15;
           if (y2 + wave < 0) {
-            hue = 5; sat = 85; light = 55; // Laser Red
+            hue = 5; sat = 95; light = 58; // Laser Red
           } else {
-            hue = 32; sat = 95; light = 52; // Golden Orange
+            hue = 32; sat = 95; light = 55; // Golden Orange
           }
         } else if (cycleTime < 33000) {
           // Chemistry Phase: Glowing Organic Green & Acid Yellow
           const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
           if (x1 + wave > 0) {
-            hue = 135; sat = 75; light = 48; // Acid Green
+            hue = 135; sat = 85; light = 52; // Acid Green
           } else {
-            hue = 50; sat = 95; light = 50; // Yellow
+            hue = 52; sat = 95; light = 54; // Yellow
           }
         } else {
           // HRTA Logo Phase: Full Gemini color blend
@@ -588,21 +601,20 @@ const MainLogin = () => {
           }
         }
         
-        const depthNorm = Math.max(-1, Math.min(1, z2 / 150));
-        const brightness = Math.max(20, Math.min(95, light - (depthNorm + 1) * 12));
+        // Solid, thick visibility adjustments
+        const baseSizeMultiplier = cycleTime >= 33000 ? 1.0 : 1.6;
+        const particleSize = p.size * scale * 2.8 * baseSizeMultiplier;
         
         // Render Bloom (Subtle glow backplate)
-        if (depthNorm < 0.2) {
-          ctx.beginPath();
-          ctx.arc(projX, projY, p.size * scale * 3.5, 0, Math.PI * 2);
-          ctx.fillStyle = `hsla(${hue}, ${sat}%, ${brightness}%, ${p.alpha * 0.12})`;
-          ctx.fill();
-        }
-        
-        // Draw core particle
         ctx.beginPath();
-        ctx.arc(projX, projY, p.size * scale, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${brightness}%, ${p.alpha * scale * 1.3})`;
+        ctx.arc(projX, projY, particleSize * 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${p.alpha * scale * 0.28})`;
+        ctx.fill();
+        
+        // Draw core particle (Bright neon glow core)
+        ctx.beginPath();
+        ctx.arc(projX, projY, particleSize, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light + 10}%, ${p.alpha * scale * 1.8})`;
         ctx.fill();
       });
       
@@ -950,7 +962,7 @@ const MainLogin = () => {
         
         {/* LEFT COLUMN - INSTRUCTIONS (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-7/12 space-y-6">
-          <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-[#0c1017]/50 border border-white/10 backdrop-blur-md rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-transparent text-white px-5 py-4 border-b border-white/5 font-bold uppercase tracking-wide text-xs flex justify-between items-center">
               <span>Steps to Apply Online</span>
               <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded text-[10px] font-black uppercase">HRTA 2026</span>
@@ -993,7 +1005,7 @@ const MainLogin = () => {
 
         {/* RIGHT COLUMN - LOGIN BOX (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-5/12">
-          <div className="bg-transparent border border-white/5 shadow-2xl rounded-2xl overflow-hidden">
+          <div className="bg-[#0c1017]/70 border border-white/10 backdrop-blur-md shadow-2xl rounded-2xl overflow-hidden">
             
             {/* Form Header */}
             <div className="bg-transparent text-white text-center py-4 border-b border-white/5 font-bold text-base uppercase tracking-wider">
