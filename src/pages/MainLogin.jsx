@@ -46,7 +46,7 @@ const MainLogin = () => {
   }, [activeTab]);
 
 
-  // 3D Particle Morphing Animation Effect (PCM Topics: Math, Physics, Chemistry, and HRTA Logo)
+  // 3D Bioluminescent Particle Wave Flow Background Animation (Highly Optimized Sprite-based Canvas)
   useEffect(() => {
     const canvas = document.getElementById('cosmic-canvas');
     if (!canvas) return;
@@ -54,498 +54,70 @@ const MainLogin = () => {
     if (!ctx) return;
 
     let animationFrameId;
-    let particles = []; // Pool for falling sparks during dissolve phase
-    let sparksPopulated = false;
+    const PARTICLE_COUNT = 450;
+    const particles = [];
     const startTime = Date.now();
     
-    // Rotation angles for auto sway & mouse hover
-    let angleX = 0;
-    let angleY = 0;
-    
-    // Mouse coords
+    // Mouse interaction states
     let mouseX = -1000;
     let mouseY = -1000;
-    let currentRotX = 0;
-    let currentRotY = 0;
 
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
     };
 
-    const drawBenzene = (tempCtx, cx, cy, r, groupText = 'H') => {
-      // Draw hexagon
-      tempCtx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const angle = (i * Math.PI) / 3 - Math.PI / 2;
-        const x = cx + r * Math.cos(angle);
-        const y = cy + r * Math.sin(angle);
-        if (i === 0) tempCtx.moveTo(x, y);
-        else tempCtx.lineTo(x, y);
+    // Pre-render radial gradient sprites on offscreen canvases for 100% lag-free performance!
+    const createGlowSprite = (color, size = 64) => {
+      const spriteCanvas = document.createElement('canvas');
+      spriteCanvas.width = size;
+      spriteCanvas.height = size;
+      const sCtx = spriteCanvas.getContext('2d');
+      const center = size / 2;
+      
+      const grad = sCtx.createRadialGradient(center, center, 0, center, center, center);
+      
+      if (color === 'cyan') {
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.22, 'rgba(0, 255, 235, 0.9)');
+        grad.addColorStop(0.55, 'rgba(0, 180, 255, 0.22)');
+        grad.addColorStop(1, 'rgba(0, 180, 255, 0)');
+      } else if (color === 'magenta') {
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.22, 'rgba(255, 0, 128, 0.9)');
+        grad.addColorStop(0.55, 'rgba(180, 0, 128, 0.22)');
+        grad.addColorStop(1, 'rgba(180, 0, 128, 0)');
+      } else { // blue-white-hot core
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.18, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.42, 'rgba(0, 100, 255, 0.7)');
+        grad.addColorStop(0.72, 'rgba(0, 50, 200, 0.18)');
+        grad.addColorStop(1, 'rgba(0, 50, 200, 0)');
       }
-      tempCtx.closePath();
-      tempCtx.stroke();
-
-      // Draw inner alternating double bonds
-      for (let i = 0; i < 6; i += 2) {
-        const angle1 = (i * Math.PI) / 3 - Math.PI / 2;
-        const angle2 = ((i + 1) * Math.PI) / 3 - Math.PI / 2;
-        tempCtx.beginPath();
-        tempCtx.moveTo(cx + r * 0.82 * Math.cos(angle1), cy + r * 0.82 * Math.sin(angle1));
-        tempCtx.lineTo(cx + r * 0.82 * Math.cos(angle2), cy + r * 0.82 * Math.sin(angle2));
-        tempCtx.stroke();
-      }
-
-      // Draw outer hydrogen links (5 corners)
-      for (let i = 1; i < 6; i++) {
-        const angle = (i * Math.PI) / 3 - Math.PI / 2;
-        tempCtx.beginPath();
-        tempCtx.moveTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
-        tempCtx.lineTo(cx + r * 1.25 * Math.cos(angle), cy + r * 1.25 * Math.sin(angle));
-        tempCtx.stroke();
-      }
-
-      // Draw functional group bond at top corner (angle -PI/2)
-      const topAngle = -Math.PI / 2;
-      const tx = cx + r * Math.cos(topAngle);
-      const ty = cy + r * Math.sin(topAngle);
-      tempCtx.beginPath();
-      tempCtx.moveTo(tx, ty);
-      tempCtx.lineTo(cx + r * 1.25 * Math.cos(topAngle), cy + r * 1.25 * Math.sin(topAngle));
-      tempCtx.stroke();
-
-      // Render functional group text
-      tempCtx.font = 'bold 20px "Courier New", monospace';
-      tempCtx.fillText(groupText, cx + r * 1.45 * Math.cos(topAngle), cy + r * 1.45 * Math.sin(topAngle));
+      
+      sCtx.fillStyle = grad;
+      sCtx.fillRect(0, 0, size, size);
+      return spriteCanvas;
     };
 
-    const generateTextCoords = (textList) => {
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 1000;
-      tempCanvas.height = 600;
-      const tempCtx = tempCanvas.getContext('2d');
-      const coords = [];
-      
-      textList.forEach(t => {
-        // Clear offscreen canvas
-        tempCtx.fillStyle = '#000000';
-        tempCtx.fillRect(0, 0, 1000, 600);
-        
-        // Draw single text item with stroke and fill for maximum thickness
-        tempCtx.fillStyle = '#ffffff';
-        tempCtx.strokeStyle = '#ffffff';
-        tempCtx.lineWidth = 3.5;
-        
-        const fontStr = t.font || 'bold 36px "Arial", sans-serif';
-        tempCtx.font = fontStr.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
-        tempCtx.textAlign = t.align || 'center';
-        tempCtx.textBaseline = 'middle';
-        
-        tempCtx.fillText(t.text, t.x, t.y);
-        tempCtx.strokeText(t.text, t.x, t.y);
-        
-        // Scan active coordinates for this text item at higher resolution
-        const imgData = tempCtx.getImageData(0, 0, 1000, 600);
-        const step = 3;
-        for (let y = 0; y < 600; y += step) {
-          for (let x = 0; x < 1000; x += step) {
-            const index = (y * 1000 + x) * 4;
-            if (imgData.data[index] > 128) {
-              coords.push({
-                x: (x - 500) * 0.38,
-                y: (y - 300) * 0.38,
-                z: 0
-              });
-            }
-          }
-        }
+    const spriteCyan = createGlowSprite('cyan');
+    const spriteMagenta = createGlowSprite('magenta');
+    const spriteBlue = createGlowSprite('blue');
+
+    // Populate particles in 3D depth space
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const colorType = Math.random() < 0.45 ? 'cyan' : (Math.random() < 0.82 ? 'magenta' : 'blue');
+      particles.push({
+        x: (Math.random() - 0.5) * window.innerWidth * 1.5,
+        y: Math.random() * window.innerHeight * 1.2 - 100,
+        z: (Math.random() - 0.5) * 400,
+        speedY: Math.random() * 0.7 + 0.3,
+        baseRadius: Math.random() * 8 + 3.5,
+        wavePhase: Math.random() * Math.PI * 2,
+        colorType,
+        pulseOffset: Math.random() * Math.PI * 2
       });
-      
-      return coords;
-    };
-
-    const generateMathTargets = () => {
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 1000;
-      tempCanvas.height = 600;
-      const tempCtx = tempCanvas.getContext('2d');
-      const coords = [];
-
-      const drawTextHelper = (ctx, text, x, y, font) => {
-        const fontStr = font.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
-        ctx.font = fontStr;
-        ctx.fillText(text, x, y);
-        ctx.strokeText(text, x, y);
-      };
-
-      const drawers = [
-        // 1. Top Left: ∫ sin(x) dx = -cos(x) + C
-        (ctx) => {
-          drawTextHelper(ctx, '∫ sin(x) dx = -cos(x) + C', 280, 100, 'bold 22px "Arial", sans-serif');
-        },
-        // 2. Top Right: ∫ e^x dx = e^x + C
-        (ctx) => {
-          drawTextHelper(ctx, '∫ e^x dx = e^x + C', 720, 100, 'bold 22px "Arial", sans-serif');
-        },
-        // 3. Top Center: ∫ 1/x dx = ln|x| + C
-        (ctx) => {
-          drawTextHelper(ctx, '∫', 430, 100, 'bold 32px "Arial", sans-serif');
-          drawTextHelper(ctx, '1', 465, 87, 'bold 16px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(455, 100);
-          ctx.lineTo(475, 100);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x', 465, 113, 'bold 16px "Arial", sans-serif');
-          drawTextHelper(ctx, 'dx = ln|x| + C', 550, 100, 'bold 22px "Arial", sans-serif');
-        },
-        // 4. Main Antiderivative Formula (Middle): ∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C
-        (ctx) => {
-          drawTextHelper(ctx, '∫', 280, 230, 'bold 55px "Arial", sans-serif');
-          drawTextHelper(ctx, '1', 345, 200, 'bold 24px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(315, 230);
-          ctx.lineTo(375, 230);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x² - a²', 345, 260, 'bold 24px "Arial", sans-serif');
-          drawTextHelper(ctx, 'dx  =', 435, 230, 'bold 30px "Arial", sans-serif');
-          drawTextHelper(ctx, '1', 510, 200, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(490, 230);
-          ctx.lineTo(530, 230);
-          ctx.stroke();
-          drawTextHelper(ctx, '2a', 510, 260, 'bold 30px "Arial", sans-serif');
-          drawTextHelper(ctx, 'ln', 570, 230, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(605, 175);
-          ctx.lineTo(605, 285);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x - a', 660, 200, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(620, 230);
-          ctx.lineTo(700, 230);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x + a', 660, 260, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(715, 175);
-          ctx.lineTo(715, 285);
-          ctx.stroke();
-          drawTextHelper(ctx, '+ C', 765, 230, 'bold 30px "Arial", sans-serif');
-        },
-        // 5. Bottom Formula (Derivative)
-        (ctx) => {
-          drawTextHelper(ctx, 'd', 240, 390, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(220, 420);
-          ctx.lineTo(260, 420);
-          ctx.stroke();
-          drawTextHelper(ctx, 'dx', 240, 450, 'bold 30px "Arial", sans-serif');
-          drawTextHelper(ctx, '[', 285, 415, 'bold 50px "Arial", sans-serif');
-          drawTextHelper(ctx, 'ln', 320, 420, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(350, 365);
-          ctx.lineTo(350, 475);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x - a', 400, 390, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(365, 420);
-          ctx.lineTo(435, 420);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x + a', 400, 450, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(450, 365);
-          ctx.lineTo(450, 475);
-          ctx.stroke();
-          drawTextHelper(ctx, ']', 480, 415, 'bold 50px "Arial", sans-serif');
-          drawTextHelper(ctx, '=', 525, 420, 'bold 30px "Arial", sans-serif');
-          drawTextHelper(ctx, '2a', 605, 390, 'bold 30px "Arial", sans-serif');
-          ctx.beginPath();
-          ctx.moveTo(565, 420);
-          ctx.lineTo(645, 420);
-          ctx.stroke();
-          drawTextHelper(ctx, 'x² - a²', 605, 450, 'bold 30px "Arial", sans-serif');
-        }
-      ];
-
-      drawers.forEach(drawer => {
-        tempCtx.fillStyle = '#000000';
-        tempCtx.fillRect(0, 0, 1000, 600);
-        tempCtx.strokeStyle = '#ffffff';
-        tempCtx.fillStyle = '#ffffff';
-        tempCtx.lineWidth = 3.5;
-        tempCtx.textAlign = 'center';
-        tempCtx.textBaseline = 'middle';
-
-        drawer(tempCtx);
-
-        const imgData = tempCtx.getImageData(0, 0, 1000, 600);
-        const step = 3;
-        for (let y = 0; y < 600; y += step) {
-          for (let x = 0; x < 1000; x += step) {
-            const index = (y * 1000 + x) * 4;
-            if (imgData.data[index] > 128) {
-              coords.push({
-                x: (x - 500) * 0.38,
-                y: (y - 300) * 0.38,
-                z: 0
-              });
-            }
-          }
-        }
-      });
-
-      return coords;
-    };
-
-    const generateAnalyticalBenzene = (cx, cy, r, groupText = 'H') => {
-      const coords = [];
-      const segments = [];
-      
-      const vertices = [];
-      for (let i = 0; i < 6; i++) {
-        const angle = (i * Math.PI) / 3 - Math.PI / 2;
-        vertices.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
-      }
-      
-      for (let i = 0; i < 6; i++) {
-        segments.push({ p1: vertices[i], p2: vertices[(i + 1) % 6] });
-      }
-      
-      for (let i = 0; i < 6; i += 2) {
-        const angle1 = (i * Math.PI) / 3 - Math.PI / 2;
-        const angle2 = ((i + 1) * Math.PI) / 3 - Math.PI / 2;
-        const d1 = { x: cx + r * 0.82 * Math.cos(angle1), y: cy + r * 0.82 * Math.sin(angle1) };
-        const d2 = { x: cx + r * 0.82 * Math.cos(angle2), y: cy + r * 0.82 * Math.sin(angle2) };
-        segments.push({ p1: d1, p2: d2 });
-      }
-      
-      for (let i = 1; i < 6; i++) {
-        const angle = (i * Math.PI) / 3 - Math.PI / 2;
-        const p1 = { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
-        const p2 = { x: cx + r * 1.25 * Math.cos(angle), y: cy + r * 1.25 * Math.sin(angle) };
-        segments.push({ p1, p2 });
-      }
-      
-      const topAngle = -Math.PI / 2;
-      const p1 = { x: cx + r * Math.cos(topAngle), y: cy + r * Math.sin(topAngle) };
-      const p2 = { x: cx + r * 1.25 * Math.cos(topAngle), y: cy + r * 1.25 * Math.sin(topAngle) };
-      segments.push({ p1, p2 });
-
-      const ptsPerSegment = 20;
-      segments.forEach(seg => {
-        for (let j = 0; j <= ptsPerSegment; j++) {
-          const t = j / ptsPerSegment;
-          coords.push({
-            x: seg.p1.x + (seg.p2.x - seg.p1.x) * t,
-            y: seg.p1.y + (seg.p2.y - seg.p1.y) * t,
-            z: 0
-          });
-        }
-      });
-
-      const textCanvas = document.createElement('canvas');
-      textCanvas.width = 1100;
-      textCanvas.height = 600;
-      const textCtx = textCanvas.getContext('2d');
-      textCtx.fillStyle = '#000000';
-      textCtx.fillRect(0, 0, 1100, 600);
-      textCtx.fillStyle = '#ffffff';
-      textCtx.strokeStyle = '#ffffff';
-      textCtx.lineWidth = 3.5;
-      textCtx.font = 'bold 20px "Arial", sans-serif';
-      textCtx.textAlign = 'center';
-      textCtx.textBaseline = 'middle';
-      
-      const tx = cx + r * 1.45 * Math.cos(topAngle);
-      const ty = cy + r * 1.45 * Math.sin(topAngle);
-      textCtx.fillText(groupText, tx, ty);
-      textCtx.strokeText(groupText, tx, ty);
-      
-      const imgData = textCtx.getImageData(0, 0, 1100, 600);
-      const step = 3;
-      for (let y = 0; y < 600; y += step) {
-        for (let x = 0; x < 1100; x += step) {
-          const index = (y * 1100 + x) * 4;
-          if (imgData.data[index] > 128) {
-            coords.push({ x: x, y: y, z: 0 });
-          }
-        }
-      }
-
-      return coords;
-    };
-
-    const generateChemCoords = (subPhase) => {
-      let leftGroup = 'H';
-      let rightGroup = 'NO₂';
-      let reagent = 'HNO₃ + H₂SO₄';
-      let label = 'BENZENE  ⎯→  NITROBENZENE';
-      
-      if (subPhase === 1) {
-        leftGroup = 'NO₂';
-        rightGroup = 'NH₂';
-        reagent = 'Fe + HCl';
-        label = 'NITROBENZENE  ⎯→  ANILINE';
-      } else if (subPhase === 2) {
-        leftGroup = 'NH₂';
-        rightGroup = 'OH';
-        reagent = 'NaNO₂/HCl, H₂O';
-        label = 'ANILINE  ⎯→  PHENOL';
-      } else if (subPhase === 3) {
-        leftGroup = 'OH';
-        rightGroup = 'H';
-        reagent = 'Reaction Complete';
-        label = 'PHENOL SYNTHESIS';
-      }
-
-      const coords = [];
-
-      const leftBenz = generateAnalyticalBenzene(260, 300, 85, leftGroup);
-      leftBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.36, y: (pt.y - 300) * 0.36, z: 0 }));
-
-      const rightBenz = generateAnalyticalBenzene(840, 300, 85, rightGroup);
-      rightBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.36, y: (pt.y - 300) * 0.36, z: 0 }));
-
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 1100;
-      tempCanvas.height = 600;
-      const tempCtx = tempCanvas.getContext('2d');
-      tempCtx.fillStyle = '#000000';
-      tempCtx.fillRect(0, 0, 1100, 600);
-      
-      tempCtx.strokeStyle = '#ffffff';
-      tempCtx.fillStyle = '#ffffff';
-      tempCtx.lineWidth = 3.5;
-      tempCtx.textAlign = 'center';
-      tempCtx.textBaseline = 'middle';
-      
-      tempCtx.beginPath();
-      tempCtx.moveTo(480, 300);
-      tempCtx.lineTo(620, 300);
-      tempCtx.lineTo(600, 288);
-      tempCtx.moveTo(620, 300);
-      tempCtx.lineTo(600, 312);
-      tempCtx.stroke();
-
-      const drawTextHelper = (ctx, text, x, y, font) => {
-        const fontStr = font.replace(/"Courier New", monospace/g, '"Arial", sans-serif');
-        ctx.font = fontStr;
-        ctx.fillText(text, x, y);
-        ctx.strokeText(text, x, y);
-      };
-
-      drawTextHelper(tempCtx, reagent, 550, 260, 'bold 20px "Arial", sans-serif');
-      drawTextHelper(tempCtx, label, 550, 480, 'bold 26px "Arial", sans-serif');
-
-      const imgData = tempCtx.getImageData(0, 0, 1100, 600);
-      const step = 3;
-      for (let y = 0; y < 600; y += step) {
-        for (let x = 0; x < 1100; x += step) {
-          const index = (y * 1100 + x) * 4;
-          if (imgData.data[index] > 128) {
-            coords.push({ x: (x - 550) * 0.36, y: (y - 300) * 0.36, z: 0 });
-          }
-        }
-      }
-
-      return coords;
-    };
-
-    const calculateConnections = (coords, maxDist = 5.5) => {
-      const connections = [];
-      const N = coords.length;
-      for (let i = 0; i < N; i++) {
-        const p1 = coords[i];
-        for (let j = i + 1; j < N; j++) {
-          const p2 = coords[j];
-          const dx = Math.abs(p1.x - p2.x);
-          const dy = Math.abs(p1.y - p2.y);
-          if (dx <= maxDist && dy <= maxDist) {
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist <= maxDist) {
-              connections.push([i, j]);
-            }
-          }
-        }
-      }
-      return connections;
-    };
-
-    const mathTargets = generateMathTargets();
-    const mathConnections = calculateConnections(mathTargets);
-
-    const physText = [
-      { text: 'τ = I α', x: 220, y: 140, font: 'bold 42px "Courier New", monospace' },
-      { text: 'L = I ω', x: 780, y: 140, font: 'bold 42px "Courier New", monospace' },
-      { text: 'ROTATING DISC', x: 500, y: 480, font: 'bold 28px "Courier New", monospace' }
-    ];
-    const physTextCoords = generateTextCoords(physText);
-    const discCoords = [];
-    const rings = [
-      { r: 40, pts: 100 },
-      { r: 65, pts: 150 },
-      { r: 90, pts: 200 },
-      { r: 115, pts: 250 },
-      { r: 140, pts: 300 }
-    ];
-    rings.forEach(ring => {
-      for (let j = 0; j < ring.pts; j++) {
-        const theta = (j / ring.pts) * Math.PI * 2;
-        discCoords.push({ x: ring.r * Math.cos(theta), y: 30, z: ring.r * Math.sin(theta) });
-      }
-    });
-    for (let j = 0; j < 150; j++) {
-      discCoords.push({ x: 0, y: -130 + j * 1.8, z: 0 });
     }
-    for (let j = 0; j < 40; j++) {
-      const phi = (j / 40) * Math.PI * 2;
-      discCoords.push({ x: 10 * Math.cos(phi), y: -120, z: 10 * Math.sin(phi) });
-    }
-    const physTargets = [...physTextCoords, ...discCoords];
-    const physConnections = calculateConnections(physTargets);
-
-    const chemTargets0 = generateChemCoords(0);
-    const chemTargets1 = generateChemCoords(1);
-    const chemTargets2 = generateChemCoords(2);
-    const chemTargets3 = generateChemCoords(3);
-    const chemConnections0 = calculateConnections(chemTargets0);
-    const chemConnections1 = calculateConnections(chemTargets1);
-    const chemConnections2 = calculateConnections(chemTargets2);
-    const chemConnections3 = calculateConnections(chemTargets3);
-
-    // HRTA Logo targets
-    const logoTargets = [];
-    const hexRadius = 145;
-    const hexHeight = 65;
-    const topVerts = [];
-    const bottomVerts = [];
-    for (let i = 0; i < 6; i++) {
-      const angle = (i * Math.PI) / 3;
-      topVerts.push({ x: hexRadius * Math.cos(angle), y: -hexHeight, z: hexRadius * Math.sin(angle) });
-      bottomVerts.push({ x: hexRadius * Math.cos(angle), y: hexHeight, z: hexRadius * Math.sin(angle) });
-    }
-    const pointsPerEdge = 40;
-    for (let i = 0; i < 6; i++) {
-      const t1 = topVerts[i], t2 = topVerts[(i + 1) % 6];
-      const b1 = bottomVerts[i], b2 = bottomVerts[(i + 1) % 6];
-      for (let j = 0; j < pointsPerEdge; j++) {
-        const r = j / pointsPerEdge;
-        logoTargets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
-        logoTargets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
-      }
-    }
-    for (let i = 0; i < 6; i++) {
-      const t = topVerts[i], b = bottomVerts[i];
-      for (let j = 0; j < pointsPerEdge; j++) {
-        logoTargets.push({ x: t.x, y: t.y + (b.y - t.y) * (j / pointsPerEdge), z: t.z });
-      }
-    }
-    const coreCount = 800;
-    for (let i = 0; i < coreCount; i++) {
-      const phi = Math.acos(Math.random() * 2 - 1);
-      const theta = Math.random() * Math.PI * 2;
-      logoTargets.push({ x: 60 * Math.sin(phi) * Math.cos(theta), y: 60 * Math.sin(phi) * Math.sin(theta), z: 60 * Math.cos(phi) });
-    }
-    const logoConnections = calculateConnections(logoTargets);
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
@@ -553,273 +125,86 @@ const MainLogin = () => {
     };
 
     const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      const cycleTime = (Date.now() - startTime) % 44000;
-      const phaseTime = cycleTime % 11000;
+      // Use screen composite mode for vibrant, additive, overlap glow brightness
+      ctx.globalCompositeOperation = 'screen';
       
-      // Calculate drawing progress:
-      // - 0s to 2.5s: drawing in progress (progress goes 0 -> 1)
-      // - 2.5s to 9.5s: fully drawn (stable hold, progress = 1)
-      // - 9.5s to 11s: dissolve/explode phase
-      let progress = 0;
-      let isDissolve = false;
-      if (phaseTime < 2500) {
-        progress = phaseTime / 2500;
-      } else if (phaseTime < 9500) {
-        progress = 1.0;
-      } else {
-        isDissolve = true;
-        progress = 1.0;
-      }
-
-      const timeFactor = (Date.now() - startTime) * 0.0018;
-
-      // Camera sway/tilt rotations
-      const maxTilt = 0.22;
-      const targetRotX = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseY - canvas.height / 2) * 0.0006));
-      const targetRotY = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseX - canvas.width / 2) * 0.0006));
-      currentRotX += (targetRotX - currentRotX) * 0.05;
-      currentRotY += (targetRotY - currentRotY) * 0.05;
-
-      let rx = currentRotX;
-      let ry = currentRotY;
-
-      if (cycleTime >= 33000) {
-        // HRTA Logo: full spinning 3D logo
-        angleY += 0.005;
-        angleX += 0.002;
-        rx += angleX;
-        ry += angleY;
-      } else {
-        // Subtle sway for math, physics, chemistry
-        rx += Math.sin(timeFactor * 0.4) * 0.06;
-        ry += Math.cos(timeFactor * 0.4) * 0.06;
-      }
-
-      // Choose active coordinate set
-      let activeCoords = [];
-      let activeConnections = [];
-      if (cycleTime < 11000) {
-        activeCoords = mathTargets;
-        activeConnections = mathConnections;
-      } else if (cycleTime < 22000) {
-        activeCoords = physTargets;
-        activeConnections = physConnections;
-      } else if (cycleTime < 33000) {
-        const holdElapsed = Math.max(0, phaseTime - 2500);
-        let subPhase = 0;
-        if (phaseTime < 2500) subPhase = 0;
-        else if (phaseTime >= 9500) subPhase = 3;
-        else subPhase = Math.min(3, Math.floor(holdElapsed / 1750));
-        
-        if (subPhase === 0) {
-          activeCoords = chemTargets0;
-          activeConnections = chemConnections0;
-        } else if (subPhase === 1) {
-          activeCoords = chemTargets1;
-          activeConnections = chemConnections1;
-        } else if (subPhase === 2) {
-          activeCoords = chemTargets2;
-          activeConnections = chemConnections2;
-        } else {
-          activeCoords = chemTargets3;
-          activeConnections = chemConnections3;
-        }
-      } else {
-        activeCoords = logoTargets;
-        activeConnections = logoConnections;
-      }
-
-      const N = activeCoords.length;
-      if (N === 0) {
-        animationFrameId = requestAnimationFrame(animate);
-        return;
-      }
-
-      const projected = [];
-      const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
-      const scaleMultiplier = 2.45 * sizeFactor;
+      const time = (Date.now() - startTime) * 0.0015;
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
-
-      activeCoords.forEach((pt) => {
-        let projX = 0;
-        let projY = 0;
-        let zVal = 0;
-
-        if (cycleTime < 33000) {
-          // Math, Physics, Chemistry: Render in 100% Flat 2D for perfect legibility!
-          // Apply a gentle 2D floating sway to the entire plane
-          const floatX = Math.sin(timeFactor * 0.4) * 12;
-          const floatY = Math.cos(timeFactor * 0.4) * 12;
-
-          // Gentle 2D mouse slide
-          const mouseSlideX = (mouseX === -1000) ? 0 : (mouseX - canvas.width / 2) * 0.08;
-          const mouseSlideY = (mouseX === -1000) ? 0 : (mouseY - canvas.height / 2) * 0.08;
-
-          projX = centerX + pt.x * scaleMultiplier + floatX + mouseSlideX;
-          projY = centerY + pt.y * scaleMultiplier + floatY + mouseSlideY;
-          zVal = pt.z;
-        } else {
-          // HRTA Logo: Full 3D spinning wireframe
-          let x1 = pt.x * Math.cos(ry) - pt.z * Math.sin(ry);
-          let z1 = pt.x * Math.sin(ry) + pt.z * Math.cos(ry);
-          let y2 = pt.y * Math.cos(rx) - z1 * Math.sin(rx);
-          let z2 = pt.y * Math.sin(rx) + z1 * Math.cos(rx);
-
-          const fov = 400;
-          const distance = 280;
-          const scale = fov / (fov + z2 + distance);
-          if (scale <= 0 || isNaN(scale)) {
-            projected.push(null);
-            return;
-          }
-
-          projX = centerX + x1 * scale * scaleMultiplier;
-          projY = centerY + y2 * scale * scaleMultiplier;
-          zVal = z2;
-        }
-
-        // Fluid Cursor Repulsion
-        const dx = projX - mouseX;
-        const dy = projY - mouseY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 110) {
-          const force = (110 - dist) / 110 * 18;
-          projX += (dx / dist) * force;
-          projY += (dy / dist) * force;
-        }
-
-        projected.push({ x: projX, y: projY, z: zVal });
-      });
-
-      // Define HSL colors per phase
-      let hue = 217, sat = 89, light = 61;
-      if (cycleTime < 11000) {
-        hue = 188; sat = 95; light = 58; // Math: Cyan
-      } else if (cycleTime < 22000) {
-        hue = 32; sat = 95; light = 55; // Physics: Gold
-      } else if (cycleTime < 33000) {
-        hue = 135; sat = 85; light = 52; // Chemistry: Green
-      } else {
-        hue = 217; sat = 89; light = 61; // HRTA: Blue
-      }
-
-      // Draw Logic
-      if (!isDissolve) {
-        // Reset spark particles array for next transition
-        sparksPopulated = false;
-        particles = [];
-
-        // Progressively draw the vector lines (one-to-one drawing sequence)
-        const currentLimit = Math.floor(progress * N);
-        
-        // 1. Draw Neon Glow Bloom Line (Thick & Faded)
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = `hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
-        
-        ctx.beginPath();
-        activeConnections.forEach(([i, j]) => {
-          if (i < currentLimit && j < currentLimit) {
-            const p1 = projected[i];
-            const p2 = projected[j];
-            if (p1 && p2 && p1.x !== undefined && p2.x !== undefined) {
-              ctx.moveTo(p1.x, p1.y);
-              ctx.lineTo(p2.x, p2.y);
-            }
-          }
-        });
-        ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, 0.28)`;
-        ctx.lineWidth = 4.2;
-        ctx.stroke();
-
-        // 2. Draw Core Laser Line (Thin & Bright)
-        ctx.beginPath();
-        activeConnections.forEach(([i, j]) => {
-          if (i < currentLimit && j < currentLimit) {
-            const p1 = projected[i];
-            const p2 = projected[j];
-            if (p1 && p2 && p1.x !== undefined && p2.x !== undefined) {
-              ctx.moveTo(p1.x, p1.y);
-              ctx.lineTo(p2.x, p2.y);
-            }
-          }
-        });
-        ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light + 12}%, 0.95)`;
-        ctx.lineWidth = 1.75;
-        ctx.stroke();
-        
-        // Reset shadows to preserve performance
-        ctx.shadowBlur = 0;
-
-        // 3. Draw the drawing tip tracer cursor (pulse neon spark)
-        if (currentLimit > 0 && currentLimit < N) {
-          const tip = projected[currentLimit - 1];
-          if (tip) {
-            // Radial glowing gradient for tracer
-            const grad = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 14);
-            grad.addColorStop(0, '#ffffff');
-            grad.addColorStop(0.2, `hsla(${(hue + 60) % 360}, 100%, 70%, 1)`); // Multicolor gradient tip
-            grad.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${light}%, 0.8)`);
-            grad.addColorStop(1, `hsla(${hue}, ${sat}%, ${light}%, 0)`);
-            
-            ctx.beginPath();
-            ctx.arc(tip.x, tip.y, 14, 0, Math.PI * 2);
-            ctx.fillStyle = grad;
-            ctx.fill();
-
-            // Add core bright tracer particle dot
-            ctx.beginPath();
-            ctx.arc(tip.x, tip.y, 3, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-          }
-        }
-      } else {
-        // Sparks Rain Dissolve Phase (shatters into particles)
-        if (!sparksPopulated) {
-          particles = [];
-          projected.forEach((p, idx) => {
-            if (!p) return;
-            particles.push({
-              x: p.x,
-              y: p.y,
-              vx: (Math.random() - 0.5) * 3,
-              vy: Math.random() * 2 + 0.8, // gravity fall speed
-              alpha: Math.random() * 0.4 + 0.6,
-              size: Math.random() * 1.5 + 0.8,
-              hue,
-              sat,
-              light
-            });
-          });
-          sparksPopulated = true;
-        }
-
-        // Animate & draw falling sparks
-        particles.forEach((p) => {
-          p.x += p.vx;
-          p.y += p.vy;
-          p.vy += 0.08; // gravity acceleration
-          p.alpha -= 0.016; // fade out
-          
-          if (p.alpha > 0) {
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * 2, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light}%, ${p.alpha * 0.28})`;
-            ctx.fill();
-
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light + 10}%, ${p.alpha * 0.85})`;
-            ctx.fill();
-          }
-        });
-      }
       
+      // Pre-compute single frame wave values
+      const globalWaveX = Math.sin(time * 0.3) * 60;
+      const globalWaveZ = Math.cos(time * 0.25) * 40;
+      
+      particles.forEach((p) => {
+        // Continuous downward wave drift
+        p.y += p.speedY;
+        if (p.y > canvas.height + 50) {
+          p.y = -50;
+          p.x = (Math.random() - 0.5) * canvas.width * 1.5;
+          p.z = (Math.random() - 0.5) * 400;
+        }
+        
+        // Dynamic fluid wave distortion
+        const localTimePhase = time * 0.8 + p.wavePhase;
+        const dx = Math.sin(p.y * 0.005 + localTimePhase) * 35 + globalWaveX;
+        const dz = Math.cos(p.y * 0.006 + localTimePhase) * 25 + globalWaveZ;
+        
+        let targetX = p.x + dx;
+        let targetY = p.y;
+        let targetZ = p.z + dz;
+        
+        // Fluid Mouse Repulsion in 3D Space
+        if (mouseX !== -1000) {
+          const diffX = targetX - (mouseX - centerX);
+          const diffY = targetY - (mouseY - centerY);
+          const dist2D = Math.sqrt(diffX * diffX + diffY * diffY);
+          if (dist2D < 180) {
+            const pushForce = (180 - dist2D) / 180 * 45;
+            targetX += (diffX / (dist2D || 1)) * pushForce;
+            targetY += (diffY / (dist2D || 1)) * pushForce;
+          }
+        }
+        
+        // 3D Perspective Projection
+        const fov = 350;
+        const distance = 250;
+        const scale = fov / (fov + targetZ + distance);
+        
+        const projX = centerX + targetX * scale;
+        const projY = targetY * scale;
+        
+        // Center particles pulse to white-hot intensity
+        let sprite = spriteCyan;
+        if (p.colorType === 'magenta') {
+          sprite = spriteMagenta;
+        } else if (p.colorType === 'blue') {
+          sprite = spriteBlue;
+        }
+        
+        const pulse = Math.sin(time * 1.5 + p.pulseOffset) * 0.35 + 0.65;
+        let finalRadius = p.baseRadius * scale * (0.8 + pulse * 0.4);
+        if (finalRadius < 0.5) finalRadius = 0.5;
+        
+        const distFromCenter = Math.abs(projX - centerX);
+        if (distFromCenter < 220) {
+          const centerFactor = (220 - distFromCenter) / 220;
+          const centerPulse = Math.sin(time * 2.5 + p.pulseOffset) * 0.5 + 0.5;
+          if (centerFactor * centerPulse > 0.45) {
+            sprite = spriteBlue;
+            finalRadius *= 1.25;
+          }
+        }
+        
+        // Render pre-rendered gradient sprite (fully GPU hardware accelerated!)
+        const size = finalRadius * 3.8;
+        ctx.drawImage(sprite, projX - size / 2, projY - size / 2, size, size);
+      });
+      
+      ctx.globalCompositeOperation = 'source-over';
       animationFrameId = requestAnimationFrame(animate);
     };
 
