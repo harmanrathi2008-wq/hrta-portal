@@ -158,13 +158,220 @@ const MainLogin = () => {
       return coords;
     };
 
-    const generateChemCoords = (subPhase) => {
+    const generateMathTargets = () => {
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 1100;
+      tempCanvas.width = 1000;
       tempCanvas.height = 600;
       const tempCtx = tempCanvas.getContext('2d');
       const coords = [];
 
+      const drawers = [
+        // 1. Top Left: ∫ sin(x) dx = -cos(x) + C
+        (ctx) => {
+          ctx.font = 'bold 22px "Courier New", monospace';
+          ctx.fillText('∫ sin(x) dx = -cos(x) + C', 280, 100);
+        },
+        // 2. Top Right: ∫ e^x dx = e^x + C
+        (ctx) => {
+          ctx.font = 'bold 22px "Courier New", monospace';
+          ctx.fillText('∫ e^x dx = e^x + C', 720, 100);
+        },
+        // 3. Top Center: ∫ 1/x dx = ln|x| + C
+        (ctx) => {
+          ctx.font = 'bold 32px "Courier New", monospace';
+          ctx.fillText('∫', 430, 100);
+          ctx.font = 'bold 16px "Courier New", monospace';
+          ctx.fillText('1', 465, 87);
+          ctx.beginPath();
+          ctx.moveTo(455, 100);
+          ctx.lineTo(475, 100);
+          ctx.stroke();
+          ctx.fillText('x', 465, 113);
+          ctx.font = 'bold 22px "Courier New", monospace';
+          ctx.fillText('dx = ln|x| + C', 550, 100);
+        },
+        // 4. Main Antiderivative Formula (Middle): ∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C
+        (ctx) => {
+          ctx.font = 'bold 55px "Courier New", monospace';
+          ctx.fillText('∫', 280, 230);
+          ctx.font = 'bold 24px "Courier New", monospace';
+          ctx.fillText('1', 345, 200);
+          ctx.beginPath();
+          ctx.moveTo(315, 230);
+          ctx.lineTo(375, 230);
+          ctx.stroke();
+          ctx.fillText('x² - a²', 345, 260);
+          ctx.font = 'bold 30px "Courier New", monospace';
+          ctx.fillText('dx  =', 435, 230);
+          ctx.fillText('1', 510, 200);
+          ctx.beginPath();
+          ctx.moveTo(490, 230);
+          ctx.lineTo(530, 230);
+          ctx.stroke();
+          ctx.fillText('2a', 510, 260);
+          ctx.fillText('ln', 570, 230);
+          ctx.beginPath();
+          ctx.moveTo(605, 175);
+          ctx.lineTo(605, 285);
+          ctx.stroke();
+          ctx.fillText('x - a', 660, 200);
+          ctx.beginPath();
+          ctx.moveTo(620, 230);
+          ctx.lineTo(700, 230);
+          ctx.stroke();
+          ctx.fillText('x + a', 660, 260);
+          ctx.beginPath();
+          ctx.moveTo(715, 175);
+          ctx.lineTo(715, 285);
+          ctx.stroke();
+          ctx.fillText('+ C', 765, 230);
+        },
+        // 5. Bottom Formula (Derivative)
+        (ctx) => {
+          ctx.font = 'bold 30px "Courier New", monospace';
+          ctx.fillText('d', 240, 390);
+          ctx.beginPath();
+          ctx.moveTo(220, 420);
+          ctx.lineTo(260, 420);
+          ctx.stroke();
+          ctx.fillText('dx', 240, 450);
+          ctx.font = 'bold 50px "Courier New", monospace';
+          ctx.fillText('[', 285, 415);
+          ctx.font = 'bold 30px "Courier New", monospace';
+          ctx.fillText('ln', 320, 420);
+          ctx.beginPath();
+          ctx.moveTo(350, 365);
+          ctx.lineTo(350, 475);
+          ctx.stroke();
+          ctx.fillText('x - a', 400, 390);
+          ctx.beginPath();
+          ctx.moveTo(365, 420);
+          ctx.lineTo(435, 420);
+          ctx.stroke();
+          ctx.fillText('x + a', 400, 450);
+          ctx.beginPath();
+          ctx.moveTo(450, 365);
+          ctx.lineTo(450, 475);
+          ctx.stroke();
+          ctx.font = 'bold 50px "Courier New", monospace';
+          ctx.fillText(']', 480, 415);
+          ctx.font = 'bold 30px "Courier New", monospace';
+          ctx.fillText('=', 525, 420);
+          ctx.fillText('2a', 605, 390);
+          ctx.beginPath();
+          ctx.moveTo(565, 420);
+          ctx.lineTo(645, 420);
+          ctx.stroke();
+          ctx.fillText('x² - a²', 605, 450);
+        }
+      ];
+
+      drawers.forEach(drawer => {
+        tempCtx.fillStyle = '#000000';
+        tempCtx.fillRect(0, 0, 1000, 600);
+        tempCtx.strokeStyle = '#ffffff';
+        tempCtx.fillStyle = '#ffffff';
+        tempCtx.lineWidth = 2.5;
+        tempCtx.textAlign = 'center';
+        tempCtx.textBaseline = 'middle';
+
+        drawer(tempCtx);
+
+        const imgData = tempCtx.getImageData(0, 0, 1000, 600);
+        const step = 4;
+        for (let y = 0; y < 600; y += step) {
+          for (let x = 0; x < 1000; x += step) {
+            const index = (y * 1000 + x) * 4;
+            if (imgData.data[index] > 128) {
+              coords.push({
+                x: (x - 500) * 0.6,
+                y: (y - 300) * 0.6,
+                z: 0
+              });
+            }
+          }
+        }
+      });
+
+      return coords;
+    };
+
+    const generateAnalyticalBenzene = (cx, cy, r, groupText = 'H') => {
+      const coords = [];
+      const segments = [];
+      
+      const vertices = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI) / 3 - Math.PI / 2;
+        vertices.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+      }
+      
+      for (let i = 0; i < 6; i++) {
+        segments.push({ p1: vertices[i], p2: vertices[(i + 1) % 6] });
+      }
+      
+      for (let i = 0; i < 6; i += 2) {
+        const angle1 = (i * Math.PI) / 3 - Math.PI / 2;
+        const angle2 = ((i + 1) * Math.PI) / 3 - Math.PI / 2;
+        const d1 = { x: cx + r * 0.82 * Math.cos(angle1), y: cy + r * 0.82 * Math.sin(angle1) };
+        const d2 = { x: cx + r * 0.82 * Math.cos(angle2), y: cy + r * 0.82 * Math.sin(angle2) };
+        segments.push({ p1: d1, p2: d2 });
+      }
+      
+      for (let i = 1; i < 6; i++) {
+        const angle = (i * Math.PI) / 3 - Math.PI / 2;
+        const p1 = { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+        const p2 = { x: cx + r * 1.25 * Math.cos(angle), y: cy + r * 1.25 * Math.sin(angle) };
+        segments.push({ p1, p2 });
+      }
+      
+      const topAngle = -Math.PI / 2;
+      const p1 = { x: cx + r * Math.cos(topAngle), y: cy + r * Math.sin(topAngle) };
+      const p2 = { x: cx + r * 1.25 * Math.cos(topAngle), y: cy + r * 1.25 * Math.sin(topAngle) };
+      segments.push({ p1, p2 });
+
+      const ptsPerSegment = 20;
+      segments.forEach(seg => {
+        for (let j = 0; j <= ptsPerSegment; j++) {
+          const t = j / ptsPerSegment;
+          coords.push({
+            x: seg.p1.x + (seg.p2.x - seg.p1.x) * t,
+            y: seg.p1.y + (seg.p2.y - seg.p1.y) * t,
+            z: 0
+          });
+        }
+      });
+
+      const textCanvas = document.createElement('canvas');
+      textCanvas.width = 1100;
+      textCanvas.height = 600;
+      const textCtx = textCanvas.getContext('2d');
+      textCtx.fillStyle = '#000000';
+      textCtx.fillRect(0, 0, 1100, 600);
+      textCtx.fillStyle = '#ffffff';
+      textCtx.font = 'bold 20px "Courier New", monospace';
+      textCtx.textAlign = 'center';
+      textCtx.textBaseline = 'middle';
+      
+      const tx = cx + r * 1.45 * Math.cos(topAngle);
+      const ty = cy + r * 1.45 * Math.sin(topAngle);
+      textCtx.fillText(groupText, tx, ty);
+      
+      const imgData = textCtx.getImageData(0, 0, 1100, 600);
+      const step = 4;
+      for (let y = 0; y < 600; y += step) {
+        for (let x = 0; x < 1100; x += step) {
+          const index = (y * 1100 + x) * 4;
+          if (imgData.data[index] > 128) {
+            coords.push({ x: x, y: y, z: 0 });
+          }
+        }
+      }
+
+      return coords;
+    };
+
+    const generateChemCoords = (subPhase) => {
       let leftGroup = 'H';
       let rightGroup = 'NO₂';
       let reagent = 'HNO₃ + H₂SO₄';
@@ -187,41 +394,18 @@ const MainLogin = () => {
         label = 'PHENOL SYNTHESIS';
       }
 
-      // 1. Draw and scan Left Benzene Ring (Reactant)
-      tempCtx.fillStyle = '#000000';
-      tempCtx.fillRect(0, 0, 1100, 600);
-      tempCtx.strokeStyle = '#ffffff';
-      tempCtx.fillStyle = '#ffffff';
-      tempCtx.lineWidth = 3.5;
-      drawBenzene(tempCtx, 260, 300, 85, leftGroup);
-      
-      let imgData = tempCtx.getImageData(0, 0, 1100, 600);
-      let step = 4;
-      for (let y = 0; y < 600; y += step) {
-        for (let x = 0; x < 1100; x += step) {
-          const index = (y * 1100 + x) * 4;
-          if (imgData.data[index] > 128) {
-            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
-          }
-        }
-      }
+      const coords = [];
 
-      // 2. Draw and scan Right Benzene Ring (Product)
-      tempCtx.fillStyle = '#000000';
-      tempCtx.fillRect(0, 0, 1100, 600);
-      drawBenzene(tempCtx, 840, 300, 85, rightGroup);
-      
-      imgData = tempCtx.getImageData(0, 0, 1100, 600);
-      for (let y = 0; y < 600; y += step) {
-        for (let x = 0; x < 1100; x += step) {
-          const index = (y * 600 + x) * 4;
-          if (imgData.data[index] > 128) {
-            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
-          }
-        }
-      }
+      const leftBenz = generateAnalyticalBenzene(260, 300, 85, leftGroup);
+      leftBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.58, y: (pt.y - 300) * 0.58, z: 0 }));
 
-      // 3. Draw and scan Reagent, Arrow, and Bottom Label
+      const rightBenz = generateAnalyticalBenzene(840, 300, 85, rightGroup);
+      rightBenz.forEach(pt => coords.push({ x: (pt.x - 550) * 0.58, y: (pt.y - 300) * 0.58, z: 0 }));
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 1100;
+      tempCanvas.height = 600;
+      const tempCtx = tempCanvas.getContext('2d');
       tempCtx.fillStyle = '#000000';
       tempCtx.fillRect(0, 0, 1100, 600);
       
@@ -231,7 +415,6 @@ const MainLogin = () => {
       tempCtx.textAlign = 'center';
       tempCtx.textBaseline = 'middle';
       
-      // Draw Reaction Arrow in the middle
       tempCtx.beginPath();
       tempCtx.moveTo(480, 300);
       tempCtx.lineTo(620, 300);
@@ -240,15 +423,14 @@ const MainLogin = () => {
       tempCtx.lineTo(600, 312);
       tempCtx.stroke();
 
-      // Draw Reagent Text
       tempCtx.font = 'bold 20px "Courier New", monospace';
       tempCtx.fillText(reagent, 550, 260);
       
-      // Draw Bottom Label
       tempCtx.font = 'bold 26px "Courier New", monospace';
       tempCtx.fillText(label, 550, 480);
 
-      imgData = tempCtx.getImageData(0, 0, 1100, 600);
+      const imgData = tempCtx.getImageData(0, 0, 1100, 600);
+      const step = 4;
       for (let y = 0; y < 600; y += step) {
         for (let x = 0; x < 1100; x += step) {
           const index = (y * 1100 + x) * 4;
@@ -261,15 +443,7 @@ const MainLogin = () => {
       return coords;
     };
 
-    // Target outlines pre-cached
-    const mathText = [
-      { text: '∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C', x: 500, y: 220, font: 'bold 32px "Courier New", monospace' },
-      { text: 'd/dx [ ln|(x-a)/(x+a)| ] = 2a/(x²-a²)', x: 500, y: 300, font: 'bold 32px "Courier New", monospace' },
-      { text: '∫ sin(x) dx = -cos(x) + C', x: 260, y: 120, font: 'bold 22px "Courier New", monospace' },
-      { text: '∫ e^x dx = e^x + C', x: 740, y: 120, font: 'bold 22px "Courier New", monospace' },
-      { text: '∫ 1/x dx = ln|x| + C', x: 500, y: 410, font: 'bold 25px "Courier New", monospace' }
-    ];
-    const mathTargets = generateTextCoords(mathText);
+    const mathTargets = generateMathTargets();
 
     const physText = [
       { text: 'τ = I α', x: 220, y: 140, font: 'bold 42px "Courier New", monospace' },
