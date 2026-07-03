@@ -127,8 +127,8 @@ const MainLogin = () => {
         const h = canvas.height;
         switch (index) {
           case 0: return { x: w * 0.82, y: h * 0.18 }; // TR
-          case 1: return { x: w * 0.82, y: h * 0.82 }; // BR
-          case 2: return { x: w * 0.18, y: h * 0.82 }; // BL
+          case 1: return { x: w * 0.18, y: h * 0.82 }; // BL
+          case 2: return { x: w * 0.82, y: h * 0.82 }; // BR
           case 3: return { x: w * 0.18, y: h * 0.18 }; // TL
           default: return { x: w / 2, y: h / 2 };
         }
@@ -146,6 +146,9 @@ const MainLogin = () => {
 
       // Searchlight bubble radius (about 22% of screen dimension)
       const waveRadius = Math.max(canvas.width, canvas.height) * 0.22;
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const maxScreenDist = Math.sqrt(centerX * centerX + centerY * centerY);
 
       dots.forEach((dot) => {
         // Distance calculation (Pythagoras) from current scanner origin
@@ -165,16 +168,31 @@ const MainLogin = () => {
           const maxRadiusVal = 5.5;
           const rVal = minRadius + (maxRadiusVal - minRadius) * opacity;
           
-          // Shift Color Temperature: Steel Blue hsl(200, 70%, 35%) to Bright White-Blue hsl(200, 100%, 98%)
-          const startL = 35;
-          const targetL = 98;
-          const lightness = startL + (targetL - startL) * opacity;
+          // 1. Static Gradient Mapping across the screen layout (0 = Center, 1 = Corners)
+          const distFromCenter = Math.sqrt((dot.x - centerX) * (dot.x - centerX) + (dot.y - centerY) * (dot.y - centerY));
+          const normDist = Math.min(1.0, distFromCenter / (maxScreenDist * 0.85));
           
-          const startS = 70;
-          const targetS = 100;
-          const saturation = startS + (targetS - startS) * opacity;
+          let baseR, baseG, baseB;
+          if (normDist < 0.5) {
+            // Lerp from Vivid Electric Blue (59, 130, 246) to Deep Violet (139, 92, 246)
+            const tCol = normDist / 0.5;
+            baseR = 59 + (139 - 59) * tCol;
+            baseG = 130 + (92 - 130) * tCol;
+            baseB = 246;
+          } else {
+            // Lerp from Deep Violet (139, 92, 246) to Hot Pink (236, 72, 153)
+            const tCol = (normDist - 0.5) / 0.5;
+            baseR = 139 + (236 - 139) * tCol;
+            baseG = 92 + (72 - 92) * tCol;
+            baseB = 246 + (153 - 246) * tCol;
+          }
           
-          ctx.fillStyle = `hsla(200, ${Math.round(saturation)}%, ${Math.round(lightness)}%, ${opacity.toFixed(3)})`;
+          // 2. Active Pulse Lerp: base color -> Pure White (255, 255, 255) based on wave opacity
+          const finalR = baseR + (255 - baseR) * opacity;
+          const finalG = baseG + (255 - baseG) * opacity;
+          const finalB = baseB + (255 - baseB) * opacity;
+          
+          ctx.fillStyle = `rgba(${Math.round(finalR)}, ${Math.round(finalG)}, ${Math.round(finalB)}, ${opacity.toFixed(3)})`;
           ctx.beginPath();
           ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
           ctx.fill();
