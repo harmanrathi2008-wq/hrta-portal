@@ -517,24 +517,18 @@ const MainLogin = () => {
         const fov = 400;
         const distance = 280;
         const scale = fov / (fov + z2 + distance);
-        if (scale <= 0 || isNaN(scale)) return;
+        if (scale <= 0 || isNaN(scale)) {
+          p.projX = undefined;
+          return;
+        }
         
         // Responsive Scaling: Make it large on desktop (x2.45), auto-scale down on smaller viewports
-        const isDesktop = canvas.width >= 1024;
         const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
         const scaleMultiplier = 2.45 * sizeFactor;
         
-        // Shift projection center: left-shifted on desktop to sit directly behind the left instruction card
-        // Shifted upwards on mobile to float in the empty space above the login form
-        let centerX = canvas.width / 2;
-        let centerY = canvas.height / 2;
-        if (isDesktop) {
-          centerX = canvas.width * 0.32;
-        } else if (canvas.width < 768) {
-          centerY = canvas.height * 0.25; // float above login card on mobile
-        } else {
-          centerX = canvas.width * 0.3; // tablet
-        }
+        // Particle center set horizontally in the center of the screen
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
         
         let projX = centerX + x1 * scale * scaleMultiplier;
         let projY = centerY + y2 * scale * scaleMultiplier;
@@ -601,23 +595,62 @@ const MainLogin = () => {
           }
         }
         
-        // Solid, thick visibility adjustments
-        const baseSizeMultiplier = cycleTime >= 33000 ? 1.0 : 1.6;
-        const particleSize = p.size * scale * 2.8 * baseSizeMultiplier;
-        
-        // Render Bloom (Subtle glow backplate)
-        ctx.beginPath();
-        ctx.arc(projX, projY, particleSize * 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${p.alpha * scale * 0.28})`;
-        ctx.fill();
-        
-        // Draw core particle (Bright neon glow core)
-        ctx.beginPath();
-        ctx.arc(projX, projY, particleSize, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light + 10}%, ${p.alpha * scale * 1.8})`;
-        ctx.fill();
+        // Save values on the particle for drawing
+        p.projX = projX;
+        p.projY = projY;
+        p.scale_temp = scale;
+        p.hue = hue;
+        p.sat = sat;
+        p.light = light;
       });
       
+      // Draw wireframe connecting lines in sequence (CAD blueprint layout)
+      ctx.lineWidth = 0.9;
+      for (let i = 0; i < particles.length - 1; i++) {
+        const p1 = particles[i];
+        const p2 = particles[i + 1];
+        
+        // Skip if either particle is clipped (behind camera)
+        if (p1.projX === undefined || p2.projX === undefined) continue;
+        
+        // Calculate spatial distance between coordinates
+        const dx = p1.cx - p2.cx;
+        const dy = p1.cy - p2.cy;
+        const dz = p1.cz - p2.cz;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        
+        // Only connect if they are close in the target structure (less than 9 units)
+        if (dist < 9) {
+          ctx.beginPath();
+          ctx.moveTo(p1.projX, p1.projY);
+          ctx.lineTo(p2.projX, p2.projY);
+          const hue = Math.round((p1.hue + p2.hue) / 2);
+          const sat = Math.round((p1.sat + p2.sat) / 2);
+          const light = Math.round((p1.light + p2.light) / 2);
+          ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, ${ease * 0.35})`;
+          ctx.stroke();
+        }
+      }
+      
+      // Draw individual particle vertices (smaller and crisp)
+      particles.forEach((p) => {
+        if (p.projX === undefined) return;
+        
+        const baseSizeMultiplier = cycleTime >= 33000 ? 0.95 : 1.35;
+        const particleSize = p.size * p.scale_temp * 1.55 * baseSizeMultiplier;
+        
+        // Soft bloom glow backplate
+        ctx.beginPath();
+        ctx.arc(p.projX, p.projY, particleSize * 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light}%, ${p.alpha * p.scale_temp * 0.22})`;
+        ctx.fill();
+        
+        // Core vertex dot
+        ctx.beginPath();
+        ctx.arc(p.projX, p.projY, particleSize, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light + 10}%, ${p.alpha * p.scale_temp * 1.5})`;
+        ctx.fill();
+      });
       animationFrameId = requestAnimationFrame(animate);
     };
 
@@ -962,7 +995,7 @@ const MainLogin = () => {
         
         {/* LEFT COLUMN - INSTRUCTIONS (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-7/12 space-y-6">
-          <div className="bg-[#0c1017]/50 border border-white/10 backdrop-blur-md rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-[#0c1017]/5 border border-white/5 backdrop-blur-[2px] rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-transparent text-white px-5 py-4 border-b border-white/5 font-bold uppercase tracking-wide text-xs flex justify-between items-center">
               <span>Steps to Apply Online</span>
               <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded text-[10px] font-black uppercase">HRTA 2026</span>
@@ -1005,7 +1038,7 @@ const MainLogin = () => {
 
         {/* RIGHT COLUMN - LOGIN BOX (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-5/12">
-          <div className="bg-[#0c1017]/70 border border-white/10 backdrop-blur-md shadow-2xl rounded-2xl overflow-hidden">
+          <div className="bg-[#0c1017]/5 border border-white/10 backdrop-blur-[2px] shadow-2xl rounded-2xl overflow-hidden">
             
             {/* Form Header */}
             <div className="bg-transparent text-white text-center py-4 border-b border-white/5 font-bold text-base uppercase tracking-wider">
