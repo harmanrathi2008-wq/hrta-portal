@@ -73,6 +73,52 @@ const MainLogin = () => {
       initParticles();
     };
 
+    const drawBenzene = (tempCtx, cx, cy, r, groupText = 'H') => {
+      // Draw hexagon
+      tempCtx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (i * Math.PI) / 3 - Math.PI / 2;
+        const x = cx + r * Math.cos(angle);
+        const y = cy + r * Math.sin(angle);
+        if (i === 0) tempCtx.moveTo(x, y);
+        else tempCtx.lineTo(x, y);
+      }
+      tempCtx.closePath();
+      tempCtx.stroke();
+
+      // Draw inner alternating double bonds
+      for (let i = 0; i < 6; i += 2) {
+        const angle1 = (i * Math.PI) / 3 - Math.PI / 2;
+        const angle2 = ((i + 1) * Math.PI) / 3 - Math.PI / 2;
+        tempCtx.beginPath();
+        tempCtx.moveTo(cx + r * 0.82 * Math.cos(angle1), cy + r * 0.82 * Math.sin(angle1));
+        tempCtx.lineTo(cx + r * 0.82 * Math.cos(angle2), cy + r * 0.82 * Math.sin(angle2));
+        tempCtx.stroke();
+      }
+
+      // Draw outer hydrogen links (5 corners)
+      for (let i = 1; i < 6; i++) {
+        const angle = (i * Math.PI) / 3 - Math.PI / 2;
+        tempCtx.beginPath();
+        tempCtx.moveTo(cx + r * Math.cos(angle), cy + r * Math.sin(angle));
+        tempCtx.lineTo(cx + r * 1.25 * Math.cos(angle), cy + r * 1.25 * Math.sin(angle));
+        tempCtx.stroke();
+      }
+
+      // Draw functional group bond at top corner (angle -PI/2)
+      const topAngle = -Math.PI / 2;
+      const tx = cx + r * Math.cos(topAngle);
+      const ty = cy + r * Math.sin(topAngle);
+      tempCtx.beginPath();
+      tempCtx.moveTo(tx, ty);
+      tempCtx.lineTo(cx + r * 1.25 * Math.cos(topAngle), cy + r * 1.25 * Math.sin(topAngle));
+      tempCtx.stroke();
+
+      // Render group text
+      tempCtx.font = 'bold 12px "Courier New", monospace';
+      tempCtx.fillText(groupText, cx + r * 1.45 * Math.cos(topAngle), cy + r * 1.45 * Math.sin(topAngle));
+    };
+
     const generateTextCoords = (textList) => {
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = 600;
@@ -97,6 +143,82 @@ const MainLogin = () => {
           if (imgData.data[index] > 128) {
             coords.push({
               x: (x - 300) * 0.9,
+              y: (y - 200) * 0.9,
+              z: (Math.random() - 0.5) * 15
+            });
+          }
+        }
+      }
+      return coords;
+    };
+
+    const generateChemCoords = (subPhase) => {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 700;
+      tempCanvas.height = 400;
+      const tempCtx = tempCanvas.getContext('2d');
+      tempCtx.fillStyle = '#000000';
+      tempCtx.fillRect(0, 0, 700, 400);
+      
+      tempCtx.strokeStyle = '#ffffff';
+      tempCtx.fillStyle = '#ffffff';
+      tempCtx.lineWidth = 2.5;
+      tempCtx.textAlign = 'center';
+      tempCtx.textBaseline = 'middle';
+      
+      // Draw Reaction Arrow in the middle
+      tempCtx.beginPath();
+      tempCtx.moveTo(315, 210);
+      tempCtx.lineTo(385, 210);
+      tempCtx.lineTo(375, 202);
+      tempCtx.moveTo(385, 210);
+      tempCtx.lineTo(375, 218);
+      tempCtx.stroke();
+      
+      let leftGroup = 'H';
+      let rightGroup = 'NO₂';
+      let reagent = 'HNO₃ + H₂SO₄';
+      let label = 'BENZENE  ⎯→  NITROBENZENE';
+      
+      if (subPhase === 1) {
+        leftGroup = 'NO₂';
+        rightGroup = 'NH₂';
+        reagent = 'Fe + HCl';
+        label = 'NITROBENZENE  ⎯→  ANILINE';
+      } else if (subPhase === 2) {
+        leftGroup = 'NH₂';
+        rightGroup = 'OH';
+        reagent = 'NaNO₂/HCl, H₂O';
+        label = 'ANILINE  ⎯→  PHENOL';
+      } else if (subPhase === 3) {
+        leftGroup = 'OH';
+        rightGroup = 'H';
+        reagent = 'Reaction Complete';
+        label = 'PHENOL SYNTHESIS';
+      }
+      
+      // Draw Left Benzene Ring (Reactant)
+      drawBenzene(tempCtx, 170, 210, 55, leftGroup);
+      
+      // Draw Right Benzene Ring (Product)
+      drawBenzene(tempCtx, 530, 210, 55, rightGroup);
+      
+      // Draw Reagent Text
+      tempCtx.font = 'bold 13px "Courier New", monospace';
+      tempCtx.fillText(reagent, 350, 185);
+      
+      // Draw Bottom Label
+      tempCtx.font = 'bold 18px "Courier New", monospace';
+      tempCtx.fillText(label, 350, 320);
+      
+      const imgData = tempCtx.getImageData(0, 0, 700, 400);
+      const coords = [];
+      for (let y = 0; y < 400; y += 2) {
+        for (let x = 0; x < 700; x += 2) {
+          const index = (y * 700 + x) * 4;
+          if (imgData.data[index] > 128) {
+            coords.push({
+              x: (x - 350) * 0.9,
               y: (y - 200) * 0.9,
               z: (Math.random() - 0.5) * 15
             });
@@ -225,124 +347,11 @@ const MainLogin = () => {
         });
       }
 
-      // 4. Generate Chemistry Targets (Benzene structure and reaction products: Benzene, Nitrobenzene, Aniline, Phenol)
-      const ringCoords = [];
-      const cx = [];
-      const cy = [];
-      for (let i = 0; i < 6; i++) {
-        const angle = (i * Math.PI) / 3;
-        cx.push(90 * Math.cos(angle));
-        cy.push(90 * Math.sin(angle));
-      }
-      const bondPoints = 35;
-      for (let i = 0; i < 6; i++) {
-        const x1 = cx[i], y1 = cy[i];
-        const x2 = cx[(i + 1) % 6], y2 = cy[(i + 1) % 6];
-        for (let j = 0; j < bondPoints; j++) {
-          const r = j / bondPoints;
-          ringCoords.push({ x: x1 + (x2 - x1) * r, y: y1 + (y2 - y1) * r - 20, z: 0 });
-        }
-        if (i % 2 === 0) {
-          for (let j = 0; j < bondPoints; j++) {
-            const r = j / bondPoints;
-            ringCoords.push({ x: (x1 + (x2 - x1) * r) * 0.88, y: (y1 + (y2 - y1) * r) * 0.88 - 20, z: 0 });
-          }
-        }
-      }
-      for (let i = 1; i < 6; i++) {
-        const hx = cx[i] * 1.35;
-        const hy = cy[i] * 1.35;
-        for (let j = 0; j < 10; j++) {
-          const r = j / 10;
-          ringCoords.push({ x: cx[i] + (hx - cx[i]) * r, y: cy[i] + (hy - cy[i]) * r - 20, z: 0 });
-        }
-      }
-      
-      const buildChemTargets = (funcGroupCoords, textList) => {
-        const textCoords = generateTextCoords(textList);
-        const combined = [...ringCoords, ...funcGroupCoords, ...textCoords];
-        const res = [];
-        for (let i = 0; i < count; i++) {
-          const c = combined[i % combined.length];
-          res.push({
-            x: c.x + (Math.random() - 0.5) * 1.5,
-            y: c.y + (Math.random() - 0.5) * 1.5,
-            z: c.z || 0
-          });
-        }
-        return res;
-      };
-
-      // Product 0: Benzene (H top)
-      const group0 = [];
-      const h0x = cx[0] * 1.35, h0y = cy[0] * 1.35;
-      for (let j = 0; j < 25; j++) {
-        const r = j / 25;
-        group0.push({ x: cx[0] + (h0x - cx[0]) * r, y: cy[0] + (h0y - cy[0]) * r - 20, z: 0 });
-      }
-      const chemText0 = [
-        { text: 'BENZENE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
-        { text: 'C₆H₆', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
-      ];
-      const chemTargets0 = buildChemTargets(group0, chemText0);
-
-      // Product 1: Nitrobenzene (-NO2)
-      const group1 = [];
-      const n1x = cx[0] * 1.3, n1y = cy[0] * 1.3;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group1.push({ x: cx[0] + (n1x - cx[0]) * r, y: cy[0] + (n1y - cy[0]) * r - 20, z: 0 });
-      }
-      const o1x = n1x + 25, o1y = n1y + 15;
-      const o2x = n1x + 25, o2y = n1y - 15;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group1.push({ x: n1x + (o1x - n1x) * r, y: n1y + (o1y - n1y) * r - 20, z: 0 });
-        group1.push({ x: n1x + (o2x - n1x) * r, y: n1y + (o2y - n1y) * r - 20, z: 0 });
-      }
-      const chemText1 = [
-        { text: 'NITROBENZENE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
-        { text: 'C₆H₅NO₂', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
-      ];
-      const chemTargets1 = buildChemTargets(group1, chemText1);
-
-      // Product 2: Aniline (-NH2)
-      const group2 = [];
-      const n2x = cx[0] * 1.3, n2y = cy[0] * 1.3;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group2.push({ x: cx[0] + (n2x - cx[0]) * r, y: cy[0] + (n2y - cy[0]) * r - 20, z: 0 });
-      }
-      const h1x_ = n2x + 20, h1y_ = n2y + 12, h1z_ = 6;
-      const h2x_ = n2x + 20, h2y_ = n2y - 12, h2z_ = -6;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group2.push({ x: n2x + (h1x_ - n2x) * r, y: n2y + (h1y_ - n2y) * r - 20, z: r * h1z_ });
-        group2.push({ x: n2x + (h2x_ - n2x) * r, y: n2y + (h2y_ - n2y) * r - 20, z: r * h2z_ });
-      }
-      const chemText2 = [
-        { text: 'ANILINE', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
-        { text: 'C₆H₅NH₂', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
-      ];
-      const chemTargets2 = buildChemTargets(group2, chemText2);
-
-      // Product 3: Phenol (-OH)
-      const group3 = [];
-      const o3x = cx[0] * 1.3, o3y = cy[0] * 1.3;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group3.push({ x: cx[0] + (o3x - cx[0]) * r, y: cy[0] + (o3y - cy[0]) * r - 20, z: 0 });
-      }
-      const h3x = o3x + 18, h3y = o3y + 10, h3z = 3;
-      for (let j = 0; j < 15; j++) {
-        const r = j / 15;
-        group3.push({ x: o3x + (h3x - o3x) * r, y: o3y + (h3y - o3y) * r - 20, z: r * h3z });
-      }
-      const chemText3 = [
-        { text: 'PHENOL', x: 445, y: 150, font: 'bold 22px "Courier New", monospace' },
-        { text: 'C₆H₅OH', x: 445, y: 190, font: 'bold 18px "Courier New", monospace' }
-      ];
-      const chemTargets3 = buildChemTargets(group3, chemText3);
+      // 4. Generate Chemistry Targets (Reaction sets: Benzene to Nitrobenzene to Aniline to Phenol)
+      const chemTargets0 = generateChemCoords(0);
+      const chemTargets1 = generateChemCoords(1);
+      const chemTargets2 = generateChemCoords(2);
+      const chemTargets3 = generateChemCoords(3);
 
       // Initialize all particles in a scattered nebula, storing targets for all 4 states
       for (let i = 0; i < count; i++) {
@@ -377,9 +386,9 @@ const MainLogin = () => {
           physY: physTargets[i].y,
           physZ: physTargets[i].z,
           
-          chemX: [chemTargets0[i].x, chemTargets1[i].x, chemTargets2[i].x, chemTargets3[i].x],
-          chemY: [chemTargets0[i].y, chemTargets1[i].y, chemTargets2[i].y, chemTargets3[i].y],
-          chemZ: [chemTargets0[i].z, chemTargets1[i].z, chemTargets2[i].z, chemTargets3[i].z],
+          chemX: [chemTargets0[i % chemTargets0.length].x, chemTargets1[i % chemTargets1.length].x, chemTargets2[i % chemTargets2.length].x, chemTargets3[i % chemTargets3.length].x],
+          chemY: [chemTargets0[i % chemTargets0.length].y, chemTargets1[i % chemTargets1.length].y, chemTargets2[i % chemTargets2.length].y, chemTargets3[i % chemTargets3.length].y],
+          chemZ: [chemTargets0[i % chemTargets0.length].z, chemTargets1[i % chemTargets1.length].z, chemTargets2[i % chemTargets2.length].z, chemTargets3[i % chemTargets3.length].z],
           
           phaseX: Math.random() * Math.PI * 2,
           phaseY: Math.random() * Math.PI * 2,
@@ -422,18 +431,27 @@ const MainLogin = () => {
       
       const timeFactor = (Date.now() - startTime) * 0.0018;
       
-      // Auto-rotation
-      angleY += 0.005;
-      angleX += 0.002;
+      // Face-front alignment for reading formulas/diagrams (restrict 3D spin on academic phases)
+      let rx = currentRotX;
+      let ry = currentRotY;
+      
+      if (cycleTime >= 33000) {
+        // HRTA Logo: full spinning 3D logo
+        angleY += 0.005;
+        angleX += 0.002;
+        rx += angleX;
+        ry += angleY;
+      } else {
+        // Math, Physics, Chemistry: Subtle floating sway for front-facing readability
+        rx += Math.sin(timeFactor * 0.5) * 0.08;
+        ry += Math.cos(timeFactor * 0.5) * 0.08;
+      }
       
       // Fluid mouse tilt response
       const targetRotX = (mouseY - canvas.height / 2) * 0.0012;
       const targetRotY = (mouseX - canvas.width / 2) * 0.0012;
       currentRotX += (targetRotX - currentRotX) * 0.05;
       currentRotY += (targetRotY - currentRotY) * 0.05;
-      
-      const rx = currentRotX + angleX;
-      const ry = currentRotY + angleY;
       
       particles.forEach((p) => {
         // High frequency vibrations
@@ -501,8 +519,12 @@ const MainLogin = () => {
         const scale = fov / (fov + z2 + distance);
         if (scale <= 0 || isNaN(scale)) return;
         
-        let projX = canvas.width / 2 + x1 * scale * 1.6;
-        let projY = canvas.height / 2 + y2 * scale * 1.6;
+        // Responsive Scaling: Make it large on desktop (x2.1), auto-scale down on smaller viewports
+        const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
+        const scaleMultiplier = 2.2 * sizeFactor;
+        
+        let projX = canvas.width / 2 + x1 * scale * scaleMultiplier;
+        let projY = canvas.height / 2 + y2 * scale * scaleMultiplier;
         
         // Fluid Cursor Repulsion
         const dx = projX - mouseX;
