@@ -86,6 +86,38 @@ const MainLogin = () => {
       dots.forEach((dot) => {
         dot.x = (dot.col + 1) * spacingX;
         dot.y = (dot.row + 1) * spacingY;
+
+        // Pre-calculate Gemini 5-node mesh gradient base color for this coordinate position
+        const nx = dot.x / canvas.width;
+        const ny = dot.y / canvas.height;
+
+        // Distances from this coordinate to the 5 control nodes in 0.0 - 1.0 UV space
+        const d_top = Math.sqrt((nx - 0.5) * (nx - 0.5) + ny * ny);
+        const d_left = Math.sqrt(nx * nx + (ny - 0.5) * (ny - 0.5));
+        const d_bottom = Math.sqrt((nx - 0.5) * (nx - 0.5) + (ny - 1.0) * (ny - 1.0));
+        const d_right = Math.sqrt((nx - 1.0) * (nx - 1.0) + (ny - 0.5) * (ny - 0.5));
+        const d_center = Math.sqrt((nx - 0.5) * (nx - 0.5) + (ny - 0.5) * (ny - 0.5));
+
+        // Weights: Inverse square distance weighting (Shepard's method)
+        // Add epsilon (0.001) to prevent division by zero at exact node positions
+        const wt_top = 1.0 / (d_top * d_top + 0.001);
+        const wt_left = 1.0 / (d_left * d_left + 0.001);
+        const wt_bottom = 1.0 / (d_bottom * d_bottom + 0.001);
+        const wt_right = 1.0 / (d_right * d_right + 0.001);
+        const wt_center = 2.2 / (d_center * d_center + 0.001); // Center node weight (2.2) keeps rich sky blue dominant
+
+        const totalWt = wt_top + wt_left + wt_bottom + wt_right + wt_center;
+
+        // Interpolation performed in Linear RGB space (value^2) to prevent muddy gray artifacts!
+        // Color values: Red(243, 73, 73), Yellow(242, 191, 26), Green(26, 187, 109), Blue(58, 139, 254), SkyBlue(65, 144, 234)
+        const linR = (59049 * wt_top + 58564 * wt_left + 676 * wt_bottom + 3364 * wt_right + 4225 * wt_center) / totalWt;
+        const linG = (5329 * wt_top + 36481 * wt_left + 34969 * wt_bottom + 19321 * wt_right + 20736 * wt_center) / totalWt;
+        const linB = (5329 * wt_top + 676 * wt_left + 11881 * wt_bottom + 64516 * wt_right + 54756 * wt_center) / totalWt;
+
+        // Convert back to standard sRGB space (Math.sqrt)
+        dot.baseR = Math.sqrt(linR);
+        dot.baseG = Math.sqrt(linG);
+        dot.baseB = Math.sqrt(linB);
       });
     };
 
@@ -146,10 +178,6 @@ const MainLogin = () => {
 
       // Searchlight bubble radius (about 22% of screen dimension)
       const waveRadius = Math.max(canvas.width, canvas.height) * 0.22;
-      const centerX = canvas.width / 2;
-      const centerY = canvas.height / 2;
-      const maxScreenDist = Math.sqrt(centerX * centerX + centerY * centerY);
-
       dots.forEach((dot) => {
         // Distance calculation (Pythagoras) from current scanner origin
         const dx = dot.x - ox;
@@ -168,29 +196,21 @@ const MainLogin = () => {
           const maxRadiusVal = 5.5;
           const rVal = minRadius + (maxRadiusVal - minRadius) * opacity;
           
-          // 1. Static Gradient Mapping across the screen layout (0 = Center, 1 = Corners)
-          const distFromCenter = Math.sqrt((dot.x - centerX) * (dot.x - centerX) + (dot.y - centerY) * (dot.y - centerY));
-          const normDist = Math.min(1.0, distFromCenter / (maxScreenDist * 0.85));
+          // Interpolate base color towards Pure White (255, 255, 255) based on wave opacity
+          // Interpolate in Linear space for the white pulse so it remains vibrant!
+          const baseLinR = dot.baseR * dot.baseR;
+          const baseLinG = dot.baseG * dot.baseG;
+          const baseLinB = dot.baseB * dot.baseB;
           
-          let baseR, baseG, baseB;
-          if (normDist < 0.5) {
-            // Lerp from Vivid Teal/Cyan (6, 182, 212) to Cobalt Blue (59, 130, 246)
-            const tCol = normDist / 0.5;
-            baseR = 6 + (59 - 6) * tCol;
-            baseG = 182 + (130 - 182) * tCol;
-            baseB = 212 + (246 - 212) * tCol;
-          } else {
-            // Lerp from Cobalt Blue (59, 130, 246) to Slate Indigo (99, 102, 241)
-            const tCol = (normDist - 0.5) / 0.5;
-            baseR = 59 + (99 - 59) * tCol;
-            baseG = 130 + (102 - 130) * tCol;
-            baseB = 246 + (241 - 246) * tCol;
-          }
+          const whiteLin = 255 * 255;
           
-          // 2. Active Pulse Lerp: base color -> Pure White (255, 255, 255) based on wave opacity
-          const finalR = baseR + (255 - baseR) * opacity;
-          const finalG = baseG + (255 - baseG) * opacity;
-          const finalB = baseB + (255 - baseB) * opacity;
+          const finalLinR = baseLinR + (whiteLin - baseLinR) * opacity;
+          const finalLinG = baseLinG + (whiteLin - baseLinG) * opacity;
+          const finalLinB = baseLinB + (whiteLin - baseLinB) * opacity;
+          
+          const finalR = Math.sqrt(finalLinR);
+          const finalG = Math.sqrt(finalLinG);
+          const finalB = Math.sqrt(finalLinB);
           
           ctx.fillStyle = `rgba(${Math.round(finalR)}, ${Math.round(finalG)}, ${Math.round(finalB)}, ${opacity.toFixed(3)})`;
           ctx.beginPath();
