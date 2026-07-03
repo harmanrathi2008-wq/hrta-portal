@@ -54,10 +54,11 @@ const MainLogin = () => {
     if (!ctx) return;
 
     let animationFrameId;
-    let particles = [];
+    let particles = []; // Pool for falling sparks during dissolve phase
+    let sparksPopulated = false;
     const startTime = Date.now();
     
-    // Rotation angles
+    // Rotation angles for auto sway & mouse hover
     let angleX = 0;
     let angleY = 0;
     
@@ -70,7 +71,6 @@ const MainLogin = () => {
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
-      initParticles();
     };
 
     const drawBenzene = (tempCtx, cx, cy, r, groupText = 'H') => {
@@ -114,67 +114,57 @@ const MainLogin = () => {
       tempCtx.lineTo(cx + r * 1.25 * Math.cos(topAngle), cy + r * 1.25 * Math.sin(topAngle));
       tempCtx.stroke();
 
-      // Render group text
-      tempCtx.font = 'bold 12px "Courier New", monospace';
+      // Render functional group text
+      tempCtx.font = 'bold 20px "Courier New", monospace';
       tempCtx.fillText(groupText, cx + r * 1.45 * Math.cos(topAngle), cy + r * 1.45 * Math.sin(topAngle));
     };
 
     const generateTextCoords = (textList) => {
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 600;
-      tempCanvas.height = 400;
+      tempCanvas.width = 1000;
+      tempCanvas.height = 600;
       const tempCtx = tempCanvas.getContext('2d');
-      tempCtx.fillStyle = '#000000';
-      tempCtx.fillRect(0, 0, 600, 400);
-      
-      tempCtx.fillStyle = '#ffffff';
+      const coords = [];
       
       textList.forEach(t => {
-        tempCtx.font = t.font || 'bold 18px "Courier New", monospace';
+        // Clear offscreen canvas
+        tempCtx.fillStyle = '#000000';
+        tempCtx.fillRect(0, 0, 1000, 600);
+        
+        // Draw single text item in the center
+        tempCtx.fillStyle = '#ffffff';
+        tempCtx.font = t.font || 'bold 36px "Courier New", monospace';
         tempCtx.textAlign = t.align || 'center';
+        tempCtx.textBaseline = 'middle';
         tempCtx.fillText(t.text, t.x, t.y);
-      });
-      
-      const imgData = tempCtx.getImageData(0, 0, 600, 400);
-      const coords = [];
-      for (let y = 0; y < 400; y += 2) {
-        for (let x = 0; x < 600; x += 2) {
-          const index = (y * 600 + x) * 4;
-          if (imgData.data[index] > 128) {
-            coords.push({
-              x: (x - 300) * 0.9,
-              y: (y - 200) * 0.9,
-              z: 0
-            });
+        
+        // Scan active coordinates for this text item
+        const imgData = tempCtx.getImageData(0, 0, 1000, 600);
+        const step = 4;
+        for (let y = 0; y < 600; y += step) {
+          for (let x = 0; x < 1000; x += step) {
+            const index = (y * 1000 + x) * 4;
+            if (imgData.data[index] > 128) {
+              coords.push({
+                x: (x - 500) * 0.6,
+                y: (y - 300) * 0.6,
+                z: 0
+              });
+            }
           }
         }
-      }
+      });
+      
       return coords;
     };
 
     const generateChemCoords = (subPhase) => {
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 700;
-      tempCanvas.height = 400;
+      tempCanvas.width = 1100;
+      tempCanvas.height = 600;
       const tempCtx = tempCanvas.getContext('2d');
-      tempCtx.fillStyle = '#000000';
-      tempCtx.fillRect(0, 0, 700, 400);
-      
-      tempCtx.strokeStyle = '#ffffff';
-      tempCtx.fillStyle = '#ffffff';
-      tempCtx.lineWidth = 2.5;
-      tempCtx.textAlign = 'center';
-      tempCtx.textBaseline = 'middle';
-      
-      // Draw Reaction Arrow in the middle
-      tempCtx.beginPath();
-      tempCtx.moveTo(315, 210);
-      tempCtx.lineTo(385, 210);
-      tempCtx.lineTo(375, 202);
-      tempCtx.moveTo(385, 210);
-      tempCtx.lineTo(375, 218);
-      tempCtx.stroke();
-      
+      const coords = [];
+
       let leftGroup = 'H';
       let rightGroup = 'NO₂';
       let reagent = 'HNO₃ + H₂SO₄';
@@ -196,211 +186,158 @@ const MainLogin = () => {
         reagent = 'Reaction Complete';
         label = 'PHENOL SYNTHESIS';
       }
+
+      // 1. Draw and scan Left Benzene Ring (Reactant)
+      tempCtx.fillStyle = '#000000';
+      tempCtx.fillRect(0, 0, 1100, 600);
+      tempCtx.strokeStyle = '#ffffff';
+      tempCtx.fillStyle = '#ffffff';
+      tempCtx.lineWidth = 3.5;
+      drawBenzene(tempCtx, 260, 300, 85, leftGroup);
       
-      // Draw Left Benzene Ring (Reactant)
-      drawBenzene(tempCtx, 170, 210, 55, leftGroup);
-      
-      // Draw Right Benzene Ring (Product)
-      drawBenzene(tempCtx, 530, 210, 55, rightGroup);
-      
-      // Draw Reagent Text
-      tempCtx.font = 'bold 13px "Courier New", monospace';
-      tempCtx.fillText(reagent, 350, 185);
-      
-      // Draw Bottom Label
-      tempCtx.font = 'bold 18px "Courier New", monospace';
-      tempCtx.fillText(label, 350, 320);
-      
-      const imgData = tempCtx.getImageData(0, 0, 700, 400);
-      const coords = [];
-      for (let y = 0; y < 400; y += 2) {
-        for (let x = 0; x < 700; x += 2) {
-          const index = (y * 700 + x) * 4;
+      let imgData = tempCtx.getImageData(0, 0, 1100, 600);
+      let step = 4;
+      for (let y = 0; y < 600; y += step) {
+        for (let x = 0; x < 1100; x += step) {
+          const index = (y * 1100 + x) * 4;
           if (imgData.data[index] > 128) {
-            coords.push({
-              x: (x - 350) * 0.9,
-              y: (y - 200) * 0.9,
-              z: 0
-            });
+            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
           }
         }
       }
+
+      // 2. Draw and scan Right Benzene Ring (Product)
+      tempCtx.fillStyle = '#000000';
+      tempCtx.fillRect(0, 0, 1100, 600);
+      drawBenzene(tempCtx, 840, 300, 85, rightGroup);
+      
+      imgData = tempCtx.getImageData(0, 0, 1100, 600);
+      for (let y = 0; y < 600; y += step) {
+        for (let x = 0; x < 1100; x += step) {
+          const index = (y * 600 + x) * 4;
+          if (imgData.data[index] > 128) {
+            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
+          }
+        }
+      }
+
+      // 3. Draw and scan Reagent, Arrow, and Bottom Label
+      tempCtx.fillStyle = '#000000';
+      tempCtx.fillRect(0, 0, 1100, 600);
+      
+      tempCtx.strokeStyle = '#ffffff';
+      tempCtx.fillStyle = '#ffffff';
+      tempCtx.lineWidth = 3.5;
+      tempCtx.textAlign = 'center';
+      tempCtx.textBaseline = 'middle';
+      
+      // Draw Reaction Arrow in the middle
+      tempCtx.beginPath();
+      tempCtx.moveTo(480, 300);
+      tempCtx.lineTo(620, 300);
+      tempCtx.lineTo(600, 288);
+      tempCtx.moveTo(620, 300);
+      tempCtx.lineTo(600, 312);
+      tempCtx.stroke();
+
+      // Draw Reagent Text
+      tempCtx.font = 'bold 20px "Courier New", monospace';
+      tempCtx.fillText(reagent, 550, 260);
+      
+      // Draw Bottom Label
+      tempCtx.font = 'bold 26px "Courier New", monospace';
+      tempCtx.fillText(label, 550, 480);
+
+      imgData = tempCtx.getImageData(0, 0, 1100, 600);
+      for (let y = 0; y < 600; y += step) {
+        for (let x = 0; x < 1100; x += step) {
+          const index = (y * 1100 + x) * 4;
+          if (imgData.data[index] > 128) {
+            coords.push({ x: (x - 550) * 0.58, y: (y - 300) * 0.58, z: 0 });
+          }
+        }
+      }
+
       return coords;
     };
 
-    const initParticles = () => {
-      const count = 2000;
-      particles = [];
-      
-      // 1. Generate Target Wireframe Geometric Logo (Hexagonal Prism + Concentric Sphere)
-      const logoTargets = [];
-      const hexRadius = 145;
-      const hexHeight = 65;
-      
-      const topVerts = [];
-      const bottomVerts = [];
-      for (let i = 0; i < 6; i++) {
-        const angle = (i * Math.PI) / 3;
-        topVerts.push({ x: hexRadius * Math.cos(angle), y: -hexHeight, z: hexRadius * Math.sin(angle) });
-        bottomVerts.push({ x: hexRadius * Math.cos(angle), y: hexHeight, z: hexRadius * Math.sin(angle) });
-      }
-      
-      const pointsPerEdge = 40;
-      // Top & Bottom edges
-      for (let i = 0; i < 6; i++) {
-        const t1 = topVerts[i];
-        const t2 = topVerts[(i + 1) % 6];
-        const b1 = bottomVerts[i];
-        const b2 = bottomVerts[(i + 1) % 6];
-        
-        for (let j = 0; j < pointsPerEdge; j++) {
-          const r = j / pointsPerEdge;
-          logoTargets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
-          logoTargets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
-        }
-      }
-      // Vertical edges
-      for (let i = 0; i < 6; i++) {
-        const t = topVerts[i];
-        const b = bottomVerts[i];
-        for (let j = 0; j < pointsPerEdge; j++) {
-          const r = j / pointsPerEdge;
-          logoTargets.push({ x: t.x, y: t.y + (b.y - t.y) * r, z: t.z });
-        }
-      }
-      
-      // Center concentric sphere core
-      const coreCount = count - logoTargets.length;
-      const sphereRadius = 60;
-      for (let i = 0; i < coreCount; i++) {
-        const phi = Math.acos(Math.random() * 2 - 1);
-        const theta = Math.random() * Math.PI * 2;
-        logoTargets.push({
-          x: sphereRadius * Math.sin(phi) * Math.cos(theta),
-          y: sphereRadius * Math.sin(phi) * Math.sin(theta),
-          z: sphereRadius * Math.cos(phi)
-        });
-      }
+    // Target outlines pre-cached
+    const mathText = [
+      { text: '∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C', x: 500, y: 220, font: 'bold 32px "Courier New", monospace' },
+      { text: 'd/dx [ ln|(x-a)/(x+a)| ] = 2a/(x²-a²)', x: 500, y: 300, font: 'bold 32px "Courier New", monospace' },
+      { text: '∫ sin(x) dx = -cos(x) + C', x: 260, y: 120, font: 'bold 22px "Courier New", monospace' },
+      { text: '∫ e^x dx = e^x + C', x: 740, y: 120, font: 'bold 22px "Courier New", monospace' },
+      { text: '∫ 1/x dx = ln|x| + C', x: 500, y: 410, font: 'bold 25px "Courier New", monospace' }
+    ];
+    const mathTargets = generateTextCoords(mathText);
 
-      // 2. Generate Mathematics Targets (Floating integration/differentiation antiderivative formulas)
-      const mathText = [
-        { text: '∫ 1/(x²-a²) dx = 1/2a ln|(x-a)/(x+a)| + C', x: 300, y: 150, font: 'bold 20px "Courier New", monospace' },
-        { text: 'd/dx [ ln|(x-a)/(x+a)| ] = 2a/(x²-a²)', x: 300, y: 200, font: 'bold 20px "Courier New", monospace' },
-        { text: '∫ sin(x) dx = -cos(x) + C', x: 170, y: 80, font: 'bold 13px "Courier New", monospace' },
-        { text: '∫ e^x dx = e^x + C', x: 430, y: 80, font: 'bold 13px "Courier New", monospace' },
-        { text: '∫ 1/x dx = ln|x| + C', x: 300, y: 280, font: 'bold 15px "Courier New", monospace' }
-      ];
-      
-      const mathCoordsRaw = generateTextCoords(mathText);
-      const mathTargets = [];
-      for (let i = 0; i < count; i++) {
-        const c = mathCoordsRaw[i % mathCoordsRaw.length];
-        mathTargets.push({
-          x: c.x,
-          y: c.y,
-          z: c.z
-        });
+    const physText = [
+      { text: 'τ = I α', x: 220, y: 140, font: 'bold 42px "Courier New", monospace' },
+      { text: 'L = I ω', x: 780, y: 140, font: 'bold 42px "Courier New", monospace' },
+      { text: 'ROTATING DISC', x: 500, y: 480, font: 'bold 28px "Courier New", monospace' }
+    ];
+    const physTextCoords = generateTextCoords(physText);
+    const discCoords = [];
+    const rings = [
+      { r: 40, pts: 100 },
+      { r: 65, pts: 150 },
+      { r: 90, pts: 200 },
+      { r: 115, pts: 250 },
+      { r: 140, pts: 300 }
+    ];
+    rings.forEach(ring => {
+      for (let j = 0; j < ring.pts; j++) {
+        const theta = (j / ring.pts) * Math.PI * 2;
+        discCoords.push({ x: ring.r * Math.cos(theta), y: 30, z: ring.r * Math.sin(theta) });
       }
+    });
+    for (let j = 0; j < 150; j++) {
+      discCoords.push({ x: 0, y: -130 + j * 1.8, z: 0 });
+    }
+    for (let j = 0; j < 40; j++) {
+      const phi = (j / 40) * Math.PI * 2;
+      discCoords.push({ x: 10 * Math.cos(phi), y: -120, z: 10 * Math.sin(phi) });
+    }
+    const physTargets = [...physTextCoords, ...discCoords];
 
-      // 3. Generate Physics Targets (Rotating concentric disc diagram with formulas)
-      const physText = [
-        { text: 'τ = I α', x: 140, y: 100, font: 'bold 24px "Courier New", monospace' },
-        { text: 'L = I ω', x: 460, y: 100, font: 'bold 24px "Courier New", monospace' },
-        { text: 'ROTATING DISC', x: 300, y: 320, font: 'bold 18px "Courier New", monospace' }
-      ];
-      
-      const physTextCoords = generateTextCoords(physText);
-      const physTargets = [];
-      const discCoords = [];
-      const rings = [
-        { r: 40, pts: 100 },
-        { r: 65, pts: 150 },
-        { r: 90, pts: 200 },
-        { r: 115, pts: 250 },
-        { r: 140, pts: 300 }
-      ];
-      rings.forEach(ring => {
-        for (let j = 0; j < ring.pts; j++) {
-          const theta = (j / ring.pts) * Math.PI * 2;
-          discCoords.push({
-            x: ring.r * Math.cos(theta),
-            y: 30,
-            z: ring.r * Math.sin(theta)
-          });
-        }
-      });
-      for (let j = 0; j < 150; j++) {
-        const yVal = -130 + j * 1.8;
-        discCoords.push({ x: 0, y: yVal, z: 0 });
-      }
-      for (let j = 0; j < 40; j++) {
-        const phi = (j / 40) * Math.PI * 2;
-        discCoords.push({ x: 10 * Math.cos(phi), y: -120, z: 10 * Math.sin(phi) });
-      }
-      const physCombined = [...physTextCoords, ...discCoords];
-      for (let i = 0; i < count; i++) {
-        const c = physCombined[i % physCombined.length];
-        physTargets.push({
-          x: c.x,
-          y: c.y,
-          z: c.z || 0
-        });
-      }
+    const chemTargets0 = generateChemCoords(0);
+    const chemTargets1 = generateChemCoords(1);
+    const chemTargets2 = generateChemCoords(2);
+    const chemTargets3 = generateChemCoords(3);
 
-      // 4. Generate Chemistry Targets (Reaction sets: Benzene to Nitrobenzene to Aniline to Phenol)
-      const chemTargets0 = generateChemCoords(0);
-      const chemTargets1 = generateChemCoords(1);
-      const chemTargets2 = generateChemCoords(2);
-      const chemTargets3 = generateChemCoords(3);
-
-      // Initialize all particles in a scattered nebula, storing targets for all 4 states
-      for (let i = 0; i < count; i++) {
-        const r = Math.random() * 500 + 400;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(Math.random() * 2 - 1);
-        
-        const nebulaX = r * Math.sin(phi) * Math.cos(theta);
-        const nebulaY = r * Math.sin(phi) * Math.sin(theta);
-        const nebulaZ = r * Math.cos(phi);
-        
-        const colorSeed = Math.floor(Math.random() * 5);
-        
-        particles.push({
-          cx: nebulaX,
-          cy: nebulaY,
-          cz: nebulaZ,
-          
-          nebulaX,
-          nebulaY,
-          nebulaZ,
-          
-          logoX: logoTargets[i].x,
-          logoY: logoTargets[i].y,
-          logoZ: logoTargets[i].z,
-          
-          mathX: mathTargets[i].x,
-          mathY: mathTargets[i].y,
-          mathZ: mathTargets[i].z,
-          
-          physX: physTargets[i].x,
-          physY: physTargets[i].y,
-          physZ: physTargets[i].z,
-          
-          chemX: [chemTargets0[i % chemTargets0.length].x, chemTargets1[i % chemTargets1.length].x, chemTargets2[i % chemTargets2.length].x, chemTargets3[i % chemTargets3.length].x],
-          chemY: [chemTargets0[i % chemTargets0.length].y, chemTargets1[i % chemTargets1.length].y, chemTargets2[i % chemTargets2.length].y, chemTargets3[i % chemTargets3.length].y],
-          chemZ: [chemTargets0[i % chemTargets0.length].z, chemTargets1[i % chemTargets1.length].z, chemTargets2[i % chemTargets2.length].z, chemTargets3[i % chemTargets3.length].z],
-          
-          phaseX: Math.random() * Math.PI * 2,
-          phaseY: Math.random() * Math.PI * 2,
-          phaseSpeed: Math.random() * 0.05 + 0.03,
-          amplitude: Math.random() * 3 + 1.5,
-          
-          size: Math.random() * 1.3 + 0.7,
-          alpha: Math.random() * 0.5 + 0.5,
-          colorSeed
-        });
+    // HRTA Logo targets
+    const logoTargets = [];
+    const hexRadius = 145;
+    const hexHeight = 65;
+    const topVerts = [];
+    const bottomVerts = [];
+    for (let i = 0; i < 6; i++) {
+      const angle = (i * Math.PI) / 3;
+      topVerts.push({ x: hexRadius * Math.cos(angle), y: -hexHeight, z: hexRadius * Math.sin(angle) });
+      bottomVerts.push({ x: hexRadius * Math.cos(angle), y: hexHeight, z: hexRadius * Math.sin(angle) });
+    }
+    const pointsPerEdge = 40;
+    for (let i = 0; i < 6; i++) {
+      const t1 = topVerts[i], t2 = topVerts[(i + 1) % 6];
+      const b1 = bottomVerts[i], b2 = bottomVerts[(i + 1) % 6];
+      for (let j = 0; j < pointsPerEdge; j++) {
+        const r = j / pointsPerEdge;
+        logoTargets.push({ x: t1.x + (t2.x - t1.x) * r, y: t1.y, z: t1.z + (t2.z - t1.z) * r });
+        logoTargets.push({ x: b1.x + (b2.x - b1.x) * r, y: b1.y, z: b1.z + (b2.z - b1.z) * r });
       }
-    };
+    }
+    for (let i = 0; i < 6; i++) {
+      const t = topVerts[i], b = bottomVerts[i];
+      for (let j = 0; j < pointsPerEdge; j++) {
+        logoTargets.push({ x: t.x, y: t.y + (b.y - t.y) * (j / pointsPerEdge), z: t.z });
+      }
+    }
+    const coreCount = 800;
+    for (let i = 0; i < coreCount; i++) {
+      const phi = Math.acos(Math.random() * 2 - 1);
+      const theta = Math.random() * Math.PI * 2;
+      logoTargets.push({ x: 60 * Math.sin(phi) * Math.cos(theta), y: 60 * Math.sin(phi) * Math.sin(theta), z: 60 * Math.cos(phi) });
+    }
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
@@ -410,31 +347,36 @@ const MainLogin = () => {
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Calculate morph loop timeline (44-second cycle)
-      // Each phase is 11 seconds long:
-      // - 0s to 2.5s: Morph in (ease 0 -> 1)
-      // - 2.5s to 9.5s: Hold shape (ease 1, 7 seconds hold)
-      // - 9.5s to 11s: Dissolve/explode out (ease 1 -> 0)
       const cycleTime = (Date.now() - startTime) % 44000;
       const phaseTime = cycleTime % 11000;
       
-      let ease = 0;
+      // Calculate drawing progress:
+      // - 0s to 2.5s: drawing in progress (progress goes 0 -> 1)
+      // - 2.5s to 9.5s: fully drawn (stable hold, progress = 1)
+      // - 9.5s to 11s: dissolve/explode phase
+      let progress = 0;
+      let isDissolve = false;
       if (phaseTime < 2500) {
-        const t = phaseTime / 2500;
-        ease = 1 - Math.pow(1 - t, 4); // morph in
+        progress = phaseTime / 2500;
       } else if (phaseTime < 9500) {
-        ease = 1; // hold shape (7 seconds stable hold)
+        progress = 1.0;
       } else {
-        const t = (phaseTime - 9500) / 1500;
-        ease = Math.pow(1 - t, 4); // dissolve out
+        isDissolve = true;
+        progress = 1.0;
       }
-      
+
       const timeFactor = (Date.now() - startTime) * 0.0018;
-      
-      // Face-front alignment for reading formulas/diagrams (restrict 3D spin on academic phases)
+
+      // Camera sway/tilt rotations
+      const maxTilt = 0.22;
+      const targetRotX = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseY - canvas.height / 2) * 0.0006));
+      const targetRotY = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseX - canvas.width / 2) * 0.0006));
+      currentRotX += (targetRotX - currentRotX) * 0.05;
+      currentRotY += (targetRotY - currentRotY) * 0.05;
+
       let rx = currentRotX;
       let ry = currentRotY;
-      
+
       if (cycleTime >= 33000) {
         // HRTA Logo: full spinning 3D logo
         angleY += 0.005;
@@ -442,98 +384,63 @@ const MainLogin = () => {
         rx += angleX;
         ry += angleY;
       } else {
-        // Math, Physics, Chemistry: Subtle floating sway for front-facing readability
-        rx += Math.sin(timeFactor * 0.5) * 0.08;
-        ry += Math.cos(timeFactor * 0.5) * 0.08;
+        // Subtle sway for math, physics, chemistry
+        rx += Math.sin(timeFactor * 0.4) * 0.06;
+        ry += Math.cos(timeFactor * 0.4) * 0.06;
       }
-      
-      // Fluid mouse tilt response: Clamp maximum tilt and default to 0 if mouse is off-screen
-      const maxTilt = 0.22; // ~12.5 degrees max tilt
-      const targetRotX = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseY - canvas.height / 2) * 0.0006));
-      const targetRotY = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseX - canvas.width / 2) * 0.0006));
-      currentRotX += (targetRotX - currentRotX) * 0.05;
-      currentRotY += (targetRotY - currentRotY) * 0.05;
-      
-      particles.forEach((p) => {
-        // High frequency vibrations
-        p.phaseX += p.phaseSpeed;
-        p.phaseY += p.phaseSpeed;
-        const vibX = Math.sin(p.phaseX) * p.amplitude;
-        const vibY = Math.cos(p.phaseY) * p.amplitude;
-        const vibZ = Math.sin(p.phaseX + p.phaseY) * p.amplitude;
+
+      // Choose active coordinate set
+      let activeCoords = [];
+      if (cycleTime < 11000) {
+        activeCoords = mathTargets;
+      } else if (cycleTime < 22000) {
+        activeCoords = physTargets;
+      } else if (cycleTime < 33000) {
+        const holdElapsed = Math.max(0, phaseTime - 2500);
+        let subPhase = 0;
+        if (phaseTime < 2500) subPhase = 0;
+        else if (phaseTime >= 9500) subPhase = 3;
+        else subPhase = Math.min(3, Math.floor(holdElapsed / 1750));
         
-        // Select target coordinates based on active phase
-        let targetX = 0;
-        let targetY = 0;
-        let targetZ = 0;
-        
-        if (cycleTime < 11000) {
-          // Phase 1: Math (Integration Formulas)
-          targetX = p.mathX;
-          targetY = p.mathY;
-          targetZ = p.mathZ;
-        } else if (cycleTime < 22000) {
-          // Phase 2: Physics (Rotating Disc Diagram)
-          targetX = p.physX;
-          targetY = p.physY;
-          targetZ = p.physZ;
-        } else if (cycleTime < 33000) {
-          // Phase 3: Chemistry (Benzene Reaction Products Loop)
-          // Cycle through Benzene -> Nitrobenzene -> Aniline -> Phenol inside the 7-second hold
-          const holdElapsed = Math.max(0, phaseTime - 2500); // 0 to 7000ms
-          let subPhase = 0;
-          if (phaseTime < 2500) {
-            subPhase = 0; // Morphing in starts as Benzene
-          } else if (phaseTime >= 9500) {
-            subPhase = 3; // Dissolving out finishes as Phenol
-          } else {
-            subPhase = Math.min(3, Math.floor(holdElapsed / 1750));
-          }
-          targetX = p.chemX[subPhase];
-          targetY = p.chemY[subPhase];
-          targetZ = p.chemZ[subPhase];
-        } else {
-          // Phase 4: HRTA Agency Logo
-          targetX = p.logoX;
-          targetY = p.logoY;
-          targetZ = p.logoZ;
-        }
-        
-        // Interpolate base coordinates
-        p.cx = p.nebulaX + (targetX - p.nebulaX) * ease;
-        p.cy = p.nebulaY + (targetY - p.nebulaY) * ease;
-        p.cz = p.nebulaZ + (targetZ - p.nebulaZ) * ease;
-        
-        const nx = p.cx + vibX;
-        const ny = p.cy + vibY;
-        const nz = p.cz + vibZ;
-        
+        if (subPhase === 0) activeCoords = chemTargets0;
+        else if (subPhase === 1) activeCoords = chemTargets1;
+        else if (subPhase === 2) activeCoords = chemTargets2;
+        else activeCoords = chemTargets3;
+      } else {
+        activeCoords = logoTargets;
+      }
+
+      const N = activeCoords.length;
+      if (N === 0) {
+        animationFrameId = requestAnimationFrame(animate);
+        return;
+      }
+
+      // Project all active coordinates into 2D screen space
+      const projected = [];
+      const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
+      const scaleMultiplier = 2.45 * sizeFactor;
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+
+      activeCoords.forEach((pt) => {
         // Apply 3D Rotation (Y rotation then X rotation)
-        let x1 = nx * Math.cos(ry) - nz * Math.sin(ry);
-        let z1 = nx * Math.sin(ry) + nz * Math.cos(ry);
-        let y2 = ny * Math.cos(rx) - z1 * Math.sin(rx);
-        let z2 = ny * Math.sin(rx) + z1 * Math.cos(rx);
-        
-        // 3D Perspective Projection
+        let x1 = pt.x * Math.cos(ry) - pt.z * Math.sin(ry);
+        let z1 = pt.x * Math.sin(ry) + pt.z * Math.cos(ry);
+        let y2 = pt.y * Math.cos(rx) - z1 * Math.sin(rx);
+        let z2 = pt.y * Math.sin(rx) + z1 * Math.cos(rx);
+
         const fov = 400;
         const distance = 280;
         const scale = fov / (fov + z2 + distance);
         if (scale <= 0 || isNaN(scale)) {
-          p.projX = undefined;
+          projected.push(null);
           return;
         }
-        
-        // Responsive Scaling: Make it large on desktop (x2.45), auto-scale down on smaller viewports
-        const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
-        const scaleMultiplier = 2.45 * sizeFactor;
-        
-        // Particle center set horizontally in the center of the screen
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        
+
         let projX = centerX + x1 * scale * scaleMultiplier;
         let projY = centerY + y2 * scale * scaleMultiplier;
-        
+
         // Fluid Cursor Repulsion
         const dx = projX - mouseX;
         const dy = projY - mouseY;
@@ -543,113 +450,156 @@ const MainLogin = () => {
           projX += (dx / dist) * force;
           projY += (dy / dist) * force;
         }
-        
-        // Define color schemes per phase
-        let hue = 217;
-        let sat = 89;
-        let light = 61;
-        
-        if (cycleTime < 11000) {
-          // Math Phase: Glowing Neon Cyan & Blue
-          const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
-          if (x1 + wave > 0) {
-            hue = 188; sat = 95; light = 58; // Neon Cyan
-          } else {
-            hue = 210; sat = 95; light = 55; // Electric Blue
-          }
-        } else if (cycleTime < 22000) {
-          // Physics Phase: Glowing Rotational Red & Gold
-          const wave = Math.sin(timeFactor + y2 * 0.03) * 15;
-          if (y2 + wave < 0) {
-            hue = 5; sat = 95; light = 58; // Laser Red
-          } else {
-            hue = 32; sat = 95; light = 55; // Golden Orange
-          }
-        } else if (cycleTime < 33000) {
-          // Chemistry Phase: Glowing Organic Green & Acid Yellow
-          const wave = Math.sin(timeFactor + x1 * 0.03) * 15;
-          if (x1 + wave > 0) {
-            hue = 135; sat = 85; light = 52; // Acid Green
-          } else {
-            hue = 52; sat = 95; light = 54; // Yellow
-          }
-        } else {
-          // HRTA Logo Phase: Full Gemini color blend
-          const radXZ = Math.sqrt(x1 * x1 + z1 * z1);
-          const wave = Math.sin(timeFactor * 1.3 + x1 * 0.04) * 4;
-          if (y2 < -20 + wave) {
-            if (x1 > 30) {
-              hue = 26; sat = 96; light = 54;
-            } else {
-              hue = 5; sat = 81; light = 56;
-            }
-          } else if (y2 > 20 + wave) {
-            hue = 136; sat = 53; light = 45;
-          } else if (radXZ > 90 + wave) {
-            hue = 217; sat = 89; light = 61;
-          } else {
-            if (z1 > 15) {
-              hue = 26; sat = 96; light = 54;
-            } else {
-              hue = 45; sat = 96; light = 50;
-            }
-          }
-        }
-        
-        // Save values on the particle for drawing
-        p.projX = projX;
-        p.projY = projY;
-        p.scale_temp = scale;
-        p.hue = hue;
-        p.sat = sat;
-        p.light = light;
+
+        projected.push({ x: projX, y: projY, z: z2, scale });
       });
-      
-      // Draw wireframe connecting lines in sequence (CAD blueprint layout)
-      ctx.lineWidth = 1.6;
-      for (let i = 0; i < particles.length - 1; i++) {
-        const p1 = particles[i];
-        const p2 = particles[i + 1];
-        
-        // Skip if either particle is clipped (behind camera)
-        if (p1.projX === undefined || p2.projX === undefined) continue;
-        
-        // Calculate spatial distance in 2D target coordinate space to ignore depth offsets
-        const dx = p1.cx - p2.cx;
-        const dy = p1.cy - p2.cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        
-        // Only connect if they are close in the target structure (less than 15 units)
-        if (dist < 15) {
-          ctx.beginPath();
-          ctx.moveTo(p1.projX, p1.projY);
-          ctx.lineTo(p2.projX, p2.projY);
-          const hue = Math.round((p1.hue + p2.hue) / 2);
-          const sat = Math.round((p1.sat + p2.sat) / 2);
-          const light = Math.round((p1.light + p2.light) / 2);
-          ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, ${ease * 0.9})`;
-          ctx.stroke();
-        }
+
+      // Define HSL colors per phase
+      let hue = 217, sat = 89, light = 61;
+      if (cycleTime < 11000) {
+        hue = 188; sat = 95; light = 58; // Math: Cyan
+      } else if (cycleTime < 22000) {
+        hue = 32; sat = 95; light = 55; // Physics: Gold
+      } else if (cycleTime < 33000) {
+        hue = 135; sat = 85; light = 52; // Chemistry: Green
+      } else {
+        hue = 217; sat = 89; light = 61; // HRTA: Blue
       }
-        // Draw individual particle vertices (smaller and crisp)
+
+      // Draw Logic
+      if (!isDissolve) {
+        // Reset spark particles array for next transition
+        sparksPopulated = false;
+        particles = [];
+
+        // Progressively draw the vector lines (one-to-one drawing sequence)
+        const currentLimit = Math.floor(progress * N);
+        
+        // 1. Draw Neon Glow Bloom Line (Thick & Faded)
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = `hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
+        
+        ctx.beginPath();
+        let firstPoint = true;
+        for (let i = 0; i < currentLimit - 1; i++) {
+          const p1 = projected[i];
+          const p2 = projected[i + 1];
+          if (!p1 || !p2) { firstPoint = true; continue; }
+
+          const dx = activeCoords[i].x - activeCoords[i+1].x;
+          const dy = activeCoords[i].y - activeCoords[i+1].y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          if (dist < 15) {
+            if (firstPoint) {
+              ctx.moveTo(p1.x, p1.y);
+              firstPoint = false;
+            }
+            ctx.lineTo(p2.x, p2.y);
+          } else {
+            firstPoint = true;
+          }
+        }
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, 0.28)`;
+        ctx.lineWidth = 5.0;
+        ctx.stroke();
+
+        // 2. Draw Core Laser Line (Thin & Bright)
+        ctx.beginPath();
+        firstPoint = true;
+        for (let i = 0; i < currentLimit - 1; i++) {
+          const p1 = projected[i];
+          const p2 = projected[i + 1];
+          if (!p1 || !p2) { firstPoint = true; continue; }
+
+          const dx = activeCoords[i].x - activeCoords[i+1].x;
+          const dy = activeCoords[i].y - activeCoords[i+1].y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          
+          if (dist < 15) {
+            if (firstPoint) {
+              ctx.moveTo(p1.x, p1.y);
+              firstPoint = false;
+            }
+            ctx.lineTo(p2.x, p2.y);
+          } else {
+            firstPoint = true;
+          }
+        }
+        ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light + 12}%, 0.95)`;
+        ctx.lineWidth = 1.85;
+        ctx.stroke();
+        
+        // Reset shadows to preserve performance
+        ctx.shadowBlur = 0;
+
+        // 3. Draw the drawing tip tracer cursor (pulse neon spark)
+        if (currentLimit > 0 && currentLimit < N) {
+          const tip = projected[currentLimit - 1];
+          if (tip) {
+            // Radial glowing gradient for tracer
+            const grad = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 14);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.2, `hsla(${(hue + 60) % 360}, 100%, 70%, 1)`); // Multicolor gradient tip
+            grad.addColorStop(0.5, `hsla(${hue}, ${sat}%, ${light}%, 0.8)`);
+            grad.addColorStop(1, `hsla(${hue}, ${sat}%, ${light}%, 0)`);
+            
+            ctx.beginPath();
+            ctx.arc(tip.x, tip.y, 14, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Add core bright tracer particle dot
+            ctx.beginPath();
+            ctx.arc(tip.x, tip.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+          }
+        }
+      } else {
+        // Sparks Rain Dissolve Phase (shatters into particles)
+        if (!sparksPopulated) {
+          particles = [];
+          projected.forEach((p, idx) => {
+            if (!p) return;
+            particles.push({
+              x: p.x,
+              y: p.y,
+              vx: (Math.random() - 0.5) * 3,
+              vy: Math.random() * 2 + 0.8, // gravity fall speed
+              alpha: Math.random() * 0.4 + 0.6,
+              size: Math.random() * 1.5 + 0.8,
+              hue,
+              sat,
+              light
+            });
+          });
+          sparksPopulated = true;
+        }
+
+        // Animate & draw falling sparks
         particles.forEach((p) => {
-        if (p.projX === undefined) return;
-        
-        const baseSizeMultiplier = cycleTime >= 33000 ? 0.95 : 1.35;
-        const particleSize = p.size * p.scale_temp * 1.55 * baseSizeMultiplier;
-        
-        // Soft bloom glow backplate
-        ctx.beginPath();
-        ctx.arc(p.projX, p.projY, particleSize * 2.2, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light}%, ${p.alpha * p.scale_temp * 0.22})`;
-        ctx.fill();
-        
-        // Core vertex dot
-        ctx.beginPath();
-        ctx.arc(p.projX, p.projY, particleSize, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light + 10}%, ${p.alpha * p.scale_temp * 1.5})`;
-        ctx.fill();
-      });
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += 0.08; // gravity acceleration
+          p.alpha -= 0.016; // fade out
+          
+          if (p.alpha > 0) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * 2, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light}%, ${p.alpha * 0.28})`;
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${p.hue}, ${p.sat}%, ${p.light + 10}%, ${p.alpha * 0.85})`;
+            ctx.fill();
+          }
+        });
+      }
+      
       animationFrameId = requestAnimationFrame(animate);
     };
 
@@ -665,6 +615,7 @@ const MainLogin = () => {
       window.removeEventListener('mousemove', handleMouseMove);
     };
   }, []);
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
