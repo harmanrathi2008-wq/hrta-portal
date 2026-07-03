@@ -112,60 +112,74 @@ const MainLogin = () => {
       
       const elapsed = Date.now() - startTime;
       
-      // Repeating cycle every 3.5 seconds
-      const cycleDuration = 3500;
-      const cycleTime = (elapsed % cycleDuration) / 1000; // t in seconds (0 to 3.5)
+      // Moving corner-to-corner loop: 4 corners in 12 seconds (3.0s per corner transition)
+      const transitionDuration = 3000;
+      const cycleTime = elapsed % 12000;
+      const phaseIndex = Math.floor(cycleTime / transitionDuration); // 0, 1, 2, 3
+      const t = (cycleTime % transitionDuration) / transitionDuration; // 0 to 1
       
-      const maxRadius = Math.max(canvas.width, canvas.height) * 0.95;
-      const decaySpeed = 1.35;
+      // Quadratic Ease-in-Out interpolation formula
+      const easedT = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
       
-      // Exponentially decaying wave propagation speed (starts fast, slows down)
-      const waveRadius = maxRadius * (1 - Math.exp(-cycleTime * decaySpeed));
+      // Corner coordinates calculations
+      const getCornerPos = (index) => {
+        const w = canvas.width;
+        const h = canvas.height;
+        switch (index) {
+          case 0: return { x: w * 0.82, y: h * 0.18 }; // TR
+          case 1: return { x: w * 0.82, y: h * 0.82 }; // BR
+          case 2: return { x: w * 0.18, y: h * 0.82 }; // BL
+          case 3: return { x: w * 0.18, y: h * 0.18 }; // TL
+          default: return { x: w / 2, y: h / 2 };
+        }
+      };
+
+      const pStart = getCornerPos(phaseIndex);
+      const pEnd = getCornerPos((phaseIndex + 1) % 4);
       
-      // Wave intensity decays as it expands (energy dissipation)
-      const waveIntensity = Math.exp(-cycleTime * 0.75);
+      const targetX = pStart.x + (pEnd.x - pStart.x) * easedT;
+      const targetY = pStart.y + (pEnd.y - pStart.y) * easedT;
       
-      // Track target origin (lerp coordinates for a smooth, high-fidelity cursor lag wave trail)
-      const targetX = mouseX !== -1000 ? mouseX : canvas.width / 2;
-      const targetY = mouseY !== -1000 ? mouseY : canvas.height / 2;
-      ox += (targetX - ox) * 0.08;
-      oy += (targetY - oy) * 0.08;
+      // Interpolate searchlight wave origin smoothly for a beautiful fluid glide
+      ox += (targetX - ox) * 0.12;
+      oy += (targetY - oy) * 0.12;
+
+      // Searchlight bubble radius (about 22% of screen dimension)
+      const waveRadius = Math.max(canvas.width, canvas.height) * 0.22;
 
       dots.forEach((dot) => {
-        // Distance calculation (Pythagoras) from current ripple origin
+        // Distance calculation (Pythagoras) from current scanner origin
         const dx = dot.x - ox;
         const dy = dot.y - oy;
         const d = Math.sqrt(dx * dx + dy * dy);
         
-        // Define wave front width (spreads out slightly as it propagates)
-        const waveWidth = 100 + cycleTime * 50;
-        const distToWave = Math.abs(d - waveRadius);
-        
-        let pulse = 0;
-        if (distToWave < waveWidth) {
-          const factor = 1 - (distToWave / waveWidth);
-          // Smooth bell curve shape using Math.sin and raised exponent
-          pulse = Math.pow(Math.sin(factor * Math.PI / 2), 4.0) * waveIntensity;
+        // Visibility Bubble: only draw when within the searchlight wave
+        if (d < waveRadius) {
+          const intensity = 1.0 - (d / waveRadius); // 1.0 (center) to 0.0 (edge)
+          
+          // Smooth bell curve opacity emergence
+          const opacity = Math.sin(intensity * Math.PI / 2);
+          
+          // Distance-Based Scaling (base: 1.0px, peak: 5.5px)
+          const minRadius = 1.0;
+          const maxRadiusVal = 5.5;
+          const rVal = minRadius + (maxRadiusVal - minRadius) * opacity;
+          
+          // Shift Color Temperature: Steel Blue hsl(200, 70%, 35%) to Bright White-Blue hsl(200, 100%, 98%)
+          const startL = 35;
+          const targetL = 98;
+          const lightness = startL + (targetL - startL) * opacity;
+          
+          const startS = 70;
+          const targetS = 100;
+          const saturation = startS + (targetS - startS) * opacity;
+          
+          ctx.fillStyle = `hsla(200, ${Math.round(saturation)}%, ${Math.round(lightness)}%, ${opacity.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
+          ctx.fill();
         }
-        
-        // Distance-Based Scaling (base: 1.1px, wave peak: 5.5px)
-        const minRadius = 1.1;
-        const maxRadiusVal = 5.5;
-        const rVal = minRadius + (maxRadiusVal - minRadius) * pulse;
-        
-        // Dynamic Color Temperature (Sky Blue to Brilliant White-Blue)
-        // Base state: HSL(200, 100%, 20%) -> Peak: HSL(200, 100%, 95%)
-        const lightness = 20 + 75 * pulse;
-        
-        // Opacity Mapping (Atmospheric Falloff emergence effect):
-        // Base state sits at 12% (0.12) -> Peak zone reaches 100% (1.0)
-        const opacity = 0.12 + 0.88 * pulse;
-        
-        // Render isolated dot (grid lines are invisible, stroke is disabled)
-        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, ${opacity.toFixed(3)})`;
-        ctx.beginPath();
-        ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
-        ctx.fill();
+        // Outside the bubble is completely invisible (opacity 0) - skipped to optimize GPU fill-rate!
       });
       
       ctx.globalCompositeOperation = 'source-over';
