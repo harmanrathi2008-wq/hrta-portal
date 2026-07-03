@@ -54,9 +54,7 @@ const MainLogin = () => {
     if (!ctx) return;
 
     let animationFrameId;
-    const COLS = 25;
-    const ROWS = 18;
-    const PARTICLE_COUNT = COLS * ROWS; // 450
+    const PARTICLE_COUNT = 450;
     const particles = [];
     const startTime = Date.now();
     
@@ -69,30 +67,22 @@ const MainLogin = () => {
       canvas.height = window.innerHeight;
     };
 
-    // Initialize particles in a structural grid (maintain cloud rectangular integrity)
-    // Width: 420 units (-210 to 210), Height: 280 units (-140 to 140)
-    const spacingX = 420 / 24;
-    const spacingY = 280 / 17;
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const gridX = (c - 12) * spacingX;
-        const gridY = (r - 8.5) * spacingY;
-        particles.push({
-          gridX,
-          gridY,
-          z: (Math.random() - 0.5) * 60, // depth layer offset
-          baseSize: Math.random() * 1.5 + 2.8, // increased base size for more visibility
-          wavePhase: gridX * 0.015 + gridY * 0.02
-        });
-      }
-    }
+    // Diagonal flow direction (approx 36 degrees angle flow)
+    const flowAngle = Math.PI / 5;
+    const flowX = Math.cos(flowAngle);
+    const flowY = Math.sin(flowAngle);
 
-    const corners = [
-      { p0: { x: 220, y: -140 }, p1: { x: 300, y: 0 }, p2: { x: 220, y: 140 } },  // TR -> BR
-      { p0: { x: 220, y: 140 }, p1: { x: 0, y: 220 }, p2: { x: -220, y: 140 } },  // BR -> BL
-      { p0: { x: -220, y: 140 }, p1: { x: -300, y: 0 }, p2: { x: -220, y: -140 } }, // BL -> TL
-      { p0: { x: -220, y: -140 }, p1: { x: 0, y: -220 }, p2: { x: 220, y: -140 } }  // TL -> TR
-    ];
+    // Initialize particles uniformly along the flow line so the canvas starts full
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      particles.push({
+        flowDist: Math.random() * 2200 - 400, // distributed along flow length
+        lateralOffset: (Math.random() - 0.5) * window.innerHeight * 1.6, // distributed across width
+        z: (Math.random() - 0.5) * 80, // depth layer offset
+        speed: Math.random() * 0.6 + 1.25, // varying speed for organic overlapping flow
+        baseSize: Math.random() * 1.6 + 2.8,
+        pulseOffset: Math.random() * Math.PI * 2
+      });
+    }
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
@@ -107,60 +97,41 @@ const MainLogin = () => {
       ctx.globalCompositeOperation = 'screen';
       
       const elapsed = Date.now() - startTime;
-      let gridCx = 0;
-      let gridCy = 0;
-      let isHolding = false;
-      let holdProgress = 0;
-      
-      if (elapsed < 3000) {
-        // Startup Intro Phase: Sits centered on screen and sways gently
-        isHolding = true;
-        holdProgress = elapsed / 3000;
-        gridCx = 0;
-        gridCy = 0;
-      } else {
-        // Normal Corner Hold / Transition Phase
-        const loopElapsed = elapsed - 3000;
-        const cycleTime = loopElapsed % 18000;
-        const phaseIndex = Math.floor(cycleTime / 4500); // 0, 1, 2, 3
-        const phaseTime = cycleTime % 4500;
-        
-        if (phaseTime < 3000) {
-          // Hold Phase at Corner: Shimmering sinusoidal vibration
-          isHolding = true;
-          holdProgress = phaseTime / 3000;
-          gridCx = corners[phaseIndex].p0.x;
-          gridCy = corners[phaseIndex].p0.y;
-        } else {
-          // Bezier Interpolation Transition Phase
-          const t = (phaseTime - 3000) / 1500;
-          const curve = corners[phaseIndex];
-          const mt = 1 - t;
-          gridCx = mt * mt * curve.p0.x + 2 * mt * t * curve.p1.x + t * t * curve.p2.x;
-          gridCy = mt * mt * curve.p0.y + 2 * mt * t * curve.p1.y + t * t * curve.p2.y;
-        }
-      }
-      
       const timeFactor = elapsed * 0.0015;
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
       
+      // Max flow distance before recycling
+      const maxDistance = canvas.width * 1.4 + 400;
+
       particles.forEach((p) => {
+        // Move particle forward constantly along the diagonal path
+        p.flowDist += p.speed;
+        
+        // Wrap back to start when off-screen: past particles lost, fresh new ones spawn!
+        if (p.flowDist > maxDistance) {
+          p.flowDist = -400;
+          p.lateralOffset = (Math.random() - 0.5) * canvas.height * 1.6;
+          p.z = (Math.random() - 0.5) * 80;
+          p.speed = Math.random() * 0.6 + 1.25;
+        }
+
+        // Calculate absolute grid positions relative to canvas center
+        const baseX = p.flowDist * flowX - p.lateralOffset * flowY;
+        const baseY = p.flowDist * flowY + p.lateralOffset * flowX - 300; // offset vertically for canvas balance
+        
+        // Transverse fluid wave ripples flowing perpendicularly to flow direction
+        const wave = Math.sin(p.flowDist * 0.0075 - timeFactor * 3.5) * 25;
+        let targetX = baseX - wave * flowY;
+        let targetY = baseY + wave * flowX;
+        
         // 3D Depth wave jitter oscillation (Z-axis)
-        const zOffset = Math.sin(timeFactor * 1.5 + p.wavePhase) * 35;
+        const zOffset = Math.cos(p.flowDist * 0.008 - timeFactor * 2.2) * 35;
         const targetZ = p.z + zOffset;
         
-        // Gentle, slow 2D wave flow oscillation (X and Y axis) for fluid fabric wave
-        const waveX = Math.sin(timeFactor * 2.2 + p.wavePhase) * 8.5;
-        const waveY = Math.cos(timeFactor * 1.8 + p.wavePhase) * 5.5;
-        
-        // Gentle HSL lightness breathing shimmer (smooth 70% to 92% transition)
-        const shimmer = Math.sin(timeFactor * 2.2 + p.wavePhase) * 0.5 + 0.5;
-        const lightness = 70 + 22 * shimmer;
-        
-        // Move entire cloud in perfect grid unison, adding the smooth continuous wave flow
-        let targetX = gridCx + p.gridX + waveX;
-        let targetY = gridCy + p.gridY + waveY;
+        // Gentle HSL lightness breathing shimmer (smooth 68% to 92% transition)
+        const shimmer = Math.sin(p.flowDist * 0.009 - timeFactor * 3.0 + p.pulseOffset) * 0.5 + 0.5;
+        const lightness = 68 + 24 * shimmer;
         
         // Interactive Cursor Repulsion in 2D Space
         if (mouseX !== -1000) {
