@@ -296,8 +296,8 @@ const MainLogin = () => {
       for (let i = 0; i < count; i++) {
         const c = mathCoordsRaw[i % mathCoordsRaw.length];
         mathTargets.push({
-          x: c.x + (Math.random() - 0.5) * 1.5,
-          y: c.y + (Math.random() - 0.5) * 1.5,
+          x: c.x,
+          y: c.y,
           z: c.z
         });
       }
@@ -324,7 +324,7 @@ const MainLogin = () => {
           const theta = (j / ring.pts) * Math.PI * 2;
           discCoords.push({
             x: ring.r * Math.cos(theta),
-            y: 30 + (Math.random() - 0.5) * 3,
+            y: 30,
             z: ring.r * Math.sin(theta)
           });
         }
@@ -341,8 +341,8 @@ const MainLogin = () => {
       for (let i = 0; i < count; i++) {
         const c = physCombined[i % physCombined.length];
         physTargets.push({
-          x: c.x + (Math.random() - 0.5) * 1.5,
-          y: c.y + (Math.random() - 0.5) * 1.5,
+          x: c.x,
+          y: c.y,
           z: c.z || 0
         });
       }
@@ -447,9 +447,10 @@ const MainLogin = () => {
         ry += Math.cos(timeFactor * 0.5) * 0.08;
       }
       
-      // Fluid mouse tilt response
-      const targetRotX = (mouseY - canvas.height / 2) * 0.0012;
-      const targetRotY = (mouseX - canvas.width / 2) * 0.0012;
+      // Fluid mouse tilt response: Clamp maximum tilt and default to 0 if mouse is off-screen
+      const maxTilt = 0.22; // ~12.5 degrees max tilt
+      const targetRotX = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseY - canvas.height / 2) * 0.0006));
+      const targetRotY = (mouseX === -1000) ? 0 : Math.max(-maxTilt, Math.min(maxTilt, (mouseX - canvas.width / 2) * 0.0006));
       currentRotX += (targetRotX - currentRotX) * 0.05;
       currentRotY += (targetRotY - currentRotY) * 0.05;
       
