@@ -111,7 +111,19 @@ const MainLogin = () => {
       ctx.globalCompositeOperation = 'screen';
       
       const elapsed = Date.now() - startTime;
-      const timeFactor = elapsed * 0.0012;
+      
+      // Repeating cycle every 3.5 seconds
+      const cycleDuration = 3500;
+      const cycleTime = (elapsed % cycleDuration) / 1000; // t in seconds (0 to 3.5)
+      
+      const maxRadius = Math.max(canvas.width, canvas.height) * 0.95;
+      const decaySpeed = 1.35;
+      
+      // Exponentially decaying wave propagation speed (starts fast, slows down)
+      const waveRadius = maxRadius * (1 - Math.exp(-cycleTime * decaySpeed));
+      
+      // Wave intensity decays as it expands (energy dissipation)
+      const waveIntensity = Math.exp(-cycleTime * 0.75);
       
       // Track target origin (lerp coordinates for a smooth, high-fidelity cursor lag wave trail)
       const targetX = mouseX !== -1000 ? mouseX : canvas.width / 2;
@@ -125,22 +137,32 @@ const MainLogin = () => {
         const dy = dot.y - oy;
         const d = Math.sqrt(dx * dx + dy * dy);
         
-        // Circular ripple sine wave calculation (repeating and smooth)
-        const waveVal = Math.sin(d * 0.013 - timeFactor * 4.2);
+        // Define wave front width (spreads out slightly as it propagates)
+        const waveWidth = 100 + cycleTime * 50;
+        const distToWave = Math.abs(d - waveRadius);
         
-        // Narrow, high-frequency pulse curve (exponent of 7.5 to make wave peaks sharp)
-        const pulse = Math.max(0, Math.pow((waveVal + 1) / 2, 7.5));
+        let pulse = 0;
+        if (distToWave < waveWidth) {
+          const factor = 1 - (distToWave / waveWidth);
+          // Smooth bell curve shape using Math.sin and raised exponent
+          pulse = Math.pow(Math.sin(factor * Math.PI / 2), 4.0) * waveIntensity;
+        }
         
-        // Distance-Based Scaling (base: 1.1px, wave: 5.2px)
+        // Distance-Based Scaling (base: 1.1px, wave peak: 5.5px)
         const minRadius = 1.1;
-        const maxRadius = 5.2;
-        const rVal = minRadius + (maxRadius - minRadius) * pulse;
+        const maxRadiusVal = 5.5;
+        const rVal = minRadius + (maxRadiusVal - minRadius) * pulse;
         
-        // HSL Lightness breathing: from muted Sky Blue (55%) to Brilliant White (100%)
-        const lightness = 55 + 45 * pulse;
+        // Dynamic Color Temperature (Sky Blue to Brilliant White-Blue)
+        // Base state: HSL(200, 100%, 20%) -> Peak: HSL(200, 100%, 95%)
+        const lightness = 20 + 75 * pulse;
+        
+        // Opacity Mapping (Atmospheric Falloff emergence effect):
+        // Base state sits at 12% (0.12) -> Peak zone reaches 100% (1.0)
+        const opacity = 0.12 + 0.88 * pulse;
         
         // Render isolated dot (grid lines are invisible, stroke is disabled)
-        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.8)`;
+        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, ${opacity.toFixed(3)})`;
         ctx.beginPath();
         ctx.arc(dot.x, dot.y, rVal, 0, Math.PI * 2);
         ctx.fill();
