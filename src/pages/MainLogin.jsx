@@ -631,9 +631,8 @@ const MainLogin = () => {
           ctx.stroke();
         }
       }
-      
-      // Draw individual particle vertices (smaller and crisp)
-      particles.forEach((p) => {
+        // Draw individual particle vertices (smaller and crisp)
+        particles.forEach((p) => {
         if (p.projX === undefined) return;
         
         const baseSizeMultiplier = cycleTime >= 33000 ? 0.95 : 1.35;
