@@ -174,17 +174,17 @@ const MainLogin = () => {
           
           let baseR, baseG, baseB;
           if (normDist < 0.5) {
-            // Lerp from Vivid Electric Blue (59, 130, 246) to Deep Violet (139, 92, 246)
+            // Lerp from Vivid Teal/Cyan (6, 182, 212) to Cobalt Blue (59, 130, 246)
             const tCol = normDist / 0.5;
-            baseR = 59 + (139 - 59) * tCol;
-            baseG = 130 + (92 - 130) * tCol;
-            baseB = 246;
+            baseR = 6 + (59 - 6) * tCol;
+            baseG = 182 + (130 - 182) * tCol;
+            baseB = 212 + (246 - 212) * tCol;
           } else {
-            // Lerp from Deep Violet (139, 92, 246) to Hot Pink (236, 72, 153)
+            // Lerp from Cobalt Blue (59, 130, 246) to Slate Indigo (99, 102, 241)
             const tCol = (normDist - 0.5) / 0.5;
-            baseR = 139 + (236 - 139) * tCol;
-            baseG = 92 + (72 - 92) * tCol;
-            baseB = 246 + (153 - 246) * tCol;
+            baseR = 59 + (99 - 59) * tCol;
+            baseG = 130 + (102 - 130) * tCol;
+            baseB = 246 + (241 - 246) * tCol;
           }
           
           // 2. Active Pulse Lerp: base color -> Pure White (255, 255, 255) based on wave opacity
