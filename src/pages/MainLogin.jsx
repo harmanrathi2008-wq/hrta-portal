@@ -145,29 +145,22 @@ const MainLogin = () => {
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
       
-      // Sinusoidal shaking amplitude (swells at peak and resets before transition)
-      const vibrationAmp = isHolding ? 4.5 * Math.sin(holdProgress * Math.PI) : 0;
-      const vibrationFreq = elapsed * 0.06;
-      
       particles.forEach((p) => {
-        // 3D Depth wave jitter oscillation
+        // 3D Depth wave jitter oscillation (Z-axis)
         const zOffset = Math.sin(timeFactor * 1.5 + p.wavePhase) * 35;
         const targetZ = p.z + zOffset;
         
-        let localOffset = 0;
-        let lightness = 70;
+        // Gentle, slow 2D wave flow oscillation (X and Y axis) for fluid fabric wave
+        const waveX = Math.sin(timeFactor * 2.2 + p.wavePhase) * 8.5;
+        const waveY = Math.cos(timeFactor * 1.8 + p.wavePhase) * 5.5;
         
-        if (isHolding) {
-          localOffset = Math.sin(vibrationFreq + p.wavePhase) * vibrationAmp;
-          
-          // Shimmering: Shift lightness from 70% (Sky Blue) to 100% (Brilliant White)
-          const shimmer = Math.sin(vibrationFreq * 0.8 + p.wavePhase) * 0.5 + 0.5;
-          lightness = 70 + 30 * shimmer * (vibrationAmp / 4.5);
-        }
+        // Gentle HSL lightness breathing shimmer (smooth 70% to 92% transition)
+        const shimmer = Math.sin(timeFactor * 2.2 + p.wavePhase) * 0.5 + 0.5;
+        const lightness = 70 + 22 * shimmer;
         
-        // Move entire cloud in perfect grid unison
-        let targetX = gridCx + p.gridX + localOffset;
-        let targetY = gridCy + p.gridY + localOffset;
+        // Move entire cloud in perfect grid unison, adding the smooth continuous wave flow
+        let targetX = gridCx + p.gridX + waveX;
+        let targetY = gridCy + p.gridY + waveY;
         
         // Interactive Cursor Repulsion in 2D Space
         if (mouseX !== -1000) {
@@ -193,7 +186,7 @@ const MainLogin = () => {
         const projY = centerY + targetY * scale * scaleMultiplier;
         
         // Render as beautiful glowing micro-orbs (circles) scaled by depth
-        const particleSize = Math.max(0.8, p.baseSize * scale * (isHolding ? 1.0 + (vibrationAmp / 4.5) * 0.4 : 1.0));
+        const particleSize = Math.max(0.8, p.baseSize * scale * (0.85 + shimmer * 0.3));
         
         ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.75)`;
         ctx.beginPath();
