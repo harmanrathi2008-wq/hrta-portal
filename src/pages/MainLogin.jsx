@@ -443,7 +443,28 @@ const MainLogin = () => {
       return coords;
     };
 
+    const calculateConnections = (coords, maxDist = 8.0) => {
+      const connections = [];
+      const N = coords.length;
+      for (let i = 0; i < N; i++) {
+        const p1 = coords[i];
+        for (let j = i + 1; j < N; j++) {
+          const p2 = coords[j];
+          const dx = Math.abs(p1.x - p2.x);
+          const dy = Math.abs(p1.y - p2.y);
+          if (dx <= maxDist && dy <= maxDist) {
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= maxDist) {
+              connections.push([i, j]);
+            }
+          }
+        }
+      }
+      return connections;
+    };
+
     const mathTargets = generateMathTargets();
+    const mathConnections = calculateConnections(mathTargets);
 
     const physText = [
       { text: 'τ = I α', x: 220, y: 140, font: 'bold 42px "Courier New", monospace' },
@@ -473,11 +494,16 @@ const MainLogin = () => {
       discCoords.push({ x: 10 * Math.cos(phi), y: -120, z: 10 * Math.sin(phi) });
     }
     const physTargets = [...physTextCoords, ...discCoords];
+    const physConnections = calculateConnections(physTargets);
 
     const chemTargets0 = generateChemCoords(0);
     const chemTargets1 = generateChemCoords(1);
     const chemTargets2 = generateChemCoords(2);
     const chemTargets3 = generateChemCoords(3);
+    const chemConnections0 = calculateConnections(chemTargets0);
+    const chemConnections1 = calculateConnections(chemTargets1);
+    const chemConnections2 = calculateConnections(chemTargets2);
+    const chemConnections3 = calculateConnections(chemTargets3);
 
     // HRTA Logo targets
     const logoTargets = [];
@@ -512,6 +538,7 @@ const MainLogin = () => {
       const theta = Math.random() * Math.PI * 2;
       logoTargets.push({ x: 60 * Math.sin(phi) * Math.cos(theta), y: 60 * Math.sin(phi) * Math.sin(theta), z: 60 * Math.cos(phi) });
     }
+    const logoConnections = calculateConnections(logoTargets);
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
@@ -565,10 +592,13 @@ const MainLogin = () => {
 
       // Choose active coordinate set
       let activeCoords = [];
+      let activeConnections = [];
       if (cycleTime < 11000) {
         activeCoords = mathTargets;
+        activeConnections = mathConnections;
       } else if (cycleTime < 22000) {
         activeCoords = physTargets;
+        activeConnections = physConnections;
       } else if (cycleTime < 33000) {
         const holdElapsed = Math.max(0, phaseTime - 2500);
         let subPhase = 0;
@@ -576,12 +606,22 @@ const MainLogin = () => {
         else if (phaseTime >= 9500) subPhase = 3;
         else subPhase = Math.min(3, Math.floor(holdElapsed / 1750));
         
-        if (subPhase === 0) activeCoords = chemTargets0;
-        else if (subPhase === 1) activeCoords = chemTargets1;
-        else if (subPhase === 2) activeCoords = chemTargets2;
-        else activeCoords = chemTargets3;
+        if (subPhase === 0) {
+          activeCoords = chemTargets0;
+          activeConnections = chemConnections0;
+        } else if (subPhase === 1) {
+          activeCoords = chemTargets1;
+          activeConnections = chemConnections1;
+        } else if (subPhase === 2) {
+          activeCoords = chemTargets2;
+          activeConnections = chemConnections2;
+        } else {
+          activeCoords = chemTargets3;
+          activeConnections = chemConnections3;
+        }
       } else {
         activeCoords = logoTargets;
+        activeConnections = logoConnections;
       }
 
       const N = activeCoords.length;
@@ -656,54 +696,34 @@ const MainLogin = () => {
         ctx.shadowColor = `hsla(${hue}, ${sat}%, ${light}%, 0.4)`;
         
         ctx.beginPath();
-        let firstPoint = true;
-        for (let i = 0; i < currentLimit - 1; i++) {
-          const p1 = projected[i];
-          const p2 = projected[i + 1];
-          if (!p1 || !p2) { firstPoint = true; continue; }
-
-          const dx = activeCoords[i].x - activeCoords[i+1].x;
-          const dy = activeCoords[i].y - activeCoords[i+1].y;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
-          if (dist < 15) {
-            if (firstPoint) {
+        activeConnections.forEach(([i, j]) => {
+          if (i < currentLimit && j < currentLimit) {
+            const p1 = projected[i];
+            const p2 = projected[j];
+            if (p1 && p2 && p1.x !== undefined && p2.x !== undefined) {
               ctx.moveTo(p1.x, p1.y);
-              firstPoint = false;
+              ctx.lineTo(p2.x, p2.y);
             }
-            ctx.lineTo(p2.x, p2.y);
-          } else {
-            firstPoint = true;
           }
-        }
+        });
         ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, 0.28)`;
-        ctx.lineWidth = 5.0;
+        ctx.lineWidth = 4.2;
         ctx.stroke();
 
         // 2. Draw Core Laser Line (Thin & Bright)
         ctx.beginPath();
-        firstPoint = true;
-        for (let i = 0; i < currentLimit - 1; i++) {
-          const p1 = projected[i];
-          const p2 = projected[i + 1];
-          if (!p1 || !p2) { firstPoint = true; continue; }
-
-          const dx = activeCoords[i].x - activeCoords[i+1].x;
-          const dy = activeCoords[i].y - activeCoords[i+1].y;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          
-          if (dist < 15) {
-            if (firstPoint) {
+        activeConnections.forEach(([i, j]) => {
+          if (i < currentLimit && j < currentLimit) {
+            const p1 = projected[i];
+            const p2 = projected[j];
+            if (p1 && p2 && p1.x !== undefined && p2.x !== undefined) {
               ctx.moveTo(p1.x, p1.y);
-              firstPoint = false;
+              ctx.lineTo(p2.x, p2.y);
             }
-            ctx.lineTo(p2.x, p2.y);
-          } else {
-            firstPoint = true;
           }
-        }
+        });
         ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light + 12}%, 0.95)`;
-        ctx.lineWidth = 1.85;
+        ctx.lineWidth = 1.75;
         ctx.stroke();
         
         // Reset shadows to preserve performance
