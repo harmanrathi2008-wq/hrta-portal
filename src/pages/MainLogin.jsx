@@ -46,7 +46,7 @@ const MainLogin = () => {
   }, [activeTab]);
 
 
-  // 3D Bioluminescent Particle Wave Flow Background Animation (Highly Optimized Sprite-based Canvas)
+  // Professional Micro-Particle AI Flow Background Animation (Ultra-High Performance 144 FPS Engine)
   useEffect(() => {
     const canvas = document.getElementById('cosmic-canvas');
     if (!canvas) return;
@@ -54,7 +54,9 @@ const MainLogin = () => {
     if (!ctx) return;
 
     let animationFrameId;
-    const PARTICLE_COUNT = 450;
+    const COLS = 25;
+    const ROWS = 18;
+    const PARTICLE_COUNT = COLS * ROWS; // 450
     const particles = [];
     const startTime = Date.now();
     
@@ -67,57 +69,30 @@ const MainLogin = () => {
       canvas.height = window.innerHeight;
     };
 
-    // Pre-render radial gradient sprites on offscreen canvases for 100% lag-free performance!
-    const createGlowSprite = (color, size = 64) => {
-      const spriteCanvas = document.createElement('canvas');
-      spriteCanvas.width = size;
-      spriteCanvas.height = size;
-      const sCtx = spriteCanvas.getContext('2d');
-      const center = size / 2;
-      
-      const grad = sCtx.createRadialGradient(center, center, 0, center, center, center);
-      
-      if (color === 'cyan') {
-        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.22, 'rgba(0, 255, 235, 0.9)');
-        grad.addColorStop(0.55, 'rgba(0, 180, 255, 0.22)');
-        grad.addColorStop(1, 'rgba(0, 180, 255, 0)');
-      } else if (color === 'magenta') {
-        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.22, 'rgba(255, 0, 128, 0.9)');
-        grad.addColorStop(0.55, 'rgba(180, 0, 128, 0.22)');
-        grad.addColorStop(1, 'rgba(180, 0, 128, 0)');
-      } else { // blue-white-hot core
-        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.18, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.42, 'rgba(0, 100, 255, 0.7)');
-        grad.addColorStop(0.72, 'rgba(0, 50, 200, 0.18)');
-        grad.addColorStop(1, 'rgba(0, 50, 200, 0)');
+    // Initialize particles in a structural grid (maintain cloud rectangular integrity)
+    // Width: 420 units (-210 to 210), Height: 280 units (-140 to 140)
+    const spacingX = 420 / 24;
+    const spacingY = 280 / 17;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const gridX = (c - 12) * spacingX;
+        const gridY = (r - 8.5) * spacingY;
+        particles.push({
+          gridX,
+          gridY,
+          z: (Math.random() - 0.5) * 60, // depth layer offset
+          baseSize: 1.5,
+          wavePhase: gridX * 0.015 + gridY * 0.02
+        });
       }
-      
-      sCtx.fillStyle = grad;
-      sCtx.fillRect(0, 0, size, size);
-      return spriteCanvas;
-    };
-
-    const spriteCyan = createGlowSprite('cyan');
-    const spriteMagenta = createGlowSprite('magenta');
-    const spriteBlue = createGlowSprite('blue');
-
-    // Populate particles in 3D depth space
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const colorType = Math.random() < 0.45 ? 'cyan' : (Math.random() < 0.82 ? 'magenta' : 'blue');
-      particles.push({
-        x: (Math.random() - 0.5) * window.innerWidth * 1.5,
-        y: Math.random() * window.innerHeight * 1.2 - 100,
-        z: (Math.random() - 0.5) * 400,
-        speedY: Math.random() * 0.7 + 0.3,
-        baseRadius: Math.random() * 8 + 3.5,
-        wavePhase: Math.random() * Math.PI * 2,
-        colorType,
-        pulseOffset: Math.random() * Math.PI * 2
-      });
     }
+
+    const corners = [
+      { p0: { x: 220, y: -140 }, p1: { x: 300, y: 0 }, p2: { x: 220, y: 140 } },  // TR -> BR
+      { p0: { x: 220, y: 140 }, p1: { x: 0, y: 220 }, p2: { x: -220, y: 140 } },  // BR -> BL
+      { p0: { x: -220, y: 140 }, p1: { x: -300, y: 0 }, p2: { x: -220, y: -140 } }, // BL -> TL
+      { p0: { x: -220, y: -140 }, p1: { x: 0, y: -220 }, p2: { x: 220, y: -140 } }  // TL -> TR
+    ];
 
     const handleMouseMove = (e) => {
       mouseX = e.clientX;
@@ -128,42 +103,69 @@ const MainLogin = () => {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      // Use screen composite mode for vibrant, additive, overlap glow brightness
+      // Use screen composite mode for high-end layered graphics look
       ctx.globalCompositeOperation = 'screen';
       
-      const time = (Date.now() - startTime) * 0.0015;
+      const elapsed = Date.now() - startTime;
+      const cycleTime = elapsed % 18000;
+      const phaseIndex = Math.floor(cycleTime / 4500); // 0, 1, 2, 3
+      const phaseTime = cycleTime % 4500;
+      
+      let gridCx = 0;
+      let gridCy = 0;
+      let isHolding = false;
+      let holdProgress = 0;
+      
+      if (phaseTime < 3000) {
+        // Hold Phase at Corner: Shimmering sinusoidal vibration
+        isHolding = true;
+        holdProgress = phaseTime / 3000;
+        gridCx = corners[phaseIndex].p0.x;
+        gridCy = corners[phaseIndex].p0.y;
+      } else {
+        // Bezier Interpolation Transition Phase
+        const t = (phaseTime - 3000) / 1500;
+        const curve = corners[phaseIndex];
+        const mt = 1 - t;
+        gridCx = mt * mt * curve.p0.x + 2 * mt * t * curve.p1.x + t * t * curve.p2.x;
+        gridCy = mt * mt * curve.p0.y + 2 * mt * t * curve.p1.y + t * t * curve.p2.y;
+      }
+      
+      const timeFactor = elapsed * 0.0015;
       const centerX = canvas.width / 2;
       const centerY = canvas.height / 2;
       
-      // Pre-compute single frame wave values
-      const globalWaveX = Math.sin(time * 0.3) * 60;
-      const globalWaveZ = Math.cos(time * 0.25) * 40;
+      // Sinusoidal shaking amplitude (swells at peak and resets before transition)
+      const vibrationAmp = isHolding ? 4.5 * Math.sin(holdProgress * Math.PI) : 0;
+      const vibrationFreq = elapsed * 0.06;
       
       particles.forEach((p) => {
-        // Continuous downward wave drift
-        p.y += p.speedY;
-        if (p.y > canvas.height + 50) {
-          p.y = -50;
-          p.x = (Math.random() - 0.5) * canvas.width * 1.5;
-          p.z = (Math.random() - 0.5) * 400;
+        // 3D Depth wave jitter oscillation
+        const zOffset = Math.sin(timeFactor * 1.5 + p.wavePhase) * 35;
+        const targetZ = p.z + zOffset;
+        
+        let localOffset = 0;
+        let lightness = 70;
+        
+        if (isHolding) {
+          localOffset = Math.sin(vibrationFreq + p.wavePhase) * vibrationAmp;
+          
+          // Shimmering: Shift lightness from 70% (Sky Blue) to 100% (Brilliant White)
+          const shimmer = Math.sin(vibrationFreq * 0.8 + p.wavePhase) * 0.5 + 0.5;
+          lightness = 70 + 30 * shimmer * (vibrationAmp / 4.5);
         }
         
-        // Dynamic fluid wave distortion
-        const localTimePhase = time * 0.8 + p.wavePhase;
-        const dx = Math.sin(p.y * 0.005 + localTimePhase) * 35 + globalWaveX;
-        const dz = Math.cos(p.y * 0.006 + localTimePhase) * 25 + globalWaveZ;
+        // Move entire cloud in perfect grid unison
+        let targetX = gridCx + p.gridX + localOffset;
+        let targetY = gridCy + p.gridY + localOffset;
         
-        let targetX = p.x + dx;
-        let targetY = p.y;
-        let targetZ = p.z + dz;
-        
-        // Fluid Mouse Repulsion in 3D Space
+        // Interactive Cursor Repulsion in 2D Space
         if (mouseX !== -1000) {
-          const diffX = targetX - (mouseX - centerX);
-          const diffY = targetY - (mouseY - centerY);
+          const diffX = targetX - (mouseX - centerX) * 0.35;
+          const diffY = targetY - (mouseY - centerY) * 0.35;
           const dist2D = Math.sqrt(diffX * diffX + diffY * diffY);
-          if (dist2D < 180) {
-            const pushForce = (180 - dist2D) / 180 * 45;
+          if (dist2D < 110) {
+            const pushForce = (110 - dist2D) / 110 * 20;
             targetX += (diffX / (dist2D || 1)) * pushForce;
             targetY += (diffY / (dist2D || 1)) * pushForce;
           }
@@ -174,34 +176,17 @@ const MainLogin = () => {
         const distance = 250;
         const scale = fov / (fov + targetZ + distance);
         
-        const projX = centerX + targetX * scale;
-        const projY = targetY * scale;
+        const sizeFactor = canvas.width < 768 ? canvas.width / 800 : 1.0;
+        const scaleMultiplier = 2.45 * sizeFactor;
         
-        // Center particles pulse to white-hot intensity
-        let sprite = spriteCyan;
-        if (p.colorType === 'magenta') {
-          sprite = spriteMagenta;
-        } else if (p.colorType === 'blue') {
-          sprite = spriteBlue;
-        }
+        const projX = centerX + targetX * scale * scaleMultiplier;
+        const projY = centerY + targetY * scale * scaleMultiplier;
         
-        const pulse = Math.sin(time * 1.5 + p.pulseOffset) * 0.35 + 0.65;
-        let finalRadius = p.baseRadius * scale * (0.8 + pulse * 0.4);
-        if (finalRadius < 0.5) finalRadius = 0.5;
+        // Render as dense micro-pixels (no gradients, ultra-low GPU overhead!)
+        const particleSize = Math.max(1, Math.round(p.baseSize * scale * (isHolding ? 1.0 + (vibrationAmp / 4.5) * 0.4 : 1.0)));
         
-        const distFromCenter = Math.abs(projX - centerX);
-        if (distFromCenter < 220) {
-          const centerFactor = (220 - distFromCenter) / 220;
-          const centerPulse = Math.sin(time * 2.5 + p.pulseOffset) * 0.5 + 0.5;
-          if (centerFactor * centerPulse > 0.45) {
-            sprite = spriteBlue;
-            finalRadius *= 1.25;
-          }
-        }
-        
-        // Render pre-rendered gradient sprite (fully GPU hardware accelerated!)
-        const size = finalRadius * 3.8;
-        ctx.drawImage(sprite, projX - size / 2, projY - size / 2, size, size);
+        ctx.fillStyle = `hsla(200, 100%, ${Math.round(lightness)}%, 0.7)`;
+        ctx.fillRect(projX - particleSize / 2, projY - particleSize / 2, particleSize, particleSize);
       });
       
       ctx.globalCompositeOperation = 'source-over';
