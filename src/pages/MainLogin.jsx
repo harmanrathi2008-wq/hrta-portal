@@ -144,7 +144,7 @@ const MainLogin = () => {
             coords.push({
               x: (x - 300) * 0.9,
               y: (y - 200) * 0.9,
-              z: (Math.random() - 0.5) * 15
+              z: 0
             });
           }
         }
@@ -220,7 +220,7 @@ const MainLogin = () => {
             coords.push({
               x: (x - 350) * 0.9,
               y: (y - 200) * 0.9,
-              z: (Math.random() - 0.5) * 15
+              z: 0
             });
           }
         }
@@ -605,7 +605,7 @@ const MainLogin = () => {
       });
       
       // Draw wireframe connecting lines in sequence (CAD blueprint layout)
-      ctx.lineWidth = 0.9;
+      ctx.lineWidth = 1.6;
       for (let i = 0; i < particles.length - 1; i++) {
         const p1 = particles[i];
         const p2 = particles[i + 1];
@@ -613,21 +613,20 @@ const MainLogin = () => {
         // Skip if either particle is clipped (behind camera)
         if (p1.projX === undefined || p2.projX === undefined) continue;
         
-        // Calculate spatial distance between coordinates
+        // Calculate spatial distance in 2D target coordinate space to ignore depth offsets
         const dx = p1.cx - p2.cx;
         const dy = p1.cy - p2.cy;
-        const dz = p1.cz - p2.cz;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const dist = Math.sqrt(dx * dx + dy * dy);
         
-        // Only connect if they are close in the target structure (less than 9 units)
-        if (dist < 9) {
+        // Only connect if they are close in the target structure (less than 15 units)
+        if (dist < 15) {
           ctx.beginPath();
           ctx.moveTo(p1.projX, p1.projY);
           ctx.lineTo(p2.projX, p2.projY);
           const hue = Math.round((p1.hue + p2.hue) / 2);
           const sat = Math.round((p1.sat + p2.sat) / 2);
           const light = Math.round((p1.light + p2.light) / 2);
-          ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, ${ease * 0.35})`;
+          ctx.strokeStyle = `hsla(${hue}, ${sat}%, ${light}%, ${ease * 0.9})`;
           ctx.stroke();
         }
       }
@@ -995,7 +994,7 @@ const MainLogin = () => {
         
         {/* LEFT COLUMN - INSTRUCTIONS (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-7/12 space-y-6">
-          <div className="bg-[#0c1017]/5 border border-white/5 backdrop-blur-[2px] rounded-2xl shadow-2xl overflow-hidden">
+          <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-transparent text-white px-5 py-4 border-b border-white/5 font-bold uppercase tracking-wide text-xs flex justify-between items-center">
               <span>Steps to Apply Online</span>
               <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded text-[10px] font-black uppercase">HRTA 2026</span>
@@ -1038,7 +1037,7 @@ const MainLogin = () => {
 
         {/* RIGHT COLUMN - LOGIN BOX (100% TRANSPARENT GLASSMORPHISM) */}
         <div className="w-full md:w-5/12">
-          <div className="bg-[#0c1017]/5 border border-white/10 backdrop-blur-[2px] shadow-2xl rounded-2xl overflow-hidden">
+          <div className="bg-transparent border border-white/10 shadow-2xl rounded-2xl overflow-hidden">
             
             {/* Form Header */}
             <div className="bg-transparent text-white text-center py-4 border-b border-white/5 font-bold text-base uppercase tracking-wider">
