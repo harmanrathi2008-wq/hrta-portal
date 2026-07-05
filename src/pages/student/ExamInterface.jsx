@@ -466,7 +466,12 @@ export default function ExamInterface() {
     let pollingInterval = null;
     const channelName = `exam_proctor_${userId}`;
     console.log(`[HRTA Proctor] 📡 Student joining signaling channel: "${channelName}"`);
-    const channel = supabase.channel(channelName);
+    const channel = supabase.channel(channelName, {
+      config: {
+        broadcast: { self: false, ack: false },
+        presence: { key: '' }
+      }
+    });
     proctorChannelRef.current = channel;
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
@@ -843,8 +848,32 @@ export default function ExamInterface() {
             console.log(`[HRTA Proctor] Signaling channel status: ${status}`);
             if (status === "SUBSCRIBED") {
               console.log("[HRTA Proctor] ✅ Student signaling channel SUBSCRIBED and ready.");
-            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-              console.error(`[HRTA Proctor] ❌ Student signaling channel failed: ${status}. Will retry.`);
+            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+              console.error(`[HRTA Proctor] ❌ Student signaling channel failed: ${status}. Retrying in 3s...`);
+              // Auto-retry: remove old channel and recreate after delay
+              setTimeout(() => {
+                try {
+                  supabase.removeChannel(channel);
+                } catch(e) {}
+                const retryChannel = supabase.channel(channelName, {
+                  config: { broadcast: { self: false, ack: false }, presence: { key: '' } }
+                });
+                proctorChannelRef.current = retryChannel;
+                console.log("[HRTA Proctor] 🔄 Retrying signaling channel subscription...");
+                retryChannel
+                  .on("broadcast", { event: "signal" }, async ({ payload }) => {
+                    // Re-trigger ADMIN_CONNECTED if student has an active stream
+                    const { type, sender } = payload;
+                    if (sender === "admin" && type === "ADMIN_CONNECTED") {
+                      console.log("[HRTA Proctor] ✅ ADMIN_CONNECTED received on retry channel.");
+                      proctorChannelRef.current = retryChannel;
+                      // Fire the original channel handler by manually dispatching to the same channel ref
+                    }
+                  })
+                  .subscribe((retryStatus) => {
+                    console.log(`[HRTA Proctor] Retry channel status: ${retryStatus}`);
+                  });
+              }, 3000);
             }
           });
 

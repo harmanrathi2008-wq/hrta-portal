@@ -164,7 +164,12 @@ const AdminDashboard = () => {
     const studentId = session.student_id;
     const channelName = `exam_proctor_${studentId}`;
     console.log(`[HRTA Proctor] 📡 Admin joining signaling channel: "${channelName}" for student: ${studentId}`);
-    const channel = supabase.channel(channelName);
+    const channel = supabase.channel(channelName, {
+      config: {
+        broadcast: { self: false, ack: false },
+        presence: { key: '' }
+      }
+    });
     proctorChannelRef.current = channel;
 
     const pc = new RTCPeerConnection({
