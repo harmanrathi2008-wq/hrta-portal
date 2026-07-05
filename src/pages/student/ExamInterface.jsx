@@ -229,6 +229,10 @@ export default function ExamInterface() {
 
   // App & Exam States
   const [student, setStudent] = useState(null);
+  const studentRef = useRef(null);
+  useEffect(() => {
+    studentRef.current = student;
+  }, [student]);
   const [exam, setExam] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [timeSpent, setTimeSpent] = useState({});
@@ -648,7 +652,7 @@ export default function ExamInterface() {
                 body: JSON.stringify({
                   userId: userId || 'Unknown',
                   userRole: 'student',
-                  displayName: student?.full_name || 'Student',
+                  displayName: studentRef.current?.full_name || 'Student',
                   action: 'CHANNEL_AUTH_FAILURE',
                   details: {
                     exam_id: examId,
@@ -692,7 +696,7 @@ export default function ExamInterface() {
                     body: JSON.stringify({
                       userId: userId || 'Unknown',
                       userRole: 'student',
-                      displayName: student?.full_name || 'Student',
+                      displayName: studentRef.current?.full_name || 'Student',
                       action: 'SIGNALING_ESTABLISHED',
                       details: { exam_id: examId, connection_state: pc.connectionState }
                     })
@@ -705,7 +709,7 @@ export default function ExamInterface() {
                       body: JSON.stringify({
                         userId: userId || 'Unknown',
                         userRole: 'student',
-                        displayName: student?.full_name || 'Student',
+                        displayName: studentRef.current?.full_name || 'Student',
                         action: 'STREAM_DISCONNECTED',
                         details: { exam_id: examId, connection_state: pc.connectionState }
                       })
@@ -835,7 +839,7 @@ export default function ExamInterface() {
             body: JSON.stringify({
               userId: userId || 'Unknown',
               userRole: 'student',
-              displayName: student?.full_name || sessionStorage.getItem('userEmail') || 'Student',
+              displayName: studentRef.current?.full_name || sessionStorage.getItem('userEmail') || 'Student',
               action: 'PERMISSION_REVOKED',
               details: { exam_id: examId, reason: 'initialization_failed', error: err.message }
             })
@@ -862,7 +866,7 @@ export default function ExamInterface() {
       }
       sessionStorage.removeItem("cameraGranted");
     };
-  }, [exam, student]);
+  }, [examId, exam?.id]);
 
   // Listen to browser lifecycle termination (Unexpected Tab Close)
   useEffect(() => {

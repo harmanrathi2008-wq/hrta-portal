@@ -765,10 +765,27 @@ const AdminDashboard = () => {
       )
       .subscribe();
 
+    // Subscribe to real-time updates of audit_logs
+    const auditRealtimeChannel = supabase
+      .channel('admin-audit-logs-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'audit_logs'
+        },
+        () => {
+          fetchAuditLogs();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(realtimeChannel);
       supabase.removeChannel(locksRealtimeChannel);
       supabase.removeChannel(ticketsRealtimeChannel);
+      supabase.removeChannel(auditRealtimeChannel);
     };
   }, [navigate]);
 
