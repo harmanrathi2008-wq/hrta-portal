@@ -41,6 +41,7 @@ export default function ExamInterface() {
   const localStreamRef = React.useRef(null);
   const peerConnectionRef = React.useRef(null);
   const proctorChannelRef = React.useRef(null);
+  const studentIceQueueRef = React.useRef([]);
   const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
@@ -643,6 +644,7 @@ export default function ExamInterface() {
               if (peerConnectionRef.current) {
                 peerConnectionRef.current.close();
               }
+              studentIceQueueRef.current = [];
 
               const pc = new RTCPeerConnection({
                 iceServers: [
@@ -712,9 +714,27 @@ export default function ExamInterface() {
               });
 
             } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
-              await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
+              try {
+                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
+                while (studentIceQueueRef.current.length > 0) {
+                  const candidate = studentIceQueueRef.current.shift();
+                  await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(e =>
+                    console.warn("Error processing queued candidate on student:", e)
+                  );
+                }
+              } catch (sdpErr) {
+                console.error("Error setting remote description/SDP answer:", sdpErr);
+              }
             } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
-              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+              try {
+                if (peerConnectionRef.current.remoteDescription) {
+                  await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+                } else {
+                  studentIceQueueRef.current.push(data);
+                }
+              } catch (iceErr) {
+                console.error("Error setting ICE candidate on student:", iceErr);
+              }
             } else if (type === "ADMIN_DISCONNECTED") {
               if (peerConnectionRef.current) {
                 peerConnectionRef.current.close();

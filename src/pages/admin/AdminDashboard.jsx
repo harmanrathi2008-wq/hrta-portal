@@ -252,12 +252,16 @@ const AdminDashboard = () => {
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          // Send request to begin streaming
-          channel.send({
-            type: "broadcast",
-            event: "signal",
-            payload: { type: "ADMIN_CONNECTED", sender: "admin" }
-          });
+          // Send request to begin streaming after a brief delay to ensure signaling channel is fully ready
+          setTimeout(() => {
+            if (proctorChannelRef.current) {
+              proctorChannelRef.current.send({
+                type: "broadcast",
+                event: "signal",
+                payload: { type: "ADMIN_CONNECTED", sender: "admin" }
+              });
+            }
+          }, 800);
         }
       });
   };
