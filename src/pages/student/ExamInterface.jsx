@@ -259,6 +259,51 @@ export default function ExamInterface() {
 
   const [imageError, setImageError] = useState(false);
 
+  // Preload upcoming question images in the background to ensure instantaneous display
+  useEffect(() => {
+    if (!questions || questions.length === 0) return;
+    
+    // Preload next 3 questions
+    const preloadRange = 3;
+    for (let i = 1; i <= preloadRange; i++) {
+      const nextIdx = currentIdx + i;
+      if (nextIdx < questions.length) {
+        const nextQ = questions[nextIdx];
+        if (nextQ && nextQ.image_url && nextQ.image_url.trim() !== "" && nextQ.image_url !== "null") {
+          const img = new Image();
+          img.src = nextQ.image_url;
+        }
+        
+        // Also preload option images if they exist in options
+        if (nextQ && nextQ.options) {
+          let parsedOptions = [];
+          try {
+            parsedOptions = typeof nextQ.options === 'string' ? JSON.parse(nextQ.options) : nextQ.options;
+          } catch (e) {}
+          
+          if (Array.isArray(parsedOptions)) {
+            parsedOptions.forEach(opt => {
+              if (opt && typeof opt === 'object') {
+                if (opt.image_url && opt.image_url.trim() !== "") {
+                  const img = new Image();
+                  img.src = opt.image_url;
+                }
+              } else if (typeof opt === 'string' && opt.trim() !== "") {
+                try {
+                  const parsed = JSON.parse(opt);
+                  if (parsed.image_url && parsed.image_url.trim() !== "") {
+                    const img = new Image();
+                    img.src = parsed.image_url;
+                  }
+                } catch (e) {}
+              }
+            });
+          }
+        }
+      }
+    }
+  }, [currentIdx, questions]);
+
 
   // Fetch Data: Student, Exam, Questions
   useEffect(() => {
@@ -600,7 +645,13 @@ export default function ExamInterface() {
               }
 
               const pc = new RTCPeerConnection({
-                iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+                iceServers: [
+                  { urls: "stun:stun.l.google.com:19302" },
+                  { urls: "stun:stun1.l.google.com:19302" },
+                  { urls: "stun:stun2.l.google.com:19302" },
+                  { urls: "stun:stun3.l.google.com:19302" },
+                  { urls: "stun:stun4.l.google.com:19302" }
+                ]
               });
               peerConnectionRef.current = pc;
 

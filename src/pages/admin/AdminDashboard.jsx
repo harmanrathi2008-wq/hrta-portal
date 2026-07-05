@@ -159,7 +159,13 @@ const AdminDashboard = () => {
     proctorChannelRef.current = channel;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" }
+      ]
     });
     peerConnectionRef.current = pc;
 
@@ -1987,14 +1993,13 @@ CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon 
 
             {/* Video Stream Container */}
             <div className="relative aspect-video bg-black flex items-center justify-center p-2 border-b border-white/5">
-              {remoteStream ? (
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover rounded-xl border border-white/10"
-                />
-              ) : (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className={`w-full h-full object-cover rounded-xl border border-white/10 ${remoteStream ? 'block' : 'hidden'}`}
+              />
+              {!remoteStream && (
                 <div className="text-center space-y-4">
                   <div className="w-12 h-12 rounded-full border-t-2 border-red-500 animate-spin mx-auto"></div>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse">
