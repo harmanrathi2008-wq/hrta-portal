@@ -219,9 +219,11 @@ const AdminDashboard = () => {
               // Process any queued ICE candidates
               while (iceCandidateQueue.length > 0) {
                 const candidate = iceCandidateQueue.shift();
-                await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => 
-                  console.warn("Error processing queued candidate:", e)
-                );
+                if (candidate) {
+                  await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => 
+                    console.warn("Error processing queued candidate:", e)
+                  );
+                }
               }
             } catch (err) {
               console.error("Error establishing connection with offer:", err);
@@ -229,10 +231,12 @@ const AdminDashboard = () => {
             }
           } else if (type === "ICE_CANDIDATE") {
             try {
-              if (pc.remoteDescription) {
-                await pc.addIceCandidate(new RTCIceCandidate(data));
-              } else {
-                iceCandidateQueue.push(data);
+              if (data) {
+                if (pc.remoteDescription) {
+                  await pc.addIceCandidate(new RTCIceCandidate(data));
+                } else {
+                  iceCandidateQueue.push(data);
+                }
               }
             } catch (err) {
               console.error("Error setting ICE candidate:", err);

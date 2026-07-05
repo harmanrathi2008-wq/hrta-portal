@@ -43,6 +43,7 @@ export default function ExamInterface() {
   const proctorChannelRef = React.useRef(null);
   const studentIceQueueRef = React.useRef([]);
   const maxWarningsRef = React.useRef(5);
+  const isConnectingRef = React.useRef(false);
   const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
@@ -498,11 +499,18 @@ export default function ExamInterface() {
 
     const startCameraAndProctoring = async () => {
       try {
-        // Capture video and audio stream silently
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, frameRate: 15 },
-          audio: { echoCancellation: true, noiseSuppression: true }
-        });
+        // Capture video and audio stream silently with fallback to video-only if microphone is missing/denied
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480, frameRate: 15 },
+            audio: { echoCancellation: true, noiseSuppression: true }
+          });
+        } catch (audioErr) {
+          console.warn("Failing back to video-only capture:", audioErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480, frameRate: 15 }
+          });
+        }
         localStreamRef.current = stream;
 
         // Bind stream to offscreen video element for frame analysis
@@ -665,8 +673,15 @@ export default function ExamInterface() {
             }
 
             if (type === "ADMIN_CONNECTED") {
+              if (isConnectingRef.current) {
+                console.log("Ignored ADMIN_CONNECTED: WebRTC connection setup already in progress.");
+                return;
+              }
+              isConnectingRef.current = true;
+
               if (peerConnectionRef.current) {
                 peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
               }
               studentIceQueueRef.current = [];
 
@@ -674,6 +689,7 @@ export default function ExamInterface() {
               const activeStream = await getActiveStream();
               if (!activeStream) {
                 console.warn("WebRTC aborted: No active camera stream available.");
+                isConnectingRef.current = false;
                 return;
               }
 
@@ -740,25 +756,30 @@ export default function ExamInterface() {
                 event: "signal",
                 payload: { type: "SDP_OFFER", sender: "student", data: offer }
               });
+              isConnectingRef.current = false;
 
             } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
               try {
                 await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
                 while (studentIceQueueRef.current.length > 0) {
                   const candidate = studentIceQueueRef.current.shift();
-                  await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(e =>
-                    console.warn("Error processing queued candidate on student:", e)
-                  );
+                  if (candidate) {
+                    await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(e =>
+                      console.warn("Error processing queued candidate on student:", e)
+                    );
+                  }
                 }
               } catch (sdpErr) {
                 console.error("Error setting remote description/SDP answer:", sdpErr);
               }
             } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
               try {
-                if (peerConnectionRef.current.remoteDescription) {
-                  await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
-                } else {
-                  studentIceQueueRef.current.push(data);
+                if (data) {
+                  if (peerConnectionRef.current.remoteDescription) {
+                    await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
+                  } else {
+                    studentIceQueueRef.current.push(data);
+                  }
                 }
               } catch (iceErr) {
                 console.error("Error setting ICE candidate on student:", iceErr);
