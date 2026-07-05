@@ -282,15 +282,35 @@ const StudentResults = () => {
         const resultId = queryParams.get('resultId');
         const token = queryParams.get('token');
 
-        if (!resultId || !token) {
+        if (!resultId) {
           setIsBlocked(true);
-          setErrorMessage('Access Denied: Scorecards can only be accessed using the unique link sent to your registered email address.');
+          setErrorMessage('Access Denied: Result ID is required.');
+          setLoading(false);
+          return;
+        }
+
+        // Get student's supabase session to verify identity securely in the backend
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (!token && !session) {
+          setIsBlocked(true);
+          setErrorMessage('Access Denied: Scorecards can only be accessed using the unique link sent to your registered email address or by logging into your portal.');
           setLoading(false);
           return;
         }
 
         const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-        const response = await fetch(`${apiBaseUrl}/api/verify-scorecard-token?resultId=${resultId}&token=${token}`);
+        const urlTokenParam = token ? `&token=${token}` : '';
+        
+        const headers = {};
+        if (session) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+
+        const response = await fetch(
+          `${apiBaseUrl}/api/verify-scorecard-token?resultId=${resultId}${urlTokenParam}`,
+          { headers }
+        );
         
         if (!response.ok) {
           const errData = await response.json();

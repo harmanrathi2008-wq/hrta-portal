@@ -1825,14 +1825,60 @@ Please do not reply directly to this mail.`;
 // ============ VERIFY SCORECARD TOKEN ============
 app.get('/api/verify-scorecard-token', async (req, res) => {
   const { resultId, token } = req.query;
-  if (!resultId || !token) {
-    return res.status(400).json({ error: 'Result ID and token are required.' });
+  if (!resultId) {
+    return res.status(400).json({ error: 'Result ID is required.' });
   }
 
-  const secret = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026';
-  const expectedToken = crypto.createHmac('sha256', secret).update(resultId).digest('hex');
+  let isAuthorized = false;
 
-  if (token !== expectedToken) {
+  // 1. Verify via HMAC token (public link from email)
+  if (token) {
+    const secret = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026';
+    const expectedToken = crypto.createHmac('sha256', secret).update(resultId).digest('hex');
+    if (token === expectedToken) {
+      isAuthorized = true;
+    }
+  }
+
+  // 2. Fallback to verifying session JWT (student/admin portal view)
+  if (!isAuthorized) {
+    const authHeader = req.headers.authorization;
+    let sessionToken = '';
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      sessionToken = authHeader.split(' ')[1];
+    }
+
+    if (sessionToken) {
+      try {
+        const { data: { user }, error: authErr } = await supabase.auth.getUser(sessionToken);
+        if (user && !authErr) {
+          // Fetch result to check student_id
+          const { data: resultCheck } = await supabaseAdmin
+            .from('exam_results')
+            .select('student_id')
+            .eq('id', resultId)
+            .single();
+
+          if (resultCheck) {
+            // Check if admin
+            const { data: isAdmin } = await supabaseAdmin
+              .from('admins')
+              .select('id')
+              .eq('id', user.id)
+              .single();
+
+            if (isAdmin || resultCheck.student_id === user.id) {
+              isAuthorized = true;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Session verification error inside verify-scorecard-token:', err);
+      }
+    }
+  }
+
+  if (!isAuthorized) {
     return res.status(403).json({ error: 'Invalid or expired secure scorecard token.' });
   }
 

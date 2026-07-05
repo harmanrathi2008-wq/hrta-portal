@@ -500,6 +500,112 @@ export default function ExamInterface() {
       });
     }
 
+    function setupTrackListeners(activeStream) {
+      if (!activeStream) return;
+      activeStream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (!isSubmittedRef.current) {
+            setCameraAccessLost(true);
+            cameraAccessLostRef.current = true;
+            logViolation('DEVICE_LOST', { track_label: track.label, kind: track.kind });
+          }
+        };
+        track.onmute = () => {
+          if (!isSubmittedRef.current) {
+            setCameraAccessLost(true);
+            cameraAccessLostRef.current = true;
+            logViolation('DEVICE_MUTED', { track_label: track.label, kind: track.kind });
+          }
+        };
+        track.onunmute = () => {
+          const allHealthy = activeStream.getTracks().every(t => t.readyState === 'live' && t.enabled && !t.muted);
+          if (allHealthy) {
+            setCameraAccessLost(false);
+            cameraAccessLostRef.current = false;
+          }
+        };
+      });
+    }
+
+    async function setupPeerConnection() {
+      if (peerConnectionRef.current) return;
+      const activeStream = await getActiveStream();
+      if (!activeStream) {
+        isConnectingRef.current = false;
+        return;
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+          { urls: "stun:stun2.l.google.com:19302" }
+        ]
+      });
+      peerConnectionRef.current = pc;
+      console.log("[HRTA Proctor] ✅ RTCPeerConnection created.");
+
+      pc.onconnectionstatechange = () => {
+        console.log("[HRTA Proctor] WebRTC Connection State Changed:", pc.connectionState);
+        if (pc.connectionState === "connected") {
+          fetch(`${API_BASE_URL}/api/audit-log`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({
+              userId: userId || 'Unknown',
+              userRole: 'student',
+              displayName: studentRef.current?.full_name || 'Student',
+              action: 'SIGNALING_ESTABLISHED',
+              details: { exam_id: examId, connection_state: pc.connectionState }
+            })
+          }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
+        } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+          if (!isSubmittedRef.current) {
+            fetch(`${API_BASE_URL}/api/audit-log`, {
+              method: 'POST',
+              headers: getHeaders(),
+              body: JSON.stringify({
+                userId: userId || 'Unknown',
+                userRole: 'student',
+                displayName: studentRef.current?.full_name || 'Student',
+                action: 'STREAM_DISCONNECTED',
+                details: { exam_id: examId, connection_state: pc.connectionState }
+              })
+            }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
+          }
+        }
+      };
+
+      activeStream.getTracks().forEach((track) => {
+        pc.addTrack(track, activeStream);
+      });
+
+      pc.onicecandidate = async (event) => {
+        if (event.candidate && sharedKeyRef.current) {
+          const encryptedCand = await encryptPayload(event.candidate, sharedKeyRef.current);
+          fetch(`${API_BASE_URL}/api/webrtc-signal/student-ice`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ candidate: encryptedCand })
+          }).catch(e => console.warn("Failed to send student ICE candidate:", e));
+        }
+      };
+
+      console.log("[HRTA Proctor] ⏳ Creating SDP offer...");
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Encrypt offer E2E
+      const encryptedOffer = await encryptPayload(offer, sharedKeyRef.current);
+      await fetch(`${API_BASE_URL}/api/webrtc-signal/offer`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ offer: encryptedOffer })
+      });
+      console.log("[HRTA Proctor] ✅ E2E Encrypted SDP offer sent to backend.");
+      isConnectingRef.current = false;
+    }
+
     // Offscreen elements for pixel brightness analysis
     const offscreenVideo = document.createElement('video');
     offscreenVideo.muted = true;
@@ -529,33 +635,6 @@ export default function ExamInterface() {
         // Bind stream to offscreen video element for frame analysis
         offscreenVideo.srcObject = stream;
         offscreenVideo.play().catch(e => console.warn("Offscreen video play failed:", e));
-
-        // Track ended and mute listeners (Self-healing and Logging)
-        function setupTrackListeners(activeStream) {
-          activeStream.getTracks().forEach((track) => {
-            track.onended = () => {
-              if (!isSubmittedRef.current) {
-                setCameraAccessLost(true);
-                cameraAccessLostRef.current = true;
-                logViolation('DEVICE_LOST', { track_label: track.label, kind: track.kind });
-              }
-            };
-            track.onmute = () => {
-              if (!isSubmittedRef.current) {
-                setCameraAccessLost(true);
-                cameraAccessLostRef.current = true;
-                logViolation('DEVICE_MUTED', { track_label: track.label, kind: track.kind });
-              }
-            };
-            track.onunmute = () => {
-              const allHealthy = activeStream.getTracks().every(t => t.readyState === 'live' && t.enabled && !t.muted);
-              if (allHealthy) {
-                setCameraAccessLost(false);
-                cameraAccessLostRef.current = false;
-              }
-            };
-          });
-        };
 
         setupTrackListeners(stream);
 
@@ -601,50 +680,50 @@ export default function ExamInterface() {
             try {
               canvasCtx.drawImage(offscreenVideo, 0, 0, 64, 48);
               const imgData = canvasCtx.getImageData(0, 0, 64, 48);
-              const pixels = imgData.data;
+              const data = imgData.data;
 
-              let totalLuminance = 0;
-              for (let i = 0; i < pixels.length; i += 4) {
-                const r = pixels[i];
-                const g = pixels[i+1];
-                const b = pixels[i+2];
-                const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-                totalLuminance += luminance;
+              let totalBrightness = 0;
+              for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i+1];
+                const b = data[i+2];
+                totalBrightness += (r + g + b) / 3;
               }
-              const avgBrightness = totalLuminance / (64 * 48);
+              const averageBrightness = totalBrightness / (64 * 48);
 
-              if (avgBrightness < 8) {
+              if (averageBrightness < 8) {
                 consecutiveBlackFrames++;
-                if (consecutiveBlackFrames >= 2) {
-                  triggerExamLock("Camera Lens Covered or Sensor Blocked (Black Screen Detected)");
+                if (consecutiveBlackFrames >= 4) {
+                  logViolation('BLACK_SCREEN_DETECTED', { average_brightness: averageBrightness });
+                  consecutiveBlackFrames = 0;
                 }
               } else {
                 consecutiveBlackFrames = 0;
               }
-            } catch (err) {
-              console.warn("Luminance check failed:", err);
+            } catch (e) {
+              console.warn("Frame analysis error:", e);
             }
           }
 
-          // 3. WebRTC Stats Connection check (Frozen virtual streams / OBS camera bypasses)
-          const pc = peerConnectionRef.current;
-          if (pc && pc.connectionState === 'connected') {
+          // 3. Frozen Frame analysis (Anti-Still Photo / Virtual Camera Bypass loops)
+          if (peerConnectionRef.current && peerConnectionRef.current.connectionState === "connected") {
             try {
-              const stats = await pc.getStats();
+              const statsReport = await peerConnectionRef.current.getStats();
               let foundVideoStats = false;
-              stats.forEach(report => {
-                if (report.type === 'outbound-rtp' && report.kind === 'video') {
+              statsReport.forEach((report) => {
+                if (report.type === "outbound-rtp" && report.kind === "video") {
                   foundVideoStats = true;
-                  const currentFrames = report.framesSent || 0;
-                  if (prevFramesSent !== null && currentFrames === prevFramesSent) {
+                  const currentFramesSent = report.framesSent || 0;
+                  if (prevFramesSent !== null && currentFramesSent === prevFramesSent) {
                     consecutiveFrozenChecks++;
-                    if (consecutiveFrozenChecks >= 3) {
-                      triggerExamLock("Camera stream is frozen or virtual feed is inactive");
+                    if (consecutiveFrozenChecks >= 4) {
+                      logViolation('FROZEN_VIDEO_FEED', { note: 'Outbound video framesSent frozen for 12s+' });
+                      consecutiveFrozenChecks = 0;
                     }
                   } else {
                     consecutiveFrozenChecks = 0;
                   }
-                  prevFramesSent = currentFrames;
+                  prevFramesSent = currentFramesSent;
                 }
               });
               if (!foundVideoStats) {
@@ -680,85 +759,6 @@ export default function ExamInterface() {
           }
         } catch (regErr) {
           console.warn("[HRTA Proctor] Failed to register public key initially. Polling will retry.", regErr);
-        }
-
-        async function setupPeerConnection() {
-          if (peerConnectionRef.current) return;
-          const activeStream = await getActiveStream();
-          if (!activeStream) {
-            isConnectingRef.current = false;
-            return;
-          }
-
-          const pc = new RTCPeerConnection({
-            iceServers: [
-              { urls: "stun:stun.l.google.com:19302" },
-              { urls: "stun:stun1.l.google.com:19302" },
-              { urls: "stun:stun2.l.google.com:19302" }
-            ]
-          });
-          peerConnectionRef.current = pc;
-          console.log("[HRTA Proctor] ✅ RTCPeerConnection created.");
-
-          pc.onconnectionstatechange = () => {
-            console.log("[HRTA Proctor] WebRTC Connection State Changed:", pc.connectionState);
-            if (pc.connectionState === "connected") {
-              fetch(`${API_BASE_URL}/api/audit-log`, {
-                method: 'POST',
-                headers: getHeaders(),
-                body: JSON.stringify({
-                  userId: userId || 'Unknown',
-                  userRole: 'student',
-                  displayName: studentRef.current?.full_name || 'Student',
-                  action: 'SIGNALING_ESTABLISHED',
-                  details: { exam_id: examId, connection_state: pc.connectionState }
-                })
-              }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
-            } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-              if (!isSubmittedRef.current) {
-                fetch(`${API_BASE_URL}/api/audit-log`, {
-                  method: 'POST',
-                  headers: getHeaders(),
-                  body: JSON.stringify({
-                    userId: userId || 'Unknown',
-                    userRole: 'student',
-                    displayName: studentRef.current?.full_name || 'Student',
-                    action: 'STREAM_DISCONNECTED',
-                    details: { exam_id: examId, connection_state: pc.connectionState }
-                  })
-                }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
-              }
-            }
-          };
-
-          activeStream.getTracks().forEach((track) => {
-            pc.addTrack(track, activeStream);
-          });
-
-          pc.onicecandidate = async (event) => {
-            if (event.candidate && sharedKeyRef.current) {
-              const encryptedCand = await encryptPayload(event.candidate, sharedKeyRef.current);
-              fetch(`${API_BASE_URL}/api/webrtc-signal/student-ice`, {
-                method: 'POST',
-                headers: getHeaders(),
-                body: JSON.stringify({ candidate: encryptedCand })
-              }).catch(e => console.warn("Failed to send student ICE candidate:", e));
-            }
-          };
-
-          console.log("[HRTA Proctor] ⏳ Creating SDP offer...");
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-
-          // Encrypt offer E2E
-          const encryptedOffer = await encryptPayload(offer, sharedKeyRef.current);
-          await fetch(`${API_BASE_URL}/api/webrtc-signal/offer`, {
-            method: 'POST',
-            headers: getHeaders(),
-            body: JSON.stringify({ offer: encryptedOffer })
-          });
-          console.log("[HRTA Proctor] ✅ E2E Encrypted SDP offer sent to backend.");
-          isConnectingRef.current = false;
         }
 
         // Poll signaling relay interval (replaces Supabase Broadcast)
@@ -798,14 +798,15 @@ export default function ExamInterface() {
             if (pollData.answer && peerConnectionRef.current) {
               if (peerConnectionRef.current.signalingState !== "stable") {
                 const decryptedAns = await decryptPayload(pollData.answer, sharedKeyRef.current);
-                console.log("[HRTA Proctor] ✅ Setting decrypted SDP answer...");
+                console.log("[HRTA Proctor] 📥 Decrypted SDP_ANSWER received from admin.");
                 await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(decryptedAns));
-                // Process queued ICE candidates
+                
+                // Flush queued student candidates
                 while (studentIceQueueRef.current.length > 0) {
                   const cand = studentIceQueueRef.current.shift();
-                  if (cand) {
+                  if (cand && peerConnectionRef.current.remoteDescription) {
                     await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand)).catch(e =>
-                      console.warn("Error processing queued ICE candidate:", e)
+                      console.warn("Error processing queued candidate:", e)
                     );
                   }
                 }
@@ -813,9 +814,9 @@ export default function ExamInterface() {
             }
 
             // Process admin ICE candidates
-            if (pollData.adminCandidates && pollData.adminCandidates.length > 0 && peerConnectionRef.current) {
-              for (const encryptedCand of pollData.adminCandidates) {
-                const decryptedCand = await decryptPayload(encryptedCand, sharedKeyRef.current);
+            if (pollData.candidates && Array.isArray(pollData.candidates) && peerConnectionRef.current) {
+              for (const candItem of pollData.candidates) {
+                const decryptedCand = await decryptPayload(candItem, sharedKeyRef.current);
                 if (peerConnectionRef.current.remoteDescription) {
                   await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(decryptedCand));
                 } else {
@@ -889,7 +890,7 @@ export default function ExamInterface() {
           }).catch(e => console.warn("Failed to audit initial camera failure:", e));
         } catch (logErr) {}
       }
-    };
+    }
 
     startCameraAndProctoring();
 

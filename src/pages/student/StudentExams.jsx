@@ -480,9 +480,12 @@ const StudentExams = () => {
                       </td>
                       <td className="py-4 px-5 text-center">
                         {exam.result.status === 'published' ? (
-                          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[11px] px-3 py-1.5 rounded-lg font-black uppercase tracking-wider inline-block">
-                            Scorecard Sent via Email
-                          </span>
+                          <Link 
+                            to={`/student/results?resultId=${exam.result.id}`}
+                            className="inline-block bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-black text-xs px-4 py-2 rounded-lg transition-all duration-200 uppercase tracking-wider shadow-sm hover:shadow-md active:scale-95"
+                          >
+                            View Scorecard
+                          </Link>
                         ) : (
                           <button disabled className="bg-gray-200 text-gray-500 px-4 py-1.5 rounded font-bold cursor-not-allowed text-sm border border-gray-300">
                             {exam.result.status === 'blocked' ? 'Revoked' : 'Awaiting'}
