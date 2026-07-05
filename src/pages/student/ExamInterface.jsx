@@ -11,6 +11,8 @@ import {
   decryptPayload
 } from "../../lib/webrtcCrypto";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
 const parseOption = (opt) => {
   if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
   if (typeof opt !== 'string') {
@@ -131,8 +133,7 @@ export default function ExamInterface() {
   async function logViolation(action, details = {}) {
     try {
       const userId = sessionStorage.getItem("userId");
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-      await fetch(`${apiBaseUrl}/api/audit-log`, {
+      await fetch(`${API_BASE_URL}/api/audit-log`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
@@ -248,8 +249,7 @@ export default function ExamInterface() {
 
       // Log audit event
       try {
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-        await fetch(`${apiBaseUrl}/api/audit-log`, {
+        await fetch(`${API_BASE_URL}/api/audit-log`, {
           method: 'POST',
           headers: getHeaders(),
           body: JSON.stringify({
@@ -404,8 +404,7 @@ export default function ExamInterface() {
 
         // Log audit event: Start Exam
         try {
-          const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-          await fetch(`${apiBaseUrl}/api/audit-log`, {
+          await fetch(`${API_BASE_URL}/api/audit-log`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({
@@ -481,7 +480,6 @@ export default function ExamInterface() {
       }
     });
     proctorChannelRef.current = channel;
-    const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
     function getActiveStream() {
       return new Promise((resolve) => {
@@ -669,7 +667,7 @@ export default function ExamInterface() {
 
         // Register student public key
         try {
-          const regResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/student-pubkey`, {
+          const regResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/student-pubkey`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({ pubkey: jwkPub })
@@ -705,7 +703,7 @@ export default function ExamInterface() {
           pc.onconnectionstatechange = () => {
             console.log("[HRTA Proctor] WebRTC Connection State Changed:", pc.connectionState);
             if (pc.connectionState === "connected") {
-              fetch(`${apiBaseUrl}/api/audit-log`, {
+              fetch(`${API_BASE_URL}/api/audit-log`, {
                 method: 'POST',
                 headers: getHeaders(),
                 body: JSON.stringify({
@@ -718,7 +716,7 @@ export default function ExamInterface() {
               }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
             } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
               if (!isSubmittedRef.current) {
-                fetch(`${apiBaseUrl}/api/audit-log`, {
+                fetch(`${API_BASE_URL}/api/audit-log`, {
                   method: 'POST',
                   headers: getHeaders(),
                   body: JSON.stringify({
@@ -740,7 +738,7 @@ export default function ExamInterface() {
           pc.onicecandidate = async (event) => {
             if (event.candidate && sharedKeyRef.current) {
               const encryptedCand = await encryptPayload(event.candidate, sharedKeyRef.current);
-              fetch(`${apiBaseUrl}/api/webrtc-signal/student-ice`, {
+              fetch(`${API_BASE_URL}/api/webrtc-signal/student-ice`, {
                 method: 'POST',
                 headers: getHeaders(),
                 body: JSON.stringify({ candidate: encryptedCand })
@@ -754,7 +752,7 @@ export default function ExamInterface() {
 
           // Encrypt offer E2E
           const encryptedOffer = await encryptPayload(offer, sharedKeyRef.current);
-          await fetch(`${apiBaseUrl}/api/webrtc-signal/offer`, {
+          await fetch(`${API_BASE_URL}/api/webrtc-signal/offer`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({ offer: encryptedOffer })
@@ -770,7 +768,7 @@ export default function ExamInterface() {
 
             // 1. Resolve shared key if not done
             if (!sharedKeyRef.current) {
-              const pResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/admin-pubkey`, {
+              const pResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/admin-pubkey`, {
                 headers: getHeaders()
               });
               const pData = await pResp.json();
@@ -784,7 +782,7 @@ export default function ExamInterface() {
             }
 
             // 2. Poll student signal queue (SDP Answer, admin ICE candidates, adminConnected flag)
-            const pollResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/poll-student`, {
+            const pollResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/poll-student`, {
               headers: getHeaders()
             });
             const pollData = await pollResp.json();
@@ -878,7 +876,7 @@ export default function ExamInterface() {
         cameraAccessLostRef.current = true;
         
         try {
-          fetch(`${apiBaseUrl}/api/audit-log`, {
+          fetch(`${API_BASE_URL}/api/audit-log`, {
             method: 'POST',
             headers: getHeaders(),
             body: JSON.stringify({
@@ -922,7 +920,6 @@ export default function ExamInterface() {
     const handleBeforeUnload = () => {
       if (!isSubmittedRef.current) {
         const userId = sessionStorage.getItem("userId");
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
         
         const payload = JSON.stringify({
           userId: userId || 'Unknown',
@@ -937,7 +934,7 @@ export default function ExamInterface() {
         });
 
         const blob = new Blob([payload], { type: 'application/json' });
-        navigator.sendBeacon(`${apiBaseUrl}/api/audit-log?token=${sessionTokenRef.current}&sessionId=${sessionStorage.getItem('loginLogId') || ''}`, blob);
+        navigator.sendBeacon(`${API_BASE_URL}/api/audit-log?token=${sessionTokenRef.current}&sessionId=${sessionStorage.getItem('loginLogId') || ''}`, blob);
       }
     };
 
@@ -951,7 +948,6 @@ export default function ExamInterface() {
     setCameraRetryLoading(true);
     try {
       const userId = sessionStorage.getItem("userId");
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, frameRate: 15 },
@@ -961,7 +957,7 @@ export default function ExamInterface() {
 
       // Log CAMERA_GRANTED recovery event
       try {
-        await fetch(`${apiBaseUrl}/api/audit-log`, {
+        await fetch(`${API_BASE_URL}/api/audit-log`, {
           method: 'POST',
           headers: getHeaders(),
           body: JSON.stringify({
@@ -1480,11 +1476,10 @@ export default function ExamInterface() {
       }
 
       // Call secure server-side scoring API
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || '';
 
-      const response = await fetch(`${apiBaseUrl}/api/submit-exam`, {
+      const response = await fetch(`${API_BASE_URL}/api/submit-exam`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

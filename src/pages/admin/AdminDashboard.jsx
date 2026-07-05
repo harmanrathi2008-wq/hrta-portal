@@ -11,6 +11,8 @@ import {
   decryptPayload
 } from '../../lib/webrtcCrypto';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -69,13 +71,11 @@ const AdminDashboard = () => {
         const adminId = sessionStorage.getItem('userId');
         const adminRole = sessionStorage.getItem('role') || 'super_admin';
         const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token || '';
         const loginLogId = sessionStorage.getItem('loginLogId') || '';
 
-        fetch(`${apiBaseUrl}/api/audit-log`, {
+        fetch(`${API_BASE_URL}/api/audit-log`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -115,8 +115,7 @@ const AdminDashboard = () => {
       const studentId = monitoringStudent.student_id;
       supabase.auth.getSession().then(({ data: { session } }) => {
         const token = session?.access_token || '';
-        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-        fetch(`${apiBaseUrl}/api/webrtc-signal/clear`, {
+        fetch(`${API_BASE_URL}/api/webrtc-signal/clear`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -153,13 +152,11 @@ const AdminDashboard = () => {
       const adminId = sessionStorage.getItem('userId');
       const adminRole = sessionStorage.getItem('role') || 'super_admin';
       const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-
       const { data: { session: authSession } } = await supabase.auth.getSession();
       const token = authSession?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
 
-      fetch(`${apiBaseUrl}/api/audit-log`, {
+      fetch(`${API_BASE_URL}/api/audit-log`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -192,7 +189,7 @@ const AdminDashboard = () => {
 
     // Register admin public key & check if student public key is available
     try {
-      const regResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/admin-pubkey`, {
+      const regResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/admin-pubkey`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -212,7 +209,7 @@ const AdminDashboard = () => {
 
     // Mark admin as connected
     try {
-      await fetch(`${apiBaseUrl}/api/webrtc-signal/admin-connected`, {
+      await fetch(`${API_BASE_URL}/api/webrtc-signal/admin-connected`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -249,7 +246,7 @@ const AdminDashboard = () => {
       if (event.candidate && sharedKeyRef.current) {
         try {
           const encryptedCand = await encryptPayload(event.candidate, sharedKeyRef.current);
-          fetch(`${apiBaseUrl}/api/webrtc-signal/admin-ice`, {
+          fetch(`${API_BASE_URL}/api/webrtc-signal/admin-ice`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -281,7 +278,7 @@ const AdminDashboard = () => {
       try {
         // 1. Resolve shared key if not done
         if (!sharedKeyRef.current) {
-          const regResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/admin-pubkey`, {
+          const regResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/admin-pubkey`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -300,7 +297,7 @@ const AdminDashboard = () => {
         }
 
         // Notify student that admin is connected
-        fetch(`${apiBaseUrl}/api/webrtc-signal/admin-connected`, {
+        fetch(`${API_BASE_URL}/api/webrtc-signal/admin-connected`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -310,7 +307,7 @@ const AdminDashboard = () => {
         }).catch(() => {});
 
         // 2. Poll student's signal queue (SDP Offer and student ICE candidates)
-        const pollResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/poll-admin?studentId=${studentId}`, {
+        const pollResp = await fetch(`${API_BASE_URL}/api/webrtc-signal/poll-admin?studentId=${studentId}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -331,7 +328,7 @@ const AdminDashboard = () => {
 
             console.log("[HRTA Proctor] 📤 Sending encrypted SDP_ANSWER to student...");
             const encryptedAns = await encryptPayload(answer, sharedKeyRef.current);
-            await fetch(`${apiBaseUrl}/api/webrtc-signal/answer`, {
+            await fetch(`${API_BASE_URL}/api/webrtc-signal/answer`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -418,13 +415,11 @@ const AdminDashboard = () => {
       const adminId = sessionStorage.getItem('userId');
       const adminRole = sessionStorage.getItem('role') || 'super_admin';
       const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
-
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
 
-      await fetch(`${apiBaseUrl}/api/audit-log`, {
+      await fetch(`${API_BASE_URL}/api/audit-log`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -974,9 +969,8 @@ const AdminDashboard = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       
-      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+      const response = await fetch(`${API_BASE_URL}/api/send-result-published-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1002,9 +996,8 @@ const AdminDashboard = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       
-      const response = await fetch(`${apiBaseUrl}/api/send-result-published-email`, {
+      const response = await fetch(`${API_BASE_URL}/api/send-result-published-email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
