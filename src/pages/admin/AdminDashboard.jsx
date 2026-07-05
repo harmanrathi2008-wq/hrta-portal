@@ -496,6 +496,18 @@ const AdminDashboard = () => {
       await channel.subscribe();
     }
 
+    // 1. Update status in database proctor_locks
+    try {
+      await supabase
+        .from("proctor_locks")
+        .update({ status: "approved", updated_at: new Date().toISOString() })
+        .eq("student_id", studentId)
+        .eq("exam_result_id", examResultId);
+    } catch (dbErr) {
+      console.warn("Error updating lock status to approved in DB:", dbErr);
+    }
+
+    // 2. Send real-time signaling command
     try {
       await channel.send({
         type: "broadcast",
@@ -521,6 +533,18 @@ const AdminDashboard = () => {
       await channel.subscribe();
     }
 
+    // 1. Update status in database proctor_locks
+    try {
+      await supabase
+        .from("proctor_locks")
+        .update({ status: "rejected", updated_at: new Date().toISOString() })
+        .eq("student_id", studentId)
+        .eq("exam_result_id", examResultId);
+    } catch (dbErr) {
+      console.warn("Error updating lock status to rejected in DB:", dbErr);
+    }
+
+    // 2. Send real-time signaling command
     try {
       await channel.send({
         type: "broadcast",
@@ -532,6 +556,7 @@ const AdminDashboard = () => {
       console.warn("Failed to send unlock rejected signal:", err);
     }
 
+    // 3. Update exam_results table
     try {
       const { error } = await supabase
         .from("exam_results")
@@ -778,17 +803,19 @@ const AdminDashboard = () => {
           exams ( title )
         `);
       if (!error && data) {
-        const violations = data.map(lock => ({
-          id: lock.id,
-          studentId: lock.student_id,
-          studentName: lock.students?.full_name || "Unknown Candidate",
-          examName: lock.exams?.title || "Exam",
-          reason: lock.reason || "Lock triggered",
-          type: lock.status === 'pending_unlock' ? 'UNLOCK_REQUEST' : 'PROCTORING_VIOLATION',
-          timestamp: lock.created_at,
-          examResultId: lock.exam_result_id,
-          dbLockId: lock.id
-        }));
+        const violations = data
+          .filter(lock => lock.status === 'locked' || lock.status === 'pending_unlock')
+          .map(lock => ({
+            id: lock.id,
+            studentId: lock.student_id,
+            studentName: lock.students?.full_name || "Unknown Candidate",
+            examName: lock.exams?.title || "Exam",
+            reason: lock.reason || "Lock triggered",
+            type: lock.status === 'pending_unlock' ? 'UNLOCK_REQUEST' : 'PROCTORING_VIOLATION',
+            timestamp: lock.created_at,
+            examResultId: lock.exam_result_id,
+            dbLockId: lock.id
+          }));
         setGlobalViolations(violations);
       }
     } catch (err) {
