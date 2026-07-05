@@ -2442,8 +2442,21 @@ app.get('/robots.txt', (req, res) => {
 });
 
 if (existsSync(join(__dirname, 'dist'))) {
-  app.use(express.static(join(__dirname, 'dist')))
+  app.use(express.static(join(__dirname, 'dist'), {
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }))
   app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(join(__dirname, 'dist', 'index.html'))
   })
 } else {

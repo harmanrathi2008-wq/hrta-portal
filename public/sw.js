@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hrta-portal-cache-v2';
+const CACHE_NAME = 'hrta-portal-cache-v3';
 const ASSETS_TO_CACHE = [
   '/assets/nta_logo.png',
   '/assets/cosmic_bg.png'

@@ -8,6 +8,35 @@
     <meta name="description" content="Ultra-secure AI-proctored examination platform" />
     <meta name="theme-color" content="#0A0E27" />
     
+    <!-- Self-Healing Cache & Asset Sync Script -->
+    <script>
+      window.addEventListener('error', function(e) {
+        if (e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+          var url = e.target.src || e.target.href;
+          if (url && (url.indexOf('/assets/') > -1 || url.indexOf('main.jsx') > -1 || url.indexOf('index-') > -1)) {
+            console.warn('Asset loading failed, self-healing cache and reloading: ' + url);
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                registrations.forEach(function(reg) {
+                  reg.unregister();
+                });
+              });
+            }
+            if ('caches' in window) {
+              caches.keys().then(function(names) {
+                names.forEach(function(name) {
+                  caches.delete(name);
+                });
+              });
+            }
+            setTimeout(function() {
+              window.location.reload(true);
+            }, 400);
+          }
+        }
+      }, true);
+    </script>
+    
     <!-- PWA configuration -->
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/assets/nta_logo.png" />
