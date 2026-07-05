@@ -465,6 +465,7 @@ export default function ExamInterface() {
     let stream = null;
     let pollingInterval = null;
     const channelName = `exam_proctor_${userId}`;
+    console.log(`[HRTA Proctor] 📡 Student joining signaling channel: "${channelName}"`);
     const channel = supabase.channel(channelName);
     proctorChannelRef.current = channel;
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -687,12 +688,14 @@ export default function ExamInterface() {
               studentIceQueueRef.current = [];
 
               // Wait up to 10 seconds for the camera stream to be active/loaded
+              console.log("[HRTA Proctor] ⏳ Waiting for camera stream...");
               const activeStream = await getActiveStream();
               if (!activeStream) {
-                console.warn("WebRTC aborted: No active camera stream available.");
+                console.error("[HRTA Proctor] ❌ WebRTC aborted: No active camera stream available after 10 seconds.");
                 isConnectingRef.current = false;
                 return;
               }
+              console.log(`[HRTA Proctor] ✅ Camera stream ready. Tracks: ${activeStream.getTracks().map(t => t.kind + '(' + t.readyState + ')').join(', ')}`);
 
               const pc = new RTCPeerConnection({
                 iceServers: [
@@ -704,6 +707,7 @@ export default function ExamInterface() {
                 ]
               });
               peerConnectionRef.current = pc;
+              console.log("[HRTA Proctor] ✅ RTCPeerConnection created.");
 
               pc.onconnectionstatechange = () => {
                 if (pc.connectionState === "connected") {
@@ -736,9 +740,12 @@ export default function ExamInterface() {
               };
 
               // Add video and audio tracks (Strictly One-Way: Candidate sends to admin)
+              let trackCount = 0;
               activeStream.getTracks().forEach((track) => {
                 pc.addTrack(track, activeStream);
+                trackCount++;
               });
+              console.log(`[HRTA Proctor] ✅ Added ${trackCount} track(s) to RTCPeerConnection.`);
 
               pc.onicecandidate = (event) => {
                 if (event.candidate && proctorChannelRef.current) {
@@ -750,8 +757,10 @@ export default function ExamInterface() {
                 }
               };
 
+              console.log("[HRTA Proctor] ⏳ Creating SDP offer...");
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
+              console.log("[HRTA Proctor] ✅ SDP offer created and set as local description.");
 
               if (offerIntervalRef.current) {
                 clearInterval(offerIntervalRef.current);
@@ -759,12 +768,18 @@ export default function ExamInterface() {
 
               const sendOfferBroadcast = () => {
                 if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== "closed" && proctorChannelRef.current) {
-                  console.log("Broadcasting SDP_OFFER retry...");
+                  console.log(`[HRTA Proctor] 📤 Sending SDP_OFFER to admin on channel "${channelName}"`);
                   proctorChannelRef.current.send({
                     type: "broadcast",
                     event: "signal",
                     payload: { type: "SDP_OFFER", sender: "student", data: offer }
+                  }).then(() => {
+                    console.log("[HRTA Proctor] ✅ SDP_OFFER sent successfully.");
+                  }).catch(err => {
+                    console.error("[HRTA Proctor] ❌ FAILED to send SDP_OFFER:", err);
                   });
+                } else {
+                  console.warn(`[HRTA Proctor] ⚠️ Skipping SDP_OFFER send. PC state: ${peerConnectionRef.current?.signalingState}, Channel: ${proctorChannelRef.current ? 'present' : 'null'}`);
                 }
               };
 
@@ -777,9 +792,10 @@ export default function ExamInterface() {
                 if (offerIntervalRef.current) {
                   clearInterval(offerIntervalRef.current);
                   offerIntervalRef.current = null;
-                  console.log("Cleared SDP_OFFER retry loop (SDP_ANSWER received).");
                 }
+                console.log("[HRTA Proctor] ✅ SDP_ANSWER received from admin. Setting remote description...");
                 await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
+                console.log("[HRTA Proctor] ✅ Remote description set. WebRTC connection finalizing...");
                 while (studentIceQueueRef.current.length > 0) {
                   const candidate = studentIceQueueRef.current.shift();
                   if (candidate) {
@@ -823,7 +839,14 @@ export default function ExamInterface() {
               executeBlockSubmission();
             }
           })
-          .subscribe();
+          .subscribe((status) => {
+            console.log(`[HRTA Proctor] Signaling channel status: ${status}`);
+            if (status === "SUBSCRIBED") {
+              console.log("[HRTA Proctor] ✅ Student signaling channel SUBSCRIBED and ready.");
+            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+              console.error(`[HRTA Proctor] ❌ Student signaling channel failed: ${status}. Will retry.`);
+            }
+          });
 
         // Database-backed real-time watch on proctor_locks
         const lockChannel = supabase

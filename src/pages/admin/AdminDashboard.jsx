@@ -163,6 +163,7 @@ const AdminDashboard = () => {
 
     const studentId = session.student_id;
     const channelName = `exam_proctor_${studentId}`;
+    console.log(`[HRTA Proctor] 📡 Admin joining signaling channel: "${channelName}" for student: ${studentId}`);
     const channel = supabase.channel(channelName);
     proctorChannelRef.current = channel;
 
@@ -176,13 +177,16 @@ const AdminDashboard = () => {
       ]
     });
     peerConnectionRef.current = pc;
+    console.log("[HRTA Proctor] ✅ Admin RTCPeerConnection created.");
 
     const iceCandidateQueue = [];
 
     pc.ontrack = (event) => {
+      console.log(`[HRTA Proctor] 🎥 Remote track received! Kind: ${event.track?.kind}, Streams: ${event.streams?.length}`);
       if (event.streams && event.streams[0]) {
         setRemoteStream(event.streams[0]);
         setMonitorStatus("Live");
+        console.log("[HRTA Proctor] ✅ Remote stream set. Video feed should now appear.");
       }
     };
 
@@ -225,18 +229,36 @@ const AdminDashboard = () => {
               if (connectIntervalRef.current) {
                 clearInterval(connectIntervalRef.current);
                 connectIntervalRef.current = null;
-                console.log("Cleared ADMIN_CONNECTED retry loop (SDP_OFFER received).");
+                console.log("[HRTA Proctor] ✅ Cleared ADMIN_CONNECTED retry loop (SDP_OFFER received).");
               }
+              
+              if (pc.signalingState === "stable" || pc.connectionState === "connected") {
+                console.log("[HRTA Proctor] ✅ WebRTC already stable. Resending SDP_ANSWER to candidate.");
+                channel.send({
+                  type: "broadcast",
+                  event: "signal",
+                  payload: { type: "SDP_ANSWER", sender: "admin", data: pc.localDescription }
+                });
+                return;
+              }
+
+              console.log(`[HRTA Proctor] 📥 SDP_OFFER received from student. Signaling state: ${pc.signalingState}`);
               setMonitorStatus("Connecting...");
               await pc.setRemoteDescription(new RTCSessionDescription(data));
               
+              console.log("[HRTA Proctor] ⏳ Creating SDP_ANSWER...");
               const answer = await pc.createAnswer();
               await pc.setLocalDescription(answer);
               
+              console.log("[HRTA Proctor] 📤 Sending SDP_ANSWER to student...");
               channel.send({
                 type: "broadcast",
                 event: "signal",
                 payload: { type: "SDP_ANSWER", sender: "admin", data: answer }
+              }).then(() => {
+                console.log("[HRTA Proctor] ✅ SDP_ANSWER sent successfully.");
+              }).catch(e => {
+                console.error("[HRTA Proctor] ❌ FAILED to send SDP_ANSWER:", e);
               });
 
               // Process any queued ICE candidates
