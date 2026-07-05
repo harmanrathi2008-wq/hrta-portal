@@ -21,6 +21,8 @@ const helmetMiddleware = helmet({
         "'self'", 
         "https://*.supabase.co", 
         "https://*.supabase.in", 
+        "wss://*.supabase.co", 
+        "wss://*.supabase.in", 
         "https://hrta-portal.onrender.com", 
         "https://generativelanguage.googleapis.com", 
         "https://www.google.com/recaptcha/"

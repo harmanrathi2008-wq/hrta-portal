@@ -483,7 +483,7 @@ export default function ExamInterface() {
     proctorChannelRef.current = channel;
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
-    const getActiveStream = () => {
+    function getActiveStream() {
       return new Promise((resolve) => {
         if (localStreamRef.current) {
           resolve(localStreamRef.current);
@@ -500,7 +500,7 @@ export default function ExamInterface() {
           resolve(null);
         }, 10000);
       });
-    };
+    }
 
     // Offscreen elements for pixel brightness analysis
     const offscreenVideo = document.createElement('video');
@@ -512,7 +512,7 @@ export default function ExamInterface() {
     offscreenCanvas.height = 48;
     const canvasCtx = offscreenCanvas.getContext('2d');
 
-    const startCameraAndProctoring = async () => {
+    async function startCameraAndProctoring() {
       try {
         // Capture video and audio stream silently with fallback to video-only if microphone is missing/denied
         try {
@@ -533,7 +533,7 @@ export default function ExamInterface() {
         offscreenVideo.play().catch(e => console.warn("Offscreen video play failed:", e));
 
         // Track ended and mute listeners (Self-healing and Logging)
-        const setupTrackListeners = (activeStream) => {
+        function setupTrackListeners(activeStream) {
           activeStream.getTracks().forEach((track) => {
             track.onended = () => {
               if (!isSubmittedRef.current) {
@@ -684,7 +684,7 @@ export default function ExamInterface() {
           console.warn("[HRTA Proctor] Failed to register public key initially. Polling will retry.", regErr);
         }
 
-        const setupPeerConnection = async () => {
+        async function setupPeerConnection() {
           if (peerConnectionRef.current) return;
           const activeStream = await getActiveStream();
           if (!activeStream) {
@@ -761,7 +761,7 @@ export default function ExamInterface() {
           });
           console.log("[HRTA Proctor] ✅ E2E Encrypted SDP offer sent to backend.");
           isConnectingRef.current = false;
-        };
+        }
 
         // Poll signaling relay interval (replaces Supabase Broadcast)
         pollIntervalRef.current = setInterval(async () => {
