@@ -42,6 +42,7 @@ export default function ExamInterface() {
   const peerConnectionRef = React.useRef(null);
   const proctorChannelRef = React.useRef(null);
   const studentIceQueueRef = React.useRef([]);
+  const maxWarningsRef = React.useRef(5);
   const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
@@ -746,6 +747,7 @@ export default function ExamInterface() {
               setLockReason("");
               setUnlockRequestSent(false);
               tabSwitchCountRef.current = 0;
+              maxWarningsRef.current = 3;
               logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared by Superadmin' });
             } else if (type === "UNLOCK_REJECTED") {
               console.log("Superadmin rejected unlock. Terminating candidate session...");
@@ -777,6 +779,7 @@ export default function ExamInterface() {
                   setLockReason("");
                   setUnlockRequestSent(false);
                   tabSwitchCountRef.current = 0;
+                  maxWarningsRef.current = 3;
                   logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared via DB approval' });
                   
                   // Clean up DB row
@@ -1068,16 +1071,17 @@ export default function ExamInterface() {
       if (!isSubmittedRef.current && !cameraAccessLostRef.current && !isProctorLocked && !isRejected) {
         tabSwitchCountRef.current += 1;
         const count = tabSwitchCountRef.current;
+        const maxWarn = maxWarningsRef.current || 5;
         
         logViolation('TAB_SWITCH_OR_FOCUS_LOST', { 
-          note: `Window focus lost. Count: ${count}/5`, 
+          note: `Window focus lost. Count: ${count}/${maxWarn}`, 
           tab_switch_count: count 
         });
 
-        if (count > 5) {
-          triggerExamLock("Focus Lost (Tab Switch Limit Exceeded - 5 Times)");
+        if (count > maxWarn) {
+          triggerExamLock(`Focus Lost (Tab Switch Limit Exceeded - ${maxWarn} Times)`);
         } else {
-          toast.error(`Warning: Tab switch or focus lost detected! (${count}/5). The exam will lock permanently if you exceed 5 warnings.`, {
+          toast.error(`Warning: Tab switch or focus lost detected! (${count}/${maxWarn}). The exam will lock permanently if you exceed ${maxWarn} warnings.`, {
             duration: 5000,
             position: 'top-center'
           });

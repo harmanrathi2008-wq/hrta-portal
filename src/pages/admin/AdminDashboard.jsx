@@ -497,7 +497,7 @@ const AdminDashboard = () => {
   }, []);
 
   const handleGlobalApproveUnlock = async (violation) => {
-    const { studentId, examResultId } = violation;
+    const { studentId, examId, examResultId } = violation;
     const channelName = `exam_proctor_${studentId}`;
     
     let channel = proctorChannelsRef.current[studentId];
@@ -512,7 +512,7 @@ const AdminDashboard = () => {
         .from("proctor_locks")
         .update({ status: "approved", updated_at: new Date().toISOString() })
         .eq("student_id", studentId)
-        .eq("exam_result_id", examResultId);
+        .eq("exam_id", examId);
     } catch (dbErr) {
       console.warn("Error updating lock status to approved in DB:", dbErr);
     }
@@ -534,7 +534,7 @@ const AdminDashboard = () => {
   };
 
   const handleGlobalRejectUnlock = async (violation) => {
-    const { studentId, examResultId } = violation;
+    const { studentId, examId, examResultId } = violation;
     const channelName = `exam_proctor_${studentId}`;
     
     let channel = proctorChannelsRef.current[studentId];
@@ -549,7 +549,7 @@ const AdminDashboard = () => {
         .from("proctor_locks")
         .update({ status: "rejected", updated_at: new Date().toISOString() })
         .eq("student_id", studentId)
-        .eq("exam_result_id", examResultId);
+        .eq("exam_id", examId);
     } catch (dbErr) {
       console.warn("Error updating lock status to rejected in DB:", dbErr);
     }
@@ -818,6 +818,7 @@ const AdminDashboard = () => {
           .map(lock => ({
             id: lock.id,
             studentId: lock.student_id,
+            examId: lock.exam_id,
             studentName: lock.students?.full_name || "Unknown Candidate",
             examName: lock.exams?.title || "Exam",
             reason: lock.reason || "Lock triggered",
