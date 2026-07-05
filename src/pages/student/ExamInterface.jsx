@@ -44,6 +44,7 @@ export default function ExamInterface() {
   const studentIceQueueRef = React.useRef([]);
   const maxWarningsRef = React.useRef(5);
   const isConnectingRef = React.useRef(false);
+  const offerIntervalRef = React.useRef(null);
   const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
@@ -751,15 +752,33 @@ export default function ExamInterface() {
 
               const offer = await pc.createOffer();
               await pc.setLocalDescription(offer);
-              channel.send({
-                type: "broadcast",
-                event: "signal",
-                payload: { type: "SDP_OFFER", sender: "student", data: offer }
-              });
+
+              if (offerIntervalRef.current) {
+                clearInterval(offerIntervalRef.current);
+              }
+
+              const sendOfferBroadcast = () => {
+                if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== "closed" && proctorChannelRef.current) {
+                  console.log("Broadcasting SDP_OFFER retry...");
+                  proctorChannelRef.current.send({
+                    type: "broadcast",
+                    event: "signal",
+                    payload: { type: "SDP_OFFER", sender: "student", data: offer }
+                  });
+                }
+              };
+
+              sendOfferBroadcast();
+              offerIntervalRef.current = setInterval(sendOfferBroadcast, 2500);
               isConnectingRef.current = false;
 
             } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
               try {
+                if (offerIntervalRef.current) {
+                  clearInterval(offerIntervalRef.current);
+                  offerIntervalRef.current = null;
+                  console.log("Cleared SDP_OFFER retry loop (SDP_ANSWER received).");
+                }
                 await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
                 while (studentIceQueueRef.current.length > 0) {
                   const candidate = studentIceQueueRef.current.shift();
@@ -880,6 +899,10 @@ export default function ExamInterface() {
       const activeStream = localStreamRef.current || stream;
       if (activeStream) {
         activeStream.getTracks().forEach((track) => track.stop());
+      }
+      if (offerIntervalRef.current) {
+        clearInterval(offerIntervalRef.current);
+        offerIntervalRef.current = null;
       }
       supabase.removeChannel(channel);
       if (lockChannelRef.current) {

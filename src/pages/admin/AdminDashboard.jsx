@@ -47,6 +47,7 @@ const AdminDashboard = () => {
 
   const peerConnectionRef = useRef(null);
   const proctorChannelRef = useRef(null);
+  const connectIntervalRef = useRef(null);
   const videoRef = useRef(null);
 
   // Stop monitoring and close WebRTC peer connection
@@ -97,6 +98,11 @@ const AdminDashboard = () => {
 
       supabase.removeChannel(proctorChannelRef.current);
       proctorChannelRef.current = null;
+    }
+
+    if (connectIntervalRef.current) {
+      clearInterval(connectIntervalRef.current);
+      connectIntervalRef.current = null;
     }
 
     if (peerConnectionRef.current) {
@@ -191,8 +197,20 @@ const AdminDashboard = () => {
     };
 
     pc.oniceconnectionstatechange = () => {
+      console.log("WebRTC iceConnectionState changed:", pc.iceConnectionState);
       if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
-        setMonitorStatus("Stream Interrupted");
+        setMonitorStatus("Reconnecting...");
+        if (connectIntervalRef.current) {
+          clearInterval(connectIntervalRef.current);
+          connectIntervalRef.current = null;
+        }
+        // Auto-reconnect by re-initiating startMonitoring
+        setTimeout(() => {
+          if (proctorChannelRef.current) {
+            console.log("Auto-reconnecting WebRTC live stream...");
+            startMonitoring(session);
+          }
+        }, 3000);
       } else if (pc.iceConnectionState === "closed") {
         setMonitorStatus("Disconnected");
       }
@@ -204,6 +222,11 @@ const AdminDashboard = () => {
         if (sender === "student") {
           if (type === "SDP_OFFER") {
             try {
+              if (connectIntervalRef.current) {
+                clearInterval(connectIntervalRef.current);
+                connectIntervalRef.current = null;
+                console.log("Cleared ADMIN_CONNECTED retry loop (SDP_OFFER received).");
+              }
               setMonitorStatus("Connecting...");
               await pc.setRemoteDescription(new RTCSessionDescription(data));
               
@@ -258,16 +281,24 @@ const AdminDashboard = () => {
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          // Send request to begin streaming after a brief delay to ensure signaling channel is fully ready
-          setTimeout(() => {
+          if (connectIntervalRef.current) {
+            clearInterval(connectIntervalRef.current);
+          }
+          
+          const sendConnectBroadcast = () => {
             if (proctorChannelRef.current) {
+              console.log("Broadcasting ADMIN_CONNECTED signal to candidate...");
               proctorChannelRef.current.send({
                 type: "broadcast",
                 event: "signal",
                 payload: { type: "ADMIN_CONNECTED", sender: "admin" }
-              });
+              }).catch(e => console.warn("Failed to broadcast ADMIN_CONNECTED:", e));
             }
-          }, 800);
+          };
+
+          // Send initial and then repeating connect requests
+          sendConnectBroadcast();
+          connectIntervalRef.current = setInterval(sendConnectBroadcast, 2500);
         }
       });
   };
