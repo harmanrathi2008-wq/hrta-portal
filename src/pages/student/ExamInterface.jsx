@@ -463,6 +463,25 @@ export default function ExamInterface() {
     proctorChannelRef.current = channel;
     const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
+    const getActiveStream = () => {
+      return new Promise((resolve) => {
+        if (localStreamRef.current) {
+          resolve(localStreamRef.current);
+          return;
+        }
+        const checkInterval = setInterval(() => {
+          if (localStreamRef.current) {
+            clearInterval(checkInterval);
+            resolve(localStreamRef.current);
+          }
+        }, 200);
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          resolve(null);
+        }, 10000);
+      });
+    };
+
     // Offscreen elements for pixel brightness analysis
     const offscreenVideo = document.createElement('video');
     offscreenVideo.muted = true;
@@ -647,6 +666,13 @@ export default function ExamInterface() {
               }
               studentIceQueueRef.current = [];
 
+              // Wait up to 10 seconds for the camera stream to be active/loaded
+              const activeStream = await getActiveStream();
+              if (!activeStream) {
+                console.warn("WebRTC aborted: No active camera stream available.");
+                return;
+              }
+
               const pc = new RTCPeerConnection({
                 iceServers: [
                   { urls: "stun:stun.l.google.com:19302" },
@@ -689,12 +715,9 @@ export default function ExamInterface() {
               };
 
               // Add video and audio tracks (Strictly One-Way: Candidate sends to admin)
-              const activeStream = localStreamRef.current || stream;
-              if (activeStream) {
-                activeStream.getTracks().forEach((track) => {
-                  pc.addTrack(track, activeStream);
-                });
-              }
+              activeStream.getTracks().forEach((track) => {
+                pc.addTrack(track, activeStream);
+              });
 
               pc.onicecandidate = (event) => {
                 if (event.candidate && proctorChannelRef.current) {

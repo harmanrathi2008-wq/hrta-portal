@@ -22,6 +22,8 @@ const AdminDashboard = () => {
   const [publishingId, setPublishingId] = useState(null);
   const [loginLogs, setLoginLogs] = useState([]);
   const [logsError, setLogsError] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditError, setAuditError] = useState(false);
   const [lateRequests, setLateRequests] = useState([]);
   const [requestsError, setRequestsError] = useState(false);
   const [supportTickets, setSupportTickets] = useState([]);
@@ -963,6 +965,27 @@ const AdminDashboard = () => {
     }
   };
 
+  const fetchAuditLogs = async () => {
+    try {
+      const { data: auditData, error: auditErr } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+      
+      if (auditErr) {
+        console.warn("Failed to fetch audit logs:", auditErr.message);
+        setAuditError(true);
+      } else {
+        setAuditLogs(auditData || []);
+        setAuditError(false);
+      }
+    } catch (err) {
+      console.error("Error fetching audit logs:", err);
+      setAuditError(true);
+    }
+  };
+
   const fetchLateRequests = async () => {
     try {
       const { data, error } = await supabase
@@ -1022,9 +1045,11 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchSecurityLogs();
+    fetchAuditLogs();
     fetchLateRequests();
     const interval = setInterval(() => {
       fetchSecurityLogs();
+      fetchAuditLogs();
       fetchLateRequests();
     }, 15000);
     return () => clearInterval(interval);
@@ -1956,6 +1981,126 @@ CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon 
                                 Offline
                               </span>
                             )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Live Proctoring Violations & Audit Logs Feed */}
+        {auditError ? (
+          <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-6 shadow-xl text-xs font-semibold text-amber-300 mt-8">
+            <div className="flex items-start gap-3.5">
+              <span className="text-xl">⚠️</span>
+              <div>
+                <h3 className="font-bold text-amber-400 text-sm mb-1 uppercase tracking-wider">Live Proctoring & Audit Feed: Table Error</h3>
+                <p className="text-slate-400 leading-relaxed">
+                  Unable to fetch from the audit logs table. Please verify that the <code>audit_logs</code> table exists and contains correct columns.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden mt-8">
+            <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+              <div>
+                <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-405 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                  </span>
+                  Live Candidate Proctoring & Security Audit Logs
+                </h2>
+                <p className="text-[10px] text-slate-500 mt-1">Real-time candidate violations (tab switching, camera blocks, screen logs, screenshot warnings).</p>
+              </div>
+              <button 
+                onClick={fetchAuditLogs}
+                className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-350 px-3 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
+              >
+                Refresh Logs
+              </button>
+            </div>
+
+            <div className="p-0 overflow-x-auto max-h-96">
+              {auditLogs.length === 0 ? (
+                <div className="p-12 text-center text-slate-500 font-bold">
+                  No proctoring violation logs recorded yet.
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="border-b border-white/5 bg-white/[0.01]">
+                    <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                      <th className="px-6 py-4">Candidate / Admin</th>
+                      <th className="px-6 py-4">Role</th>
+                      <th className="px-6 py-4">Event / Action</th>
+                      <th className="px-6 py-4">Event Details</th>
+                      <th className="px-6 py-4">IP Address</th>
+                      <th className="px-6 py-4">Logged At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
+                    {auditLogs.map((log) => {
+                      const isViolation = log.action && (
+                        log.action.includes('VIOLATION') ||
+                        log.action.includes('LOCK') ||
+                        log.action.includes('LOST') ||
+                        log.action.includes('MUTED') ||
+                        log.action.includes('SCREENSHOT') ||
+                        log.action.includes('FAILURE')
+                      );
+                      
+                      return (
+                        <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-bold text-white">{log.display_name || 'System / Cron'}</p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">{log.user_id}</p>
+                          </td>
+                          <td className="px-6 py-4">
+                            {log.user_role === 'super_admin' ? (
+                              <span className="bg-red-500/10 border border-red-500/30 text-red-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                Super Admin
+                              </span>
+                            ) : log.user_role === 'admin' ? (
+                              <span className="bg-purple-500/10 border border-purple-500/30 text-purple-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                Admin
+                              </span>
+                            ) : log.user_role === 'student' ? (
+                              <span className="bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                Student
+                              </span>
+                            ) : (
+                              <span className="bg-slate-500/10 border border-white/5 text-slate-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
+                                {log.user_role || 'System'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
+                              isViolation 
+                                ? 'bg-red-500/15 border border-red-500/30 text-red-400' 
+                                : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                            }`}>
+                              {log.action?.replace(/_/g, ' ') || 'UNKNOWN_EVENT'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 max-w-xs truncate text-slate-350" title={typeof log.details === 'object' ? JSON.stringify(log.details) : log.details}>
+                            {typeof log.details === 'object' ? (
+                              <span>
+                                {log.details?.note || log.details?.reason || JSON.stringify(log.details)}
+                              </span>
+                            ) : (
+                              <span>{log.details || 'N/A'}</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-slate-400">{log.ip_address || 'Unknown'}</td>
+                          <td className="px-6 py-4 text-slate-400">
+                            <p>{log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}</p>
+                            <p className="text-[10px] mt-0.5">{log.created_at ? new Date(log.created_at).toLocaleTimeString() : 'N/A'}</p>
                           </td>
                         </tr>
                       );
