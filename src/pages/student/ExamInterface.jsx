@@ -2,6 +2,14 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { toast } from "sonner";
+import {
+  generateECDHKeyPair,
+  exportPublicKey,
+  importPeerPublicKey,
+  deriveSharedKey,
+  encryptPayload,
+  decryptPayload
+} from "../../lib/webrtcCrypto";
 
 const parseOption = (opt) => {
   if (opt === null || opt === undefined) return { text: '', image_url: '', image_public_id: '' };
@@ -48,6 +56,9 @@ export default function ExamInterface() {
   const lockChannelRef = React.useRef(null);
   const isSubmittedRef = React.useRef(false);
   const isSubmittingRef = React.useRef(false);
+  const ownKeyPairRef = React.useRef(null);
+  const sharedKeyRef = React.useRef(null);
+  const pollIntervalRef = React.useRef(null);
   const [cameraAccessLost, setCameraAccessLost] = useState(false);
   const [cameraRetryLoading, setCameraRetryLoading] = useState(false);
   const cameraAccessLostRef = React.useRef(false);
@@ -654,13 +665,49 @@ export default function ExamInterface() {
 
         }, 3000);
 
-        // Subscribe to signaling channel
-        channel
-          .on("broadcast", { event: "signal" }, async ({ payload }) => {
-            const { type, sender, data } = payload;
-            
-            // Validate authorized admin sender
-            if (sender !== "admin") {
+        // Generate own ECDH key pair for E2E signaling encryption
+        const keyPair = await generateECDHKeyPair();
+        ownKeyPairRef.current = keyPair;
+        const jwkPub = await exportPublicKey(keyPair.publicKey);
+
+        // Register student public key
+        try {
+          const regResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/student-pubkey`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ pubkey: jwkPub })
+          });
+          const regData = await regResp.json();
+          if (regData.adminPubkey) {
+            console.log("[HRTA Proctor] E2E shared key derived initially.");
+            const peerKey = await importPeerPublicKey(regData.adminPubkey);
+            sharedKeyRef.current = await deriveSharedKey(keyPair.privateKey, peerKey);
+          }
+        } catch (regErr) {
+          console.warn("[HRTA Proctor] Failed to register public key initially. Polling will retry.", regErr);
+        }
+
+        const setupPeerConnection = async () => {
+          if (peerConnectionRef.current) return;
+          const activeStream = await getActiveStream();
+          if (!activeStream) {
+            isConnectingRef.current = false;
+            return;
+          }
+
+          const pc = new RTCPeerConnection({
+            iceServers: [
+              { urls: "stun:stun.l.google.com:19302" },
+              { urls: "stun:stun1.l.google.com:19302" },
+              { urls: "stun:stun2.l.google.com:19302" }
+            ]
+          });
+          peerConnectionRef.current = pc;
+          console.log("[HRTA Proctor] ✅ RTCPeerConnection created.");
+
+          pc.onconnectionstatechange = () => {
+            console.log("[HRTA Proctor] WebRTC Connection State Changed:", pc.connectionState);
+            if (pc.connectionState === "connected") {
               fetch(`${apiBaseUrl}/api/audit-log`, {
                 method: 'POST',
                 headers: getHeaders(),
@@ -668,214 +715,123 @@ export default function ExamInterface() {
                   userId: userId || 'Unknown',
                   userRole: 'student',
                   displayName: studentRef.current?.full_name || 'Student',
-                  action: 'CHANNEL_AUTH_FAILURE',
-                  details: {
-                    exam_id: examId,
-                    attempted_sender: sender,
-                    payload_received: payload
-                  }
+                  action: 'SIGNALING_ESTABLISHED',
+                  details: { exam_id: examId, connection_state: pc.connectionState }
                 })
-              }).catch(err => console.warn("Failed to audit CHANNEL_AUTH_FAILURE:", err));
-              return;
+              }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
+            } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+              if (!isSubmittedRef.current) {
+                fetch(`${apiBaseUrl}/api/audit-log`, {
+                  method: 'POST',
+                  headers: getHeaders(),
+                  body: JSON.stringify({
+                    userId: userId || 'Unknown',
+                    userRole: 'student',
+                    displayName: studentRef.current?.full_name || 'Student',
+                    action: 'STREAM_DISCONNECTED',
+                    details: { exam_id: examId, connection_state: pc.connectionState }
+                  })
+                }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
+              }
+            }
+          };
+
+          activeStream.getTracks().forEach((track) => {
+            pc.addTrack(track, activeStream);
+          });
+
+          pc.onicecandidate = async (event) => {
+            if (event.candidate && sharedKeyRef.current) {
+              const encryptedCand = await encryptPayload(event.candidate, sharedKeyRef.current);
+              fetch(`${apiBaseUrl}/api/webrtc-signal/student-ice`, {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify({ candidate: encryptedCand })
+              }).catch(e => console.warn("Failed to send student ICE candidate:", e));
+            }
+          };
+
+          console.log("[HRTA Proctor] ⏳ Creating SDP offer...");
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          // Encrypt offer E2E
+          const encryptedOffer = await encryptPayload(offer, sharedKeyRef.current);
+          await fetch(`${apiBaseUrl}/api/webrtc-signal/offer`, {
+            method: 'POST',
+            headers: getHeaders(),
+            body: JSON.stringify({ offer: encryptedOffer })
+          });
+          console.log("[HRTA Proctor] ✅ E2E Encrypted SDP offer sent to backend.");
+          isConnectingRef.current = false;
+        };
+
+        // Poll signaling relay interval (replaces Supabase Broadcast)
+        pollIntervalRef.current = setInterval(async () => {
+          try {
+            if (isSubmittedRef.current || isRejected) return;
+
+            // 1. Resolve shared key if not done
+            if (!sharedKeyRef.current) {
+              const pResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/admin-pubkey`, {
+                headers: getHeaders()
+              });
+              const pData = await pResp.json();
+              if (pData.adminPubkey) {
+                console.log("[HRTA Proctor] E2E shared key derived from poll.");
+                const peerKey = await importPeerPublicKey(pData.adminPubkey);
+                sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
+              } else {
+                return; // wait for admin public key
+              }
             }
 
-            if (type === "ADMIN_CONNECTED") {
-              if (isConnectingRef.current) {
-                console.log("Ignored ADMIN_CONNECTED: WebRTC connection setup already in progress.");
-                return;
-              }
+            // 2. Poll student signal queue (SDP Answer, admin ICE candidates, adminConnected flag)
+            const pollResp = await fetch(`${apiBaseUrl}/api/webrtc-signal/poll-student`, {
+              headers: getHeaders()
+            });
+            const pollData = await pollResp.json();
+
+            // Admin requested connection
+            if (pollData.adminConnected && !peerConnectionRef.current && !isConnectingRef.current) {
               isConnectingRef.current = true;
+              console.log("[HRTA Proctor] Admin connected signal received. Starting WebRTC connection...");
+              await setupPeerConnection();
+            }
 
-              if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-                peerConnectionRef.current = null;
-              }
-              studentIceQueueRef.current = [];
-
-              // Wait up to 10 seconds for the camera stream to be active/loaded
-              console.log("[HRTA Proctor] ⏳ Waiting for camera stream...");
-              const activeStream = await getActiveStream();
-              if (!activeStream) {
-                console.error("[HRTA Proctor] ❌ WebRTC aborted: No active camera stream available after 10 seconds.");
-                isConnectingRef.current = false;
-                return;
-              }
-              console.log(`[HRTA Proctor] ✅ Camera stream ready. Tracks: ${activeStream.getTracks().map(t => t.kind + '(' + t.readyState + ')').join(', ')}`);
-
-              const pc = new RTCPeerConnection({
-                iceServers: [
-                  { urls: "stun:stun.l.google.com:19302" },
-                  { urls: "stun:stun1.l.google.com:19302" },
-                  { urls: "stun:stun2.l.google.com:19302" },
-                  { urls: "stun:stun3.l.google.com:19302" },
-                  { urls: "stun:stun4.l.google.com:19302" }
-                ]
-              });
-              peerConnectionRef.current = pc;
-              console.log("[HRTA Proctor] ✅ RTCPeerConnection created.");
-
-              pc.onconnectionstatechange = () => {
-                if (pc.connectionState === "connected") {
-                  fetch(`${apiBaseUrl}/api/audit-log`, {
-                    method: 'POST',
-                    headers: getHeaders(),
-                    body: JSON.stringify({
-                      userId: userId || 'Unknown',
-                      userRole: 'student',
-                      displayName: studentRef.current?.full_name || 'Student',
-                      action: 'SIGNALING_ESTABLISHED',
-                      details: { exam_id: examId, connection_state: pc.connectionState }
-                    })
-                  }).catch(err => console.warn("Failed to audit SIGNALING_ESTABLISHED:", err));
-                } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-                  if (!isSubmittedRef.current) {
-                    fetch(`${apiBaseUrl}/api/audit-log`, {
-                      method: 'POST',
-                      headers: getHeaders(),
-                      body: JSON.stringify({
-                        userId: userId || 'Unknown',
-                        userRole: 'student',
-                        displayName: studentRef.current?.full_name || 'Student',
-                        action: 'STREAM_DISCONNECTED',
-                        details: { exam_id: examId, connection_state: pc.connectionState }
-                      })
-                    }).catch(err => console.warn("Failed to audit STREAM_DISCONNECTED:", err));
-                  }
-                }
-              };
-
-              // Add video and audio tracks (Strictly One-Way: Candidate sends to admin)
-              let trackCount = 0;
-              activeStream.getTracks().forEach((track) => {
-                pc.addTrack(track, activeStream);
-                trackCount++;
-              });
-              console.log(`[HRTA Proctor] ✅ Added ${trackCount} track(s) to RTCPeerConnection.`);
-
-              pc.onicecandidate = (event) => {
-                if (event.candidate && proctorChannelRef.current) {
-                  proctorChannelRef.current.send({
-                    type: "broadcast",
-                    event: "signal",
-                    payload: { type: "ICE_CANDIDATE", sender: "student", data: event.candidate }
-                  });
-                }
-              };
-
-              console.log("[HRTA Proctor] ⏳ Creating SDP offer...");
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              console.log("[HRTA Proctor] ✅ SDP offer created and set as local description.");
-
-              if (offerIntervalRef.current) {
-                clearInterval(offerIntervalRef.current);
-              }
-
-              const sendOfferBroadcast = () => {
-                if (peerConnectionRef.current && peerConnectionRef.current.signalingState !== "closed" && proctorChannelRef.current) {
-                  console.log(`[HRTA Proctor] 📤 Sending SDP_OFFER to admin on channel "${channelName}"`);
-                  proctorChannelRef.current.send({
-                    type: "broadcast",
-                    event: "signal",
-                    payload: { type: "SDP_OFFER", sender: "student", data: offer }
-                  }).then(() => {
-                    console.log("[HRTA Proctor] ✅ SDP_OFFER sent successfully.");
-                  }).catch(err => {
-                    console.error("[HRTA Proctor] ❌ FAILED to send SDP_OFFER:", err);
-                  });
-                } else {
-                  console.warn(`[HRTA Proctor] ⚠️ Skipping SDP_OFFER send. PC state: ${peerConnectionRef.current?.signalingState}, Channel: ${proctorChannelRef.current ? 'present' : 'null'}`);
-                }
-              };
-
-              sendOfferBroadcast();
-              offerIntervalRef.current = setInterval(sendOfferBroadcast, 2500);
-              isConnectingRef.current = false;
-
-            } else if (type === "SDP_ANSWER" && peerConnectionRef.current) {
-              try {
-                if (offerIntervalRef.current) {
-                  clearInterval(offerIntervalRef.current);
-                  offerIntervalRef.current = null;
-                }
-                console.log("[HRTA Proctor] ✅ SDP_ANSWER received from admin. Setting remote description...");
-                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data));
-                console.log("[HRTA Proctor] ✅ Remote description set. WebRTC connection finalizing...");
+            // Process SDP Answer
+            if (pollData.answer && peerConnectionRef.current) {
+              if (peerConnectionRef.current.signalingState !== "stable") {
+                const decryptedAns = await decryptPayload(pollData.answer, sharedKeyRef.current);
+                console.log("[HRTA Proctor] ✅ Setting decrypted SDP answer...");
+                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(decryptedAns));
+                // Process queued ICE candidates
                 while (studentIceQueueRef.current.length > 0) {
-                  const candidate = studentIceQueueRef.current.shift();
-                  if (candidate) {
-                    await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(e =>
-                      console.warn("Error processing queued candidate on student:", e)
+                  const cand = studentIceQueueRef.current.shift();
+                  if (cand) {
+                    await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand)).catch(e =>
+                      console.warn("Error processing queued ICE candidate:", e)
                     );
                   }
                 }
-              } catch (sdpErr) {
-                console.error("Error setting remote description/SDP answer:", sdpErr);
               }
-            } else if (type === "ICE_CANDIDATE" && peerConnectionRef.current) {
-              try {
-                if (data) {
-                  if (peerConnectionRef.current.remoteDescription) {
-                    await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data));
-                  } else {
-                    studentIceQueueRef.current.push(data);
-                  }
+            }
+
+            // Process admin ICE candidates
+            if (pollData.adminCandidates && pollData.adminCandidates.length > 0 && peerConnectionRef.current) {
+              for (const encryptedCand of pollData.adminCandidates) {
+                const decryptedCand = await decryptPayload(encryptedCand, sharedKeyRef.current);
+                if (peerConnectionRef.current.remoteDescription) {
+                  await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(decryptedCand));
+                } else {
+                  studentIceQueueRef.current.push(decryptedCand);
                 }
-              } catch (iceErr) {
-                console.error("Error setting ICE candidate on student:", iceErr);
               }
-            } else if (type === "ADMIN_DISCONNECTED") {
-              if (peerConnectionRef.current) {
-                peerConnectionRef.current.close();
-                peerConnectionRef.current = null;
-              }
-            } else if (type === "UNLOCK_APPROVED") {
-              console.log("Superadmin approved unlock. Restoring exam state...");
-              setIsProctorLocked(false);
-              setLockReason("");
-              setUnlockRequestSent(false);
-              tabSwitchCountRef.current = 0;
-              maxWarningsRef.current = 3;
-              logViolation('PROCTORING_UNLOCK_GRANTED', { note: 'Lock cleared by Superadmin' });
-            } else if (type === "UNLOCK_REJECTED") {
-              console.log("Superadmin rejected unlock. Terminating candidate session...");
-              setIsRejected(true);
-              setIsProctorLocked(false);
-              executeBlockSubmission();
             }
-          })
-          .subscribe((status) => {
-            console.log(`[HRTA Proctor] Signaling channel status: ${status}`);
-            if (status === "SUBSCRIBED") {
-              console.log("[HRTA Proctor] ✅ Student signaling channel SUBSCRIBED and ready.");
-            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-              console.error(`[HRTA Proctor] ❌ Student signaling channel failed: ${status}. Retrying in 3s...`);
-              // Auto-retry: remove old channel and recreate after delay
-              setTimeout(() => {
-                try {
-                  supabase.removeChannel(channel);
-                } catch(e) {}
-                const retryChannel = supabase.channel(channelName, {
-                  config: { broadcast: { self: false, ack: false }, presence: { key: '' } }
-                });
-                proctorChannelRef.current = retryChannel;
-                console.log("[HRTA Proctor] 🔄 Retrying signaling channel subscription...");
-                retryChannel
-                  .on("broadcast", { event: "signal" }, async ({ payload }) => {
-                    // Re-trigger ADMIN_CONNECTED if student has an active stream
-                    const { type, sender } = payload;
-                    if (sender === "admin" && type === "ADMIN_CONNECTED") {
-                      console.log("[HRTA Proctor] ✅ ADMIN_CONNECTED received on retry channel.");
-                      proctorChannelRef.current = retryChannel;
-                      // Fire the original channel handler by manually dispatching to the same channel ref
-                    }
-                  })
-                  .subscribe((retryStatus) => {
-                    console.log(`[HRTA Proctor] Retry channel status: ${retryStatus}`);
-                  });
-              }, 3000);
-            }
-          });
+          } catch (err) {
+            console.warn("[HRTA Proctor] Error in poll signaling loop:", err);
+          }
+        }, 2500);
 
         // Database-backed real-time watch on proctor_locks
         const lockChannel = supabase
@@ -945,6 +901,7 @@ export default function ExamInterface() {
     // Clean up on component unmount
     return () => {
       if (pollingInterval) clearInterval(pollingInterval);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
@@ -956,7 +913,6 @@ export default function ExamInterface() {
         clearInterval(offerIntervalRef.current);
         offerIntervalRef.current = null;
       }
-      supabase.removeChannel(channel);
       if (lockChannelRef.current) {
         supabase.removeChannel(lockChannelRef.current);
       }

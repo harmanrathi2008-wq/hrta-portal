@@ -2410,6 +2410,205 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'An internal server error occurred. Please contact the administrator.' });
 });
 
+// ============ WEBRTC SIGNALING RELAY (HTTP-based, replaces Supabase Realtime) ============
+// In-memory signal store: { [studentId]: { offer, answer, studentCandidates[], adminCandidates[], updatedAt } }
+const webrtcSignals = new Map();
+const SIGNAL_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// Auto-cleanup expired sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of webrtcSignals.entries()) {
+    if (now - val.updatedAt > SIGNAL_TTL_MS) {
+      webrtcSignals.delete(key);
+    }
+  }
+}, 60 * 1000);
+
+const getOrCreateSession = (studentId) => {
+  if (!webrtcSignals.has(studentId)) {
+    webrtcSignals.set(studentId, {
+      offer: null,
+      answer: null,
+      studentCandidates: [],
+      adminCandidates: [],
+      adminConnected: false,
+      studentPubkey: null,   // ECDH JWK public key from student
+      adminPubkey: null,     // ECDH JWK public key from admin
+      updatedAt: Date.now()
+    });
+  }
+  return webrtcSignals.get(studentId);
+};
+
+// Student: register their ECDH public key for E2E encryption
+app.post('/api/webrtc-signal/student-pubkey', verifyUserJWT, async (req, res) => {
+  try {
+    const studentId = req.user?.id;
+    if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
+    const { pubkey } = req.body;
+    if (!pubkey) return res.status(400).json({ error: 'pubkey required' });
+    const session = getOrCreateSession(studentId);
+    session.studentPubkey = pubkey;
+    session.updatedAt = Date.now();
+    console.log(`[WebRTC E2E] Student ${studentId} registered ECDH public key.`);
+    res.json({ ok: true, adminPubkey: session.adminPubkey });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: register their ECDH public key + get student's key
+app.post('/api/webrtc-signal/admin-pubkey', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId, pubkey } = req.body;
+    if (!studentId || !pubkey) return res.status(400).json({ error: 'studentId and pubkey required' });
+    const session = getOrCreateSession(studentId);
+    session.adminPubkey = pubkey;
+    session.updatedAt = Date.now();
+    console.log(`[WebRTC E2E] Admin registered ECDH public key for student ${studentId}.`);
+    res.json({ ok: true, studentPubkey: session.studentPubkey });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Student: poll for admin's pubkey (if not received yet on initial post)
+app.get('/api/webrtc-signal/admin-pubkey', verifyUserJWT, async (req, res) => {
+  try {
+    const studentId = req.user?.id;
+    if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
+    const session = webrtcSignals.get(studentId);
+    res.json({ adminPubkey: session?.adminPubkey || null });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+
+// Student: post SDP offer
+app.post('/api/webrtc-signal/offer', verifyUserJWT, async (req, res) => {
+  try {
+    const studentId = req.user?.id;
+    if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
+    const { offer } = req.body;
+    if (!offer) return res.status(400).json({ error: 'offer required' });
+    const session = getOrCreateSession(studentId);
+    session.offer = offer;
+    session.answer = null; // reset on new offer
+    session.updatedAt = Date.now();
+    console.log(`[WebRTC Relay] Student ${studentId} posted SDP offer.`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[WebRTC Relay] Error in /offer:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Student: post ICE candidate
+app.post('/api/webrtc-signal/student-ice', verifyUserJWT, async (req, res) => {
+  try {
+    const studentId = req.user?.id;
+    if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
+    const { candidate } = req.body;
+    if (!candidate) return res.status(400).json({ error: 'candidate required' });
+    const session = getOrCreateSession(studentId);
+    session.studentCandidates.push(candidate);
+    session.updatedAt = Date.now();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Student: poll for answer + admin ICE candidates
+app.get('/api/webrtc-signal/poll-student', verifyUserJWT, async (req, res) => {
+  try {
+    const studentId = req.user?.id;
+    if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
+    const session = webrtcSignals.get(studentId);
+    if (!session) return res.json({ answer: null, adminCandidates: [], adminConnected: false });
+    const candidates = [...session.adminCandidates];
+    session.adminCandidates = []; // drain consumed candidates
+    session.updatedAt = Date.now();
+    res.json({ answer: session.answer, adminCandidates: candidates, adminConnected: session.adminConnected });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: signal that they are connected (triggers student to send offer)
+app.post('/api/webrtc-signal/admin-connected', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId } = req.body;
+    if (!studentId) return res.status(400).json({ error: 'studentId required' });
+    const session = getOrCreateSession(studentId);
+    session.adminConnected = true;
+    session.updatedAt = Date.now();
+    console.log(`[WebRTC Relay] Admin marked connected for student ${studentId}.`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: poll for student offer + ICE candidates
+app.get('/api/webrtc-signal/poll-admin', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId } = req.query;
+    if (!studentId) return res.status(400).json({ error: 'studentId required' });
+    const session = webrtcSignals.get(studentId);
+    if (!session) return res.json({ offer: null, studentCandidates: [] });
+    const candidates = [...session.studentCandidates];
+    session.studentCandidates = []; // drain consumed candidates
+    session.updatedAt = Date.now();
+    res.json({ offer: session.offer, studentCandidates: candidates });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: post SDP answer
+app.post('/api/webrtc-signal/answer', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId, answer } = req.body;
+    if (!studentId || !answer) return res.status(400).json({ error: 'studentId and answer required' });
+    const session = getOrCreateSession(studentId);
+    session.answer = answer;
+    session.updatedAt = Date.now();
+    console.log(`[WebRTC Relay] Admin posted SDP answer for student ${studentId}.`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: post ICE candidate
+app.post('/api/webrtc-signal/admin-ice', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId, candidate } = req.body;
+    if (!studentId || !candidate) return res.status(400).json({ error: 'studentId and candidate required' });
+    const session = getOrCreateSession(studentId);
+    session.adminCandidates.push(candidate);
+    session.updatedAt = Date.now();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Admin: clear session (cleanup)
+app.post('/api/webrtc-signal/clear', verifyAdminJWT, async (req, res) => {
+  try {
+    const { studentId } = req.body;
+    if (studentId) webrtcSignals.delete(studentId);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+// ============ END WEBRTC SIGNALING RELAY ============
+
 // ============ START SERVER ============
 app.listen(PORT, () => {
   console.log(`========================================`)
