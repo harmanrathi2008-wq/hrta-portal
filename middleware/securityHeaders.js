@@ -7,6 +7,8 @@ const helmetMiddleware = helmet({
       defaultSrc: ["'self'"],
       scriptSrc: [
         "'self'", 
+        "'unsafe-inline'",
+        "'unsafe-eval'",
         "https://www.google.com/recaptcha/", 
         "https://www.gstatic.com/recaptcha/"
       ],
@@ -25,7 +27,9 @@ const helmetMiddleware = helmet({
         "wss://*.supabase.in", 
         "https://hrta-portal.onrender.com", 
         "https://generativelanguage.googleapis.com", 
-        "https://www.google.com/recaptcha/"
+        "https://www.google.com/recaptcha/",
+        "https://www.gstatic.com/recaptcha/",
+        "https://recaptchaenterprise.googleapis.com/"
       ],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       frameSrc: ["'self'", "https://www.google.com/recaptcha/", "https://recaptcha.google.com/"],
