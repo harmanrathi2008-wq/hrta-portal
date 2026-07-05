@@ -70,8 +70,65 @@ export default function ExamInterface() {
   const [unlockRequestSent, setUnlockRequestSent] = useState(false);
   const [isRejected, setIsRejected] = useState(false);
 
-  // Unified logging helper for candidate violations
-  const logViolation = async (action, details = {}) => {
+  const sessionTokenRef = React.useRef('');
+  React.useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      sessionTokenRef.current = session?.access_token || '';
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      sessionTokenRef.current = session?.access_token || '';
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // App & Exam States
+  const [student, setStudent] = useState(null);
+  const studentRef = React.useRef(null);
+  useEffect(() => {
+    studentRef.current = student;
+  }, [student]);
+  const [exam, setExam] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [timeSpent, setTimeSpent] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [responses, setResponses] = useState({});
+  const [committedResponses, setCommittedResponses] = useState({});
+  const [status, setStatus] = useState({});
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
+  const [submitModalOpen, setSubmitModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState(null);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomLastDist, setZoomLastDist] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+
+  // Connection & Auto-save states
+  const [draftId, setDraftId] = useState(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+
+  // Section Tracking States
+  const [sections, setSections] = useState([]);
+  const [activeSection, setActiveSection] = useState("");
+
+  // Security Locking States
+  const [hasFocus, setHasFocus] = useState(true);
+
+  const [imageError, setImageError] = useState(false);
+
+  function getHeaders() {
+    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessionTokenRef.current}`,
+      'X-Session-ID': loginLogId
+    };
+  }
+
+  async function logViolation(action, details = {}) {
     try {
       const userId = sessionStorage.getItem("userId");
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
@@ -81,7 +138,7 @@ export default function ExamInterface() {
         body: JSON.stringify({
           userId: userId || 'Unknown',
           userRole: 'student',
-          displayName: student?.full_name || 'Student',
+          displayName: studentRef.current?.full_name || 'Student',
           action,
           details: {
             exam_id: examId,
@@ -93,10 +150,9 @@ export default function ExamInterface() {
     } catch (e) {
       console.warn("Failed to log violation to audit-log:", e);
     }
-  };
+  }
 
-  // Unified proctor lock trigger
-  const triggerExamLock = async (reason) => {
+  async function triggerExamLock(reason) {
     setIsProctorLocked(true);
     setLockReason(reason);
     logViolation('PROCTORING_VIOLATION_LOCK', { reason });
@@ -132,10 +188,9 @@ export default function ExamInterface() {
     } catch (dbErr) {
       console.warn("Failed to record proctor lock to DB:", dbErr);
     }
-  };
+  }
 
-  // Submit blocked cheat attempt to Supabase
-  const executeBlockSubmission = async () => {
+  async function executeBlockSubmission() {
     if (isSubmittingRef.current || isSubmittedRef.current) return;
     isSubmittingRef.current = true;
     setSubmitting(true);
@@ -200,7 +255,7 @@ export default function ExamInterface() {
           body: JSON.stringify({
             userId: userId || 'Unknown',
             userRole: 'student',
-            displayName: student?.full_name || 'Student',
+            displayName: studentRef.current?.full_name || 'Student',
             action: 'EXAM_TERMINATED_FOR_CHEATING',
             details: {
               exam_id: examId,
@@ -218,65 +273,7 @@ export default function ExamInterface() {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const sessionTokenRef = React.useRef('');
-  React.useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      sessionTokenRef.current = session?.access_token || '';
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      sessionTokenRef.current = session?.access_token || '';
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const getHeaders = () => {
-    const loginLogId = sessionStorage.getItem('loginLogId') || '';
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${sessionTokenRef.current}`,
-      'X-Session-ID': loginLogId
-    };
-  };
-
-  // App & Exam States
-  const [student, setStudent] = useState(null);
-  const studentRef = React.useRef(null);
-  useEffect(() => {
-    studentRef.current = student;
-  }, [student]);
-  const [exam, setExam] = useState(null);
-  const [questions, setQuestions] = useState([]);
-  const [timeSpent, setTimeSpent] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [responses, setResponses] = useState({});
-  const [committedResponses, setCommittedResponses] = useState({});
-  const [status, setStatus] = useState({});
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
-  const [submitModalOpen, setSubmitModalOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [zoomedImage, setZoomedImage] = useState(null);
-  const [zoomScale, setZoomScale] = useState(1);
-  const [zoomLastDist, setZoomLastDist] = useState(null);
-  const [loadError, setLoadError] = useState(null);
-
-  // Connection & Auto-save states
-  const [draftId, setDraftId] = useState(null);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState(false);
-
-  // Section Tracking States
-  const [sections, setSections] = useState([]);
-  const [activeSection, setActiveSection] = useState("");
-
-  // Security Locking States
-  const [hasFocus, setHasFocus] = useState(true);
-
-  const [imageError, setImageError] = useState(false);
+  }
 
   // Preload upcoming question images in the background to ensure instantaneous display
   useEffect(() => {

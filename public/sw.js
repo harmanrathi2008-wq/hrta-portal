@@ -1,7 +1,5 @@
-const CACHE_NAME = 'hrta-portal-cache-v1';
+const CACHE_NAME = 'hrta-portal-cache-v2';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
   '/assets/nta_logo.png',
   '/assets/cosmic_bg.png'
 ];
@@ -23,6 +21,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
+            console.log('[Service Worker] Deleting old cache:', cache);
             return caches.delete(cache);
           }
         })
