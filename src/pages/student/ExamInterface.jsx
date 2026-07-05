@@ -229,7 +229,7 @@ export default function ExamInterface() {
 
   // App & Exam States
   const [student, setStudent] = useState(null);
-  const studentRef = useRef(null);
+  const studentRef = React.useRef(null);
   useEffect(() => {
     studentRef.current = student;
   }, [student]);
