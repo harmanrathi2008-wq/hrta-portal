@@ -13,11 +13,9 @@ const helmetMiddleware = helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: [
         "'self'", 
+        "*",
         "data:", 
-        "blob:", 
-        "https://res.cloudinary.com", 
-        "https://*.supabase.co", 
-        "https://*.cloudinary.com"
+        "blob:"
       ],
       connectSrc: [
         "'self'", 
