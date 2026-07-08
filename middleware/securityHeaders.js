@@ -8,14 +8,13 @@ const helmetMiddleware = helmet({
       scriptSrc: [
         "'self'", 
         "'unsafe-inline'",
-        "'unsafe-eval'",
         "https://www.google.com/recaptcha/", 
         "https://www.gstatic.com/recaptcha/"
       ],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: [
         "'self'", 
-        "*",
+        "https://res.cloudinary.com",
         "data:", 
         "blob:"
       ],
@@ -29,7 +28,8 @@ const helmetMiddleware = helmet({
         "https://generativelanguage.googleapis.com", 
         "https://www.google.com/recaptcha/",
         "https://www.gstatic.com/recaptcha/",
-        "https://recaptchaenterprise.googleapis.com/"
+        "https://recaptchaenterprise.googleapis.com/",
+        "https://api.cloudinary.com"
       ],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       frameSrc: ["'self'", "https://www.google.com/recaptcha/", "https://recaptcha.google.com/"],
@@ -60,6 +60,9 @@ export const configureSecurityHeaders = (req, res, next) => {
 
     // Set Permissions-Policy (allow camera & microphone for self, deny others)
     res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=()');
+
+    // Add X-XSS-Protection header to prevent XSS reflection attacks on legacy browsers
+    res.setHeader('X-XSS-Protection', '1; mode=block');
 
     // Clean headers to prevent information exposure
     res.setHeader('Server', 'HRTA Secure Server');
