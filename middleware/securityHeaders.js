@@ -43,7 +43,7 @@ const helmetMiddleware = helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
-  referrerPolicy: { policy: 'no-referrer-when-downgrade' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   frameguard: { action: 'deny' }, // Maps to X-Frame-Options: DENY
   hsts: {
     maxAge: 31536000, // 1 year
