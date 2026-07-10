@@ -67,8 +67,8 @@ export const configureSecurityHeaders = (req, res, next) => {
 
     // Set Cross-Origin Isolation & Resource Policy headers
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
     // Clean headers to prevent information exposure
     res.setHeader('Server', 'HRTA Secure Server');

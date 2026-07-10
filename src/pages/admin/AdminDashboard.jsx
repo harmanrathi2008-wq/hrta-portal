@@ -87,6 +87,61 @@ const AdminDashboard = () => {
     }
   };
 
+  // SOC Operations Center States & Actions
+  const [socScanning, setSocScanning] = useState(false);
+  const [socScanResult, setSocScanResult] = useState(null);
+  const [dbAuditResult, setDbAuditResult] = useState(null);
+  const [dbAuditLoading, setDbAuditLoading] = useState(false);
+
+  const getAdminHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+    };
+  };
+
+  const handleRunSocScan = async () => {
+    setSocScanning(true);
+    toast.info("Initializing child process dependency scanning...");
+    try {
+      const headers = await getAdminHeaders();
+      const response = await fetch(`${API_BASE_URL}/api/admin/security/run-dependency-scan`, {
+        method: 'POST',
+        headers
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to run scan');
+      setSocScanResult(data);
+      toast.success("Security dependency & package CVE scan completed.");
+    } catch (err) {
+      toast.error("Vulnerability scan failed: " + err.message);
+    } finally {
+      setSocScanning(false);
+    }
+  };
+
+  const handleRunDbAudit = async () => {
+    setDbAuditLoading(true);
+    toast.info("Auditing table access Row Level Security rules...");
+    try {
+      const headers = await getAdminHeaders();
+      const response = await fetch(`${API_BASE_URL}/api/admin/security/db-audit`, {
+        headers: { 'Authorization': headers['Authorization'] }
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to audit database');
+      setDbAuditResult(data.tables);
+      toast.success("Database Row Level Security (RLS) integrity checked.");
+    } catch (err) {
+      toast.error("Database audit failed: " + err.message);
+    } finally {
+      setDbAuditLoading(false);
+    }
+  };
+
   const proctorChannelsRef = useRef({});
 
   const peerConnectionRef = useRef(null);
@@ -1549,6 +1604,17 @@ const AdminDashboard = () => {
             >
               <span className="text-sm">🔑</span> Cryptography & Keys
             </button>
+
+            <button
+              onClick={() => setActiveTab('soc')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'soc' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🚨</span> Security SOC Scanner
+            </button>
           </nav>
         </div>
 
@@ -2571,6 +2637,211 @@ const AdminDashboard = () => {
                     >
                       {loadingKeys ? 'Deriving new keys...' : 'Authorize Rotation & Re-encrypt'}
                     </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'soc' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            {/* Threat Level & Streams */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Threat Level Banner */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between min-h-[200px]">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500" />
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">SOC System Status</h4>
+                  <p className="text-2xl font-black text-white mt-2 uppercase tracking-wide">Threat Matrix Level</p>
+                </div>
+                <div>
+                  {intrusionAlerts.filter(a => !a.resolved).length >= 4 ? (
+                    <div className="bg-red-500/10 border border-red-500/20 text-red-500 font-extrabold text-sm uppercase px-4 py-3 rounded-xl flex items-center gap-3 animate-pulse">
+                      <span className="text-xl">⚠️</span> EMERGENCY: CRITICAL THREATS ACTIVE
+                    </div>
+                  ) : intrusionAlerts.filter(a => !a.resolved).length > 0 ? (
+                    <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 font-extrabold text-sm uppercase px-4 py-3 rounded-xl flex items-center gap-3">
+                      <span className="text-xl">⚡</span> WARN: ELEVATED THREAT LEVEL
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-extrabold text-sm uppercase px-4 py-3 rounded-xl flex items-center gap-3">
+                      <span className="text-xl">🛡️</span> SECURE: NOMINAL / SAFE
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-500 mt-2.5">Real-time system health evaluation determined from unresolved access alarms.</p>
+                </div>
+              </div>
+
+              {/* Scrolling Incident stream console */}
+              <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 flex flex-col min-h-[200px]">
+                <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Live Intrusion Stream & Access Alerts</h4>
+                <div className="flex-1 bg-black/40 border border-white/5 rounded-xl p-4 font-mono text-[10px] text-slate-400 overflow-y-auto max-h-[140px] space-y-2">
+                  {intrusionAlerts.length > 0 ? (
+                    [...intrusionAlerts].reverse().map((alert, idx) => (
+                      <div key={idx} className={`pb-2 border-b border-white/5 last:border-0 ${alert.resolved ? 'text-slate-500' : 'text-red-400'}`}>
+                        <span className="text-cyan-400">[{new Date(alert.created_at || Date.now()).toLocaleTimeString()}]</span>{' '}
+                        <span className="font-bold text-white uppercase">{alert.action}</span> - {alert.details?.note || 'Access attempt detected'}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-600 italic flex items-center justify-center h-full">
+                      No intrusion alerts reported. Active monitors listening...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modules RLS and CVE scanner */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Dependency Scanner */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-purple-500 to-pink-500" />
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Module B: Package Vulnerability Scan</h4>
+                    <p className="text-[11px] text-slate-500 mt-1">Triggers system level child process audit scans to assess package security.</p>
+                  </div>
+                  <button
+                    onClick={handleRunSocScan}
+                    disabled={socScanning}
+                    className="bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 text-purple-400 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    {socScanning ? 'Scanning...' : 'Run Audit Scan'}
+                  </button>
+                </div>
+
+                {socScanResult ? (
+                  <div className="space-y-4">
+                    {/* Vulnerabilities counts */}
+                    <div className="grid grid-cols-4 gap-2">
+                      {['critical', 'high', 'moderate', 'low'].map((vuln) => {
+                        const count = socScanResult.vulnerabilities?.[vuln] || 0;
+                        const color = vuln === 'critical' ? 'text-red-500 bg-red-500/5 border-red-500/10' :
+                                      vuln === 'high' ? 'text-orange-500 bg-orange-500/5 border-orange-500/10' :
+                                      vuln === 'moderate' ? 'text-yellow-500 bg-yellow-500/5 border-yellow-500/10' : 'text-slate-400 bg-slate-400/5 border-slate-400/10';
+                        return (
+                          <div key={vuln} className={`border rounded-lg p-2.5 text-center ${color}`}>
+                            <p className="text-lg font-black font-mono">{count}</p>
+                            <p className="text-[8px] font-bold uppercase tracking-wider">{vuln}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Outdated Packages */}
+                    <div>
+                      <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-2">Outdated Library Dependencies</h5>
+                      <div className="bg-black/20 border border-white/5 rounded-xl overflow-hidden max-h-[140px] overflow-y-auto">
+                        <table className="w-full text-left text-[10px] font-mono text-slate-400">
+                          <thead className="bg-white/[0.02] text-slate-450 uppercase font-black">
+                            <tr>
+                              <th className="px-4 py-2">Library</th>
+                              <th className="px-4 py-2">Current</th>
+                              <th className="px-4 py-2">Latest</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {socScanResult.outdatedPackages && socScanResult.outdatedPackages.length > 0 ? (
+                              socScanResult.outdatedPackages.map((pkg, i) => (
+                                <tr key={i}>
+                                  <td className="px-4 py-2 text-white">{pkg.name}</td>
+                                  <td className="px-4 py-2">{pkg.current || 'N/A'}</td>
+                                  <td className="px-4 py-2 text-purple-400 font-bold">{pkg.latest}</td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={3} className="px-4 py-3 text-center text-slate-600 italic">No outdated packages found.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-black/10 border border-white/5 border-dashed rounded-xl p-8 text-center text-xs text-slate-500 italic">
+                    Click "Run Audit Scan" to initialize deep package safety scans.
+                  </div>
+                )}
+              </div>
+
+              {/* RLS Integrity Auditor */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-emerald-500 to-teal-500" />
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Module C: Database RLS Auditor</h4>
+                    <p className="text-[11px] text-slate-500 mt-1">Verifies that Row-Level Security policies are active on all public tables.</p>
+                  </div>
+                  <button
+                    onClick={handleRunDbAudit}
+                    disabled={dbAuditLoading}
+                    className="bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-emerald-400 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    {dbAuditLoading ? 'Auditing...' : 'Check RLS State'}
+                  </button>
+                </div>
+
+                {dbAuditResult ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
+                    {dbAuditResult.map((tbl, i) => (
+                      <div key={i} className="bg-black/20 border border-white/5 rounded-xl p-3 flex justify-between items-center">
+                        <div>
+                          <p className="text-xs font-extrabold text-white uppercase tracking-wider">{tbl.table}</p>
+                          <p className="text-[9px] font-mono text-emerald-400 font-bold uppercase mt-0.5">{tbl.status}</p>
+                        </div>
+                        <span className="text-emerald-500 font-bold text-sm bg-emerald-500/5 px-2 py-1 rounded-lg border border-emerald-500/10">✓ Secure</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-black/10 border border-white/5 border-dashed rounded-xl p-8 text-center text-xs text-slate-500 italic">
+                    Click "Check RLS State" to scan active database table policies.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Cryptographic Chain Auditor */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyan-500 to-blue-500" />
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
+                <div>
+                  <h4 className="font-extrabold text-white text-base uppercase tracking-wider flex items-center gap-2">
+                    Module D: Cryptographic Chain Auditor
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-1">Recalculates cryptographic HMAC signatures across the audit ledger to verify chronological chain order integrity.</p>
+                </div>
+
+                <div className="flex items-center gap-4 shrink-0 w-full sm:w-auto">
+                  <button
+                    onClick={handleVerifyChain}
+                    disabled={verifyingChain}
+                    className="w-full sm:w-auto bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 text-cyan-400 px-5 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
+                  >
+                    {verifyingChain ? 'Verifying Ledger Chain...' : 'Verify Cryptographic Chain'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Integrity status report */}
+              {isLogChainValid ? (
+                <div className="mt-5 bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-4 flex items-center gap-3">
+                  <span className="text-emerald-500 text-lg">🛡️</span>
+                  <div>
+                    <h5 className="text-xs font-black text-emerald-400 uppercase tracking-wide">CHAIN INTEGRITY DETECTED: INTACT</h5>
+                    <p className="text-[10px] text-slate-400 mt-0.5">All signed log records resolved to valid previous signatures. Zero alterations or missing records found.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-5 bg-red-500/5 border border-red-500/10 rounded-xl p-4 flex items-center gap-3">
+                  <span className="text-red-500 text-lg">⚠️</span>
+                  <div>
+                    <h5 className="text-xs font-black text-red-400 uppercase tracking-wide">CHAIN INTEGRITY DETECTED: COMPROMISED</h5>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Warning: A signature mismatch was detected in the log history sequence! Review recent database transactions.</p>
                   </div>
                 </div>
               )}

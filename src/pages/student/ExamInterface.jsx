@@ -72,15 +72,16 @@ export default function ExamInterface() {
   const [unlockRequestSent, setUnlockRequestSent] = useState(false);
   const [isRejected, setIsRejected] = useState(false);
 
-  const sessionTokenRef = React.useRef('');
+  const sessionTokenRef = React.useRef(sessionStorage.getItem('studentSessionToken') || '');
   React.useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      sessionTokenRef.current = session?.access_token || '';
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      sessionTokenRef.current = session?.access_token || '';
-    });
-    return () => subscription.unsubscribe();
+    const localToken = sessionStorage.getItem('studentSessionToken');
+    if (localToken) {
+      sessionTokenRef.current = localToken;
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) sessionTokenRef.current = session.access_token || '';
+      });
+    }
   }, []);
 
   // App & Exam States
@@ -173,18 +174,19 @@ export default function ExamInterface() {
     try {
       const userId = sessionStorage.getItem("userId");
       if (userId) {
-        await supabase
-          .from("proctor_locks")
-          .upsert([
-            {
-              student_id: userId,
-              exam_id: examId,
-              exam_result_id: draftId || null,
-              status: "locked",
-              reason: reason,
-              updated_at: new Date().toISOString()
-            }
-          ], { onConflict: 'student_id,exam_id' });
+        const token = sessionStorage.getItem('studentSessionToken') || '';
+        await fetch(`${API_BASE_URL}/api/student/exams/${examId}/lock`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            draftId: draftId || null,
+            reason: reason,
+            status: "locked"
+          })
+        });
       }
     } catch (dbErr) {
       console.warn("Failed to record proctor lock to DB:", dbErr);
@@ -202,48 +204,23 @@ export default function ExamInterface() {
       const timerKey = `exam_start_time_${examId}`;
       const startTime = sessionStorage.getItem(timerKey) || Date.now().toString();
 
-      let attemptNumber = 1;
-      try {
-        const { data: existingAttempts } = await supabase
-          .from("exam_results")
-          .select("id")
-          .eq("student_id", userId)
-          .eq("exam_id", examId);
-        if (existingAttempts) {
-          attemptNumber = existingAttempts.length + 1;
-        }
-      } catch (e) {
-        console.error("Error fetching attempt count:", e);
-      }
+      const token = sessionStorage.getItem('studentSessionToken') || '';
+      const res = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/save-draft`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          draftId: draftId,
+          answers: {},
+          status: "blocked"
+        })
+      });
 
-      const resultPayload = {
-        student_id: userId,
-        exam_id: examId,
-        answers: {}, // Empty responses to reset / penalize
-        status: "blocked",
-        total_score: 0,
-        total_marks: exam && exam.total_marks ? parseFloat(exam.total_marks) : 100,
-        percentage: 0,
-        correct_count: 0,
-        wrong_count: 0,
-        unattempted_count: questions.length,
-        started_at: new Date(parseInt(startTime, 10)).toISOString(),
-        submitted_at: new Date().toISOString(),
-        attempt_number: attemptNumber
-      };
-
-      let error;
-      if (draftId) {
-        const res = await supabase
-          .from("exam_results")
-          .update(resultPayload)
-          .eq("id", draftId);
-        error = res.error;
-      } else {
-        const res = await supabase.from("exam_results").insert([resultPayload]);
-        error = res.error;
+      if (!res.ok) {
+        throw new Error("Failed to save blocked attempt via backend proxy.");
       }
-      if (error) throw error;
 
       isSubmittedRef.current = true;
 
@@ -334,28 +311,27 @@ export default function ExamInterface() {
           return;
         }
 
+        const token = sessionStorage.getItem('studentSessionToken') || '';
         const [studentRes, examRes, questionsRes] = await Promise.all([
-          supabase.from("students").select("*").eq("id", userId).single(),
-          supabase.from("exams").select("*").eq("id", examId).single(),
-          supabase
-            .from("questions")
-            .select("id, exam_id, question_type, question_text, options, order_index, topic, image_url, positive_marks, negative_marks, status")
-            .eq("exam_id", examId)
-            .order("order_index", { ascending: true }),
+          fetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+          fetch(`${API_BASE_URL}/api/student/exams/${examId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+          fetch(`${API_BASE_URL}/api/student/exams/${examId}/questions`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(r => { if (!r.ok) throw new Error(); return r.json(); })
         ]);
 
-        if (studentRes.error) throw studentRes.error;
-        if (examRes.error) throw examRes.error;
-        if (questionsRes.error) throw questionsRes.error;
-
-        setStudent(studentRes.data);
-        setExam(examRes.data);
-        setQuestions(questionsRes.data);
+        setStudent(studentRes);
+        setExam(examRes);
+        setQuestions(questionsRes);
 
         // Group questions into sections based on 'topic' or fallback to 'subject'
         const secs = [];
-        questionsRes.data.forEach((q) => {
-          const secName = (q.topic || examRes.data.subject || "Section A").toUpperCase().trim();
+        questionsRes.forEach((q) => {
+          const secName = (q.topic || examRes.subject || "Section A").toUpperCase().trim();
           if (!secs.includes(secName)) {
             secs.push(secName);
           }
@@ -366,41 +342,19 @@ export default function ExamInterface() {
         }
 
         // Fetch or create database-level in-progress attempt row (draft)
-        let currentDraft = null;
-        const { data: existingDraft } = await supabase
-          .from("exam_results")
-          .select("*")
-          .eq("student_id", userId)
-          .eq("exam_id", examId)
-          .eq("status", "in_progress")
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const draftData = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/draft`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            startTime: sessionStorage.getItem(`exam_start_time_${examId}`) || Date.now().toString()
+          })
+        }).then(r => { if (!r.ok) throw new Error('Failed to load/create exam attempt'); return r.json(); });
 
-        if (existingDraft) {
-          currentDraft = existingDraft;
-          setDraftId(existingDraft.id);
-        } else {
-          // Create a new draft
-          const { data: newDraft, error: draftInsertErr } = await supabase
-            .from("exam_results")
-            .insert([{
-              student_id: userId,
-              exam_id: examId,
-              status: "in_progress",
-              answers: {},
-              started_at: new Date().toISOString()
-            }])
-            .select()
-            .single();
-
-          if (draftInsertErr) {
-            console.error("Failed to initialize draft in database:", draftInsertErr.message);
-          } else {
-            currentDraft = newDraft;
-            setDraftId(newDraft.id);
-          }
-        }
+        const currentDraft = draftData.draft;
+        setDraftId(draftData.draft.id);
 
         // Log audit event: Start Exam
         try {
@@ -410,11 +364,11 @@ export default function ExamInterface() {
             body: JSON.stringify({
               userId: userId,
               userRole: 'student',
-              displayName: studentRes.data.full_name || 'Student',
+              displayName: studentRes.full_name || 'Student',
               action: 'START_EXAM',
               details: {
                 exam_id: examId,
-                exam_title: examRes.data.title,
+                exam_title: examRes.title,
                 draft_id: currentDraft?.id
               }
             })
@@ -443,12 +397,12 @@ export default function ExamInterface() {
           setStatus(JSON.parse(localStatusStr));
         } else {
           const initialStatus = {};
-          questionsRes.data.forEach((q) => {
+          questionsRes.forEach((q) => {
             const hasAns = loadedResponses[q.id] !== undefined && loadedResponses[q.id] !== null && loadedResponses[q.id] !== "";
             initialStatus[q.id] = hasAns ? "answered" : "notVisited";
           });
-          if (questionsRes.data.length > 0 && initialStatus[questionsRes.data[0].id] === "notVisited") {
-            initialStatus[questionsRes.data[0].id] = "notAnswered";
+          if (questionsRes.length > 0 && initialStatus[questionsRes[0].id] === "notVisited") {
+            initialStatus[questionsRes[0].id] = "notAnswered";
           }
           setStatus(initialStatus);
           localStorage.setItem(cacheKeyStatus, JSON.stringify(initialStatus));
@@ -1102,12 +1056,22 @@ export default function ExamInterface() {
     const syncDraft = async () => {
       setSyncing(true);
       try {
-        const { error } = await supabase
-          .from("exam_results")
-          .update({ answers: committedResponses })
-          .eq("id", draftId);
+        const token = sessionStorage.getItem('studentSessionToken') || '';
+        const res = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/save-draft`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            draftId: draftId,
+            answers: committedResponses,
+            currentIndex: currentIdx,
+            timeLeft: timeLeft
+          })
+        });
 
-        if (error) throw error;
+        if (!res.ok) throw new Error("Draft save response not OK");
         setSyncError(false);
       } catch (err) {
         console.warn("Background draft sync failed:", err.message);
@@ -1122,7 +1086,7 @@ export default function ExamInterface() {
     }, 2000); // 2 second debounce
 
     return () => clearTimeout(delayDebounceFn);
-  }, [committedResponses, draftId, isOnline]);
+  }, [committedResponses, draftId, isOnline, currentIdx, timeLeft]);
 
   // Active Question Time Tracker
   useEffect(() => {
@@ -1477,8 +1441,7 @@ export default function ExamInterface() {
       }
 
       // Call secure server-side scoring API
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token || '';
+      const token = sessionStorage.getItem('studentSessionToken') || '';
 
       const response = await fetch(`${API_BASE_URL}/api/submit-exam`, {
         method: 'POST',
@@ -1502,20 +1465,13 @@ export default function ExamInterface() {
 
       // Complete active personal assignment if it exists
       try {
-        const { data: activeAssign } = await supabase
-          .from("personal_assignments")
-          .select("id")
-          .eq("student_id", userId)
-          .eq("exam_id", examId)
-          .eq("status", "active")
-          .maybeSingle();
-
-        if (activeAssign) {
-          await supabase
-            .from("personal_assignments")
-            .update({ status: "completed", updated_at: new Date().toISOString() })
-            .eq("id", activeAssign.id);
-        }
+        await fetch(`${API_BASE_URL}/api/student/exams/${examId}/complete-assignment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
       } catch (e) {
         console.error("Error completing personal assignment:", e);
       }
@@ -2416,11 +2372,19 @@ export default function ExamInterface() {
                       try {
                         const userId = sessionStorage.getItem("userId");
                         if (userId) {
-                          await supabase
-                            .from("proctor_locks")
-                            .update({ status: "pending_unlock", updated_at: new Date().toISOString() })
-                            .eq("student_id", userId)
-                            .eq("exam_id", examId);
+                          const token = sessionStorage.getItem('studentSessionToken') || '';
+                          await fetch(`${API_BASE_URL}/api/student/exams/${examId}/lock`, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify({
+                              draftId: draftId || null,
+                              reason: lockReason,
+                              status: "pending_unlock"
+                            })
+                          });
                         }
                       } catch (dbErr) {
                         console.warn("Failed to update lock row to pending_unlock:", dbErr);
