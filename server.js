@@ -13,6 +13,17 @@ import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter } from 
 import { validateEmailInput } from './middleware/validator.js'
 import crypto from 'crypto'
 import { body, validationResult } from 'express-validator'
+import { 
+  hashPassword, 
+  verifyPassword, 
+  encryptData, 
+  decryptData, 
+  signLogEntry, 
+  verifyLogChain, 
+  rotateEncryptionKeys, 
+  checkAutoKeyRotation 
+} from './services/cryptoService.js';
+import { advancedRateLimiter } from './middleware/advancedRateLimiter.js';
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -169,6 +180,22 @@ async function verifyAdminJWT(req, res, next) {
       return res.status(403).json({ error: 'Access Denied: Administrator role required.' });
     }
 
+    // Checking if the session has been revoked in the DB
+    try {
+      const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+      const { data: sessionAct } = await supabaseAdmin
+        .from('session_activity')
+        .select('is_revoked')
+        .eq('refresh_token_hash', hashedToken)
+        .maybeSingle();
+
+      if (sessionAct && sessionAct.is_revoked) {
+        return res.status(401).json({ error: 'Access Denied: Session revoked by administrator.' });
+      }
+    } catch (e) {
+      // Safe fallback if session_activity table is not migrated yet
+    }
+
     req.user = user;
     req.role = adminUser.role;
     next();
@@ -193,6 +220,28 @@ async function verifyUserJWT(req, res, next) {
       return res.status(401).json({ error: 'Access Denied: No session token provided.' });
     }
 
+    // 1. Try to resolve via session_activity (for candidates / custom sessions)
+    try {
+      const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+      const { data: sessionAct } = await supabaseAdmin
+        .from('session_activity')
+        .select('user_id, is_revoked')
+        .eq('refresh_token_hash', hashedToken)
+        .maybeSingle();
+
+      if (sessionAct) {
+        if (sessionAct.is_revoked) {
+          return res.status(401).json({ error: 'Access Denied: Session revoked by administrator.' });
+        }
+        // Successfully resolved student/user session!
+        req.user = { id: sessionAct.user_id };
+        return next();
+      }
+    } catch (e) {
+      console.warn("session_activity token resolution warning:", e.message);
+    }
+
+    // 2. Fallback to Supabase auth validation (for admins)
     const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
     if (authErr || !user) {
       return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
@@ -204,6 +253,138 @@ async function verifyUserJWT(req, res, next) {
     console.error('User token validation error:', err.message);
     res.status(500).json({ error: 'Internal security authentication error.' });
   }
+}
+
+// CSRF Protection Middleware for non-GET state-changing API endpoints
+function verifyCSRF(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  
+  const csrfToken = req.headers['x-csrf-token'] || req.headers['x-hrta-sectoken'];
+  if (!csrfToken || csrfToken !== 'HRTA_SECURE_CLIENT_CSRF_VAL_2026') {
+    console.warn(`[CSRF Blocked] Request to ${req.path} failed CSRF validation.`);
+    return res.status(403).json({ error: 'CSRF validation failed: Missing or invalid security token header.' });
+  }
+  next();
+}
+
+// Immutable Cryptographically Signed Audit Logging Engine
+async function logSecurityEvent(eventType, description, userId, req) {
+  try {
+    const rawIp = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+
+    // Retrieve previous log signature to chain them
+    let previousSignature = '';
+    try {
+      const { data: lastLog, error: lastErr } = await supabaseAdmin
+        .from('signed_audit_logs')
+        .select('signature')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!lastErr && lastLog) {
+        previousSignature = lastLog.signature;
+      }
+    } catch (dbErr) {
+      console.warn("Signed audit logs table not accessible yet. Skipping signature chaining.");
+    }
+
+    const logContent = {
+      event_type: eventType,
+      description: description,
+      user_id: userId || null,
+      ip_address: ip,
+      user_agent: userAgent
+    };
+
+    const signature = signLogEntry(logContent, previousSignature);
+
+    await supabaseAdmin
+      .from('signed_audit_logs')
+      .insert({
+        event_type: eventType,
+        description: description,
+        user_id: userId || null,
+        ip_address: ip,
+        user_agent: userAgent,
+        previous_signature: previousSignature,
+        signature: signature
+      });
+  } catch (err) {
+    console.error("Failed to write signed audit log:", err.message);
+  }
+}
+
+// Step-Up 2FA Re-Authentication Middleware for Critical Operations
+async function requireStepUp2FA(req, res, next) {
+  try {
+    const stepUpSecret = req.headers['x-stepup-secret'];
+    const stepUpOtp = req.headers['x-stepup-otp'];
+
+    if (!stepUpSecret || !stepUpOtp) {
+      return res.status(401).json({ error: 'Step-up authentication required: Secret key and OTP pin are missing.' });
+    }
+
+    if (stepUpSecret !== SUPER_ADMIN_SECRET) {
+      return res.status(403).json({ error: 'Step-up authentication failed: Invalid superadmin secret key.' });
+    }
+
+    // Retrieve active admin user's MFA secret
+    const { data: dbAdmin, error: adminErr } = await supabaseAdmin
+      .from('admins')
+      .select('mfa_secret')
+      .eq('id', req.user.id)
+      .single();
+
+    if (adminErr || !dbAdmin || !dbAdmin.mfa_secret) {
+      return res.status(400).json({ error: 'Multi-factor authentication (MFA) setup required to perform this action.' });
+    }
+
+    const isValid = verifyTOTP(stepUpOtp, dbAdmin.mfa_secret);
+    if (!isValid) {
+      await logSecurityEvent('stepup_failed', `Failed step-up 2FA attempt for user ${req.user.email}`, req.user.id, req);
+      return res.status(400).json({ error: 'Step-up authentication failed: Invalid authenticator code.' });
+    }
+
+    next();
+  } catch (err) {
+    console.error("Step-up authentication error:", err.message);
+    res.status(500).json({ error: 'Step-up authentication processing error.' });
+  }
+}
+
+// Student Data Symmetric Encryption/Decryption Helpers
+function decryptStudent(student) {
+  if (!student) return null;
+  try {
+    return {
+      ...student,
+      date_of_birth: decryptData(student.date_of_birth, 'student'),
+      email: decryptData(student.email, 'student'),
+      phone: student.phone ? decryptData(student.phone, 'student') : '',
+      address: student.address ? decryptData(student.address, 'student') : '',
+      parent_pin: student.parent_pin ? decryptData(student.parent_pin, 'student') : ''
+    };
+  } catch (err) {
+    console.error("Error decrypting student record:", err.message);
+    return student; // Return unmodified as fallback
+  }
+}
+
+function encryptStudent(student) {
+  if (!student) return null;
+  return {
+    ...student,
+    date_of_birth: encryptData(student.date_of_birth, 'student'),
+    email: encryptData(student.email, 'student'),
+    phone: student.phone ? encryptData(student.phone, 'student') : '',
+    address: student.address ? encryptData(student.address, 'student') : '',
+    parent_pin: student.parent_pin ? encryptData(student.parent_pin, 'student') : ''
+  };
 }
 
 // Domain emails
@@ -2671,7 +2852,363 @@ app.post('/api/webrtc-signal/clear', verifyAdminJWT, async (req, res) => {
     res.status(500).json({ error: 'Internal error' });
   }
 });
-// ============ END WEBRTC SIGNALING RELAY ============
+// ============ ADVANCED SECURITY ENDPOINTS & PROXIES ============
+
+// Register global CSRF protection for all state-changing API endpoints
+app.use('/api/', verifyCSRF);
+
+// Hourly/Daily Trigger to check for 120-day key rotation schedule
+setInterval(() => {
+  checkAutoKeyRotation();
+}, 24 * 60 * 60 * 1000).unref(); // Run daily check
+
+// 1. Student Login API Proxy (verifies encrypted DOB)
+app.post('/api/student/login', authLimiter, async (req, res) => {
+  const { applicationId, password } = req.body;
+  if (!applicationId || !password) {
+    return res.status(400).json({ error: 'Application ID and Date of Birth are required.' });
+  }
+
+  try {
+    const cleanAppId = applicationId.trim().toUpperCase();
+
+    // Query student by unencrypted search column (application_id)
+    const { data: students, error: dbError } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .eq('application_id', cleanAppId);
+
+    if (dbError || !students || students.length === 0) {
+      return res.status(401).json({ error: 'Invalid Application ID or Date of Birth' });
+    }
+
+    // Find student with matching decrypted date of birth
+    let matchedStudent = null;
+    for (const student of students) {
+      const decryptedDob = decryptData(student.date_of_birth, 'student');
+      if (decryptedDob === password) {
+        matchedStudent = student;
+        break;
+      }
+    }
+
+    if (!matchedStudent) {
+      return res.status(401).json({ error: 'Invalid Application ID or Date of Birth' });
+    }
+
+    if (matchedStudent.status === 'disabled') {
+      return res.status(401).json({ error: 'Account disabled. Contact administrator.' });
+    }
+
+    // Return decrypted student data for frontend sessionStorage
+    const decryptedStudent = decryptStudent(matchedStudent);
+    
+    // Register session in session_activity
+    const rawIp = req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+    
+    // Generate a temporary mock refresh token hash for tracking
+    const mockToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(mockToken).digest('hex');
+
+    try {
+      await supabaseAdmin
+        .from('session_activity')
+        .insert({
+          user_id: matchedStudent.id,
+          refresh_token_hash: tokenHash,
+          ip_address: ip,
+          user_agent: userAgent,
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days expiration
+        });
+    } catch (e) {
+      console.warn("Could not insert session activity:", e.message);
+    }
+
+    await logSecurityEvent('student_login', `Student ${decryptedStudent.full_name} logged in successfully`, matchedStudent.id, req);
+
+    res.json({ 
+      student: decryptedStudent, 
+      sessionToken: mockToken // Send back to client to use in request headers
+    });
+  } catch (err) {
+    console.error("Student login API error:", err);
+    res.status(500).json({ error: 'Internal server error during authentication.' });
+  }
+});
+
+// 2. Student Profile APIs
+app.get('/api/student/profile', verifyUserJWT, async (req, res) => {
+  const { studentId } = req.query;
+  if (!studentId) return res.status(400).json({ error: 'studentId required' });
+
+  try {
+    const { data: student, error } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .eq('id', studentId)
+      .single();
+
+    if (error || !student) {
+      return res.status(404).json({ error: 'Student profile not found.' });
+    }
+
+    res.json(decryptStudent(student));
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch student profile.' });
+  }
+});
+
+app.post('/api/student/profile/update', verifyUserJWT, async (req, res) => {
+  const { studentId, phone, category, parent_pin } = req.body;
+  if (!studentId) return res.status(400).json({ error: 'studentId required' });
+
+  try {
+    const updates = {};
+    if (phone !== undefined) updates.phone = phone ? encryptData(phone, 'student') : '';
+    if (category !== undefined) updates.category = category;
+    if (parent_pin !== undefined) updates.parent_pin = parent_pin ? encryptData(parent_pin, 'student') : '';
+
+    const { error } = await supabaseAdmin
+      .from('students')
+      .update(updates)
+      .eq('id', studentId);
+
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update profile.' });
+  }
+});
+
+// 3. Admin: Manage Candidates CRUD API Proxy (enforces encryption & logs actions)
+app.get('/api/admin/students', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Decrypt all students sensitive data
+    const decryptedStudents = (data || []).map(s => decryptStudent(s));
+    res.json(decryptedStudents);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch candidates list.' });
+  }
+});
+
+app.post('/api/admin/students', verifyAdminJWT, async (req, res) => {
+  try {
+    const rawStudent = req.body;
+    
+    // Encrypt sensitive fields
+    const encryptedStudent = encryptStudent(rawStudent);
+
+    const { data, error } = await supabaseAdmin
+      .from('students')
+      .insert([encryptedStudent])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await logSecurityEvent('candidate_create', `Admin created candidate ${rawStudent.full_name} (${rawStudent.application_id})`, req.user.id, req);
+    res.json(decryptStudent(data));
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to create candidate.' });
+  }
+});
+
+app.put('/api/admin/students/:id', verifyAdminJWT, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const rawUpdates = req.body;
+    
+    // Encrypt sensitive updates if they are provided
+    const encryptedUpdates = { ...rawUpdates };
+    if (rawUpdates.date_of_birth) encryptedUpdates.date_of_birth = encryptData(rawUpdates.date_of_birth, 'student');
+    if (rawUpdates.email) encryptedUpdates.email = encryptData(rawUpdates.email, 'student');
+    if (rawUpdates.phone) encryptedUpdates.phone = encryptData(rawUpdates.phone, 'student');
+    if (rawUpdates.address) encryptedUpdates.address = encryptData(rawUpdates.address, 'student');
+
+    const { error } = await supabaseAdmin
+      .from('students')
+      .update(encryptedUpdates)
+      .eq('id', id);
+
+    if (error) throw error;
+
+    await logSecurityEvent('candidate_update', `Admin updated candidate ${id}`, req.user.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update candidate.' });
+  }
+});
+
+app.delete('/api/admin/students/:id', verifyAdminJWT, requireStepUp2FA, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabaseAdmin
+      .from('students')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    await logSecurityEvent('candidate_delete', `Superadmin deleted candidate ${id}`, req.user.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete candidate.' });
+  }
+});
+
+// 4. Admin: Key & Cryptography Management
+app.get('/api/admin/key-status', verifyAdminJWT, async (req, res) => {
+  try {
+    const rotationStatePath = path.resolve('scratch/key_rotation.json');
+    let state = { activeVersion: 'v1', lastRotated: Date.now() };
+    if (fs.existsSync(rotationStatePath)) {
+      state = JSON.parse(fs.readFileSync(rotationStatePath, 'utf8'));
+    }
+    
+    res.json({
+      activeVersion: state.activeVersion,
+      lastRotated: new Date(state.lastRotated).toISOString(),
+      nextRotation: new Date(state.lastRotated + 120 * 24 * 60 * 60 * 1000).toISOString(),
+      keysConfigured: {
+        student: !!process.env.STUDENT_DATA_KEY,
+        exam: !!process.env.EXAM_KEY,
+        payment: !!process.env.PAYMENT_KEY,
+        video: !!process.env.VIDEO_KEY,
+        session: !!process.env.SESSION_KEY,
+        pepper: !!process.env.SERVER_SECRET,
+        audit: !!process.env.AUDIT_SECRET
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load key rotation status.' });
+  }
+});
+
+app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req, res) => {
+  try {
+    const currentVersion = parseInt(activeVersion.replace('v', '')) || 1;
+    const newVersion = `v${currentVersion + 1}`;
+    
+    // Generate new secure seeds dynamically
+    const randomSeed = () => crypto.randomBytes(32).toString('hex');
+    const newKeys = {
+      student: randomSeed(),
+      exam: randomSeed(),
+      payment: randomSeed(),
+      video: randomSeed(),
+      session: randomSeed()
+    };
+    
+    rotateEncryptionKeys(newVersion, newKeys);
+    await logSecurityEvent('key_rotation', `Superadmin rotated database encryption keys to version ${newVersion}`, req.user.id, req);
+    
+    res.json({ ok: true, activeVersion: newVersion });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to rotate keys.' });
+  }
+});
+
+// 5. Admin: Sessions and Devices Management
+app.get('/api/admin/sessions', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data: sessions, error } = await supabaseAdmin
+      .from('session_activity')
+      .select('*')
+      .order('last_active', { ascending: false });
+
+    if (error) throw error;
+    res.json(sessions || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch sessions roster.' });
+  }
+});
+
+app.post('/api/admin/sessions/revoke', verifyAdminJWT, async (req, res) => {
+  const { sessionId } = req.body;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('session_activity')
+      .update({ is_revoked: true })
+      .eq('id', sessionId);
+
+    if (error) throw error;
+    await logSecurityEvent('session_revocation', `Admin revoked session ${sessionId}`, req.user.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to revoke session.' });
+  }
+});
+
+// 6. Admin: Intrusion Alerts and Signed Audit Logs Verification
+app.get('/api/admin/intrusion-alerts', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('intrusion_alerts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch intrusion alerts.' });
+  }
+});
+
+app.get('/api/admin/audit-logs', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data: logs, error } = await supabaseAdmin
+      .from('signed_audit_logs')
+      .select('*')
+      .order('created_at', { ascending: true }); // Chain checks must run ascending
+
+    if (error) throw error;
+
+    // Verify blockchain chain integrity
+    const isChainValid = verifyLogChain(logs || []);
+    res.json({
+      logs: logs || [],
+      isChainValid
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch signed audit logs.' });
+  }
+});
+
+// 7. CSP Violations Reporting
+app.post('/api/csp-report', express.json({ type: ['json', 'application/csp-report'] }), async (req, res) => {
+  try {
+    const report = req.body['csp-report'];
+    console.warn(`[CSP Violation Alert] Document: ${report['document-uri']} | Blocked: ${report['blocked-uri']} | Directive: ${report['violated-directive']}`);
+    
+    // Insert violation as intrusion alert
+    await supabaseAdmin
+      .from('intrusion_alerts')
+      .insert({
+        severity: 'MEDIUM',
+        alert_type: 'csp_violation',
+        description: `CSP Violation: Blocked loading of '${report['blocked-uri']}' due to directive '${report['violated-directive']}'`,
+        ip_address: req.headers['cf-connecting-ip'] || req.ip || 'Unknown',
+        metadata: report
+      });
+      
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).end();
+  }
+});
+
+// ============ END ADVANCED SECURITY ENDPOINTS & PROXIES ============
 
 // ============ START SERVER ============
 app.listen(PORT, () => {

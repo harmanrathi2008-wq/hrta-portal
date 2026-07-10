@@ -53,6 +53,19 @@ const AdminDashboard = () => {
   const [isAudioMuted, setIsAudioMuted] = useState(true);
 
   const [globalViolations, setGlobalViolations] = useState([]);
+  
+  // Advanced Security Dashboard States
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'sessions', 'intrusion', 'audit', 'keys'
+  const [sessionsRoster, setSessionsRoster] = useState([]);
+  const [intrusionAlerts, setIntrusionAlerts] = useState([]);
+  const [signedAuditLogs, setSignedAuditLogs] = useState([]);
+  const [isLogChainValid, setIsLogChainValid] = useState(true);
+  const [keyStatus, setKeyStatus] = useState(null);
+  const [mfaPin, setMfaPin] = useState("");
+  const [superadminSecret, setSuperadminSecret] = useState("");
+  const [isRotatorOpen, setIsRotatorOpen] = useState(false);
+  const [loadingKeys, setLoadingKeys] = useState(false);
+
   const proctorChannelsRef = useRef({});
 
   const peerConnectionRef = useRef(null);
@@ -683,6 +696,121 @@ const AdminDashboard = () => {
     setGlobalViolations(prev => prev.filter(v => v.studentId !== studentId));
   };
 
+  const loadSecurityData = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'X-Session-ID': loginLogId,
+        'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+      };
+
+      // 1. Fetch Sessions
+      const resSessions = await fetch(`${API_BASE_URL}/api/admin/sessions`, { headers });
+      if (resSessions.ok) {
+        const data = await resSessions.json();
+        setSessionsRoster(data);
+      }
+
+      // 2. Fetch Intrusion Alerts
+      const resIntrusion = await fetch(`${API_BASE_URL}/api/admin/intrusion-alerts`, { headers });
+      if (resIntrusion.ok) {
+        const data = await resIntrusion.json();
+        setIntrusionAlerts(data);
+      }
+
+      // 3. Fetch Signed Audit Logs
+      const resLogs = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, { headers });
+      if (resLogs.ok) {
+        const data = await resLogs.json();
+        setSignedAuditLogs(data.logs || []);
+        setIsLogChainValid(data.isChainValid);
+      }
+
+      // 4. Fetch Key Status
+      const resKeys = await fetch(`${API_BASE_URL}/api/admin/key-status`, { headers });
+      if (resKeys.ok) {
+        const data = await resKeys.json();
+        setKeyStatus(data);
+      }
+    } catch (err) {
+      console.error("Error loading security dashboard data:", err);
+    }
+  };
+
+  const handleRevokeSession = async (sessionId) => {
+    if (!window.confirm("Are you sure you want to revoke this session? The candidate will be forced to log out immediately.")) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      
+      const res = await fetch(`${API_BASE_URL}/api/admin/sessions/revoke`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId,
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+        },
+        body: JSON.stringify({ sessionId })
+      });
+
+      if (res.ok) {
+        toast.success("Session successfully revoked.");
+        loadSecurityData();
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Failed to revoke session.");
+      }
+    } catch (err) {
+      toast.error("Network error during session revocation.");
+    }
+  };
+
+  const handleRotateKeys = async () => {
+    if (!superadminSecret || !mfaPin) {
+      toast.error("Super Admin Secret and Authenticator PIN are required.");
+      return;
+    }
+
+    setLoadingKeys(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
+      const res = await fetch(`${API_BASE_URL}/api/admin/rotate-keys`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId,
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026',
+          'X-StepUp-Secret': superadminSecret,
+          'X-StepUp-OTP': mfaPin
+        }
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Keys successfully rotated to version ${data.activeVersion}!`);
+        setIsRotatorOpen(false);
+        setMfaPin("");
+        setSuperadminSecret("");
+        loadSecurityData();
+      } else {
+        toast.error(data.error || "Key rotation failed.");
+      }
+    } catch (err) {
+      toast.error("Failed to execute key rotation.");
+    } finally {
+      setLoadingKeys(false);
+    }
+  };
+
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -811,6 +939,12 @@ const AdminDashboard = () => {
     loadAllResults();
     loadProctorLocks();
     loadSupportTickets();
+    loadSecurityData();
+
+    // Poll security data every 10 seconds for real-time threat feed
+    const pollSecInterval = setInterval(() => {
+      loadSecurityData();
+    }, 10000);
 
     // Subscribe to real-time updates of exam_results
     const realtimeChannel = supabase
@@ -878,6 +1012,7 @@ const AdminDashboard = () => {
       .subscribe();
 
     return () => {
+      clearInterval(pollSecInterval);
       supabase.removeChannel(realtimeChannel);
       supabase.removeChannel(locksRealtimeChannel);
       supabase.removeChannel(ticketsRealtimeChannel);
@@ -1290,7 +1425,7 @@ const AdminDashboard = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#020205] text-slate-100 font-sans pb-12 relative overflow-hidden">
+    <div className="min-h-screen bg-[#020205] text-slate-100 font-sans pb-12 relative overflow-hidden flex flex-col md:flex-row">
       
       {/* CANVAS COLOR-CHANGING PARTICLES BACKGROUND */}
       <canvas id="cosmic-canvas" className="fixed inset-0 w-full h-full pointer-events-none z-0" />
@@ -1298,370 +1433,808 @@ const AdminDashboard = () => {
       {/* Grid Overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.012)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.012)_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_80%,transparent_100%)] pointer-events-none z-0"></div>
 
-      {/* Header (Fully Transparent) */}
-      <div className="bg-transparent border-b border-white/5 px-8 py-6 mb-8 z-10 relative">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      {/* Sidebar Navigation */}
+      <aside className="w-full md:w-64 shrink-0 border-r border-white/5 bg-[#030308]/40 backdrop-blur-xl relative z-10 flex flex-col justify-between">
+        <div>
+          {/* Brand Header */}
+          <div className="p-6 border-b border-white/5 flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+              <span className="text-cyan-400 font-black text-sm">Ω</span>
+            </div>
+            <div>
+              <h2 className="text-sm font-black tracking-wider text-white uppercase">HRTA PORTAL</h2>
+              <span className="text-[9px] font-black text-cyan-400 tracking-widest uppercase">Security Hub</span>
+            </div>
+          </div>
+
+          {/* Navigation Menu */}
+          <nav className="p-4 space-y-1">
+            <button
+              onClick={() => setActiveTab('overview')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'overview' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📊</span> Overview & streams
+            </button>
+
+            <Link to="/admin/students" className="block">
+              <button className="w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all flex items-center gap-3 cursor-pointer border border-transparent">
+                <span className="text-sm">👥</span> Manage Candidates
+              </button>
+            </Link>
+
+            <Link to="/admin/exams" className="block">
+              <button className="w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all flex items-center gap-3 cursor-pointer border border-transparent">
+                <span className="text-sm">📝</span> Manage Exams
+              </button>
+            </Link>
+
+            <button
+              onClick={() => setActiveTab('sessions')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'sessions' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🔒</span> Active Sessions
+            </button>
+
+            <button
+              onClick={() => setActiveTab('intrusion')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'intrusion' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🛡️</span> Intrusion Alerts
+              {intrusionAlerts.filter(a => !a.resolved).length > 0 && (
+                <span className="ml-auto bg-red-500 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                  {intrusionAlerts.filter(a => !a.resolved).length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('audit')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'audit' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📜</span> Signed Audit Logs
+            </button>
+
+            <button
+              onClick={() => setActiveTab('keys')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'keys' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🔑</span> Cryptography & Keys
+            </button>
+          </nav>
+        </div>
+
+        {/* User profile footer */}
+        <div className="p-4 border-t border-white/5 bg-black/20">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-black text-slate-950 text-xs shadow-md">
+              SA
+            </div>
+            <div className="truncate flex-1">
+              <p className="text-xs font-black text-white uppercase tracking-wide">Super Administrator</p>
+              <p className="text-[10px] text-slate-500 truncate">{sessionStorage.getItem('userEmail') || 'superadmin@hrta.com'}</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 min-w-0 z-10 relative overflow-y-auto px-6 sm:px-8 py-8">
+        {/* Header Title Banner */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b border-white/5 pb-6">
           <div>
-            <h1 className="text-2xl font-black text-cyan-400 tracking-tight uppercase">Super Admin Command Center</h1>
-            <p className="text-xs font-bold text-slate-400 mt-1.5 uppercase tracking-wide">Manage examinations, evaluate submissions, and oversee candidates.</p>
+            <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">
+              {activeTab === 'overview' ? 'Superadmin Command Center' : 
+               activeTab === 'sessions' ? 'Identity & Session Protection' : 
+               activeTab === 'intrusion' ? 'Real-Time Intrusion & Threat Telemetry' : 
+               activeTab === 'audit' ? 'Immutable Cryptographically Chained Ledger' : 
+               'Advanced Cryptography & Key Management'}
+            </span>
+            <h1 className="text-2xl font-black text-white tracking-tight uppercase mt-1">
+              {activeTab === 'overview' ? 'Overview & Live Proctoring' : 
+               activeTab === 'sessions' ? 'Active Sessions & Revocation' : 
+               activeTab === 'intrusion' ? 'Intrusion Detection Alerts' : 
+               activeTab === 'audit' ? 'Chained Security Audit Logs' : 
+               'Database Keys Configuration'}
+            </h1>
           </div>
           <div className="flex space-x-3 shrink-0">
             <Link to="/admin/exams/create">
-              <button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-slate-950 px-5 py-2.5 rounded-xl font-extrabold shadow-lg transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-xs uppercase tracking-wider">
+              <button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-slate-950 px-5 py-2.5 rounded-xl font-extrabold shadow-lg transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-xs uppercase tracking-wider cursor-pointer">
                 + Create New Exam
               </button>
             </Link>
           </div>
         </div>
-      </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 z-10 relative">
-        
-        {/* Stat Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard 
-            title="Total Candidates" 
-            value={stats.totalStudents} 
-            subtext={`${stats.activeStudents} Active Accounts`}
-            colorClass="border-l-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.05)]"
-            iconPath="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-          />
-          <StatCard 
-            title="Total Exams" 
-            value={stats.totalExams} 
-            subtext={`${stats.publishedExams} Published`}
-            colorClass="border-l-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.05)]"
-            iconPath="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-          <StatCard 
-            title="Pending Evaluations" 
-            value={stats.pendingSubmissions} 
-            subtext="Requires Manual Review"
-            colorClass="border-l-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.05)]"
-            iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-          <StatCard 
-            title="Total Submissions" 
-            value={stats.totalSubmissions} 
-            subtext="All time exam attempts"
-            colorClass="border-l-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.05)]"
-            iconPath="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-          />
-        </div>
+        {/* Tab content panels */}
+        {activeTab === 'overview' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Stat Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <StatCard 
+                title="Total Candidates" 
+                value={stats.totalStudents} 
+                subtext={`${stats.activeStudents} Active Accounts`}
+                colorClass="border-l-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.05)]"
+                iconPath="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+              />
+              <StatCard 
+                title="Total Exams" 
+                value={stats.totalExams} 
+                subtext={`${stats.publishedExams} Published`}
+                colorClass="border-l-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.05)]"
+                iconPath="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+              <StatCard 
+                title="Pending Evaluations" 
+                value={stats.pendingSubmissions} 
+                subtext="Requires Manual Review"
+                colorClass="border-l-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.05)]"
+                iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+              <StatCard 
+                title="Total Submissions" 
+                value={stats.totalSubmissions} 
+                subtext="All time exam attempts"
+                colorClass="border-l-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.05)]"
+                iconPath="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+            </div>
 
-        {/* Two Column Layout for Action Areas */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Main Action Area - Pending Submissions (Glassmorphism) */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Live Proctoring Alerts & Unlock Queue Panel */}
-            <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.05)] overflow-hidden relative">
-              <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
-              
-              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                <div>
-                  <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-8">
+                {/* Live Proctoring Alerts & Unlock Queue Panel */}
+                <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.05)] overflow-hidden relative">
+                  <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+                  
+                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                    <div>
+                      <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                        </span>
+                        🚨 Live Proctoring Security Alerts & Unlock Queue
+                      </h2>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Real-time lock requests and proctoring violations from all active students.
+                      </p>
+                    </div>
+                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
+                      {globalViolations.length} Alert{globalViolations.length !== 1 ? 's' : ''}
                     </span>
-                    🚨 Live Proctoring Security Alerts & Unlock Queue
-                  </h2>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Real-time lock requests and proctoring violations from all active students.
-                  </p>
-                </div>
-                <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
-                  {globalViolations.length} Alert{globalViolations.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-
-              <div className="p-6">
-                {globalViolations.length === 0 ? (
-                  <div className="py-8 text-center text-slate-500 font-bold">
-                    <p className="text-sm text-slate-400 mb-1">🛡️ System Secure & Monitored</p>
-                    <p className="text-[10px] font-normal text-slate-500">No active lockout alerts or violations reported.</p>
                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    {globalViolations.map((violation) => (
-                      <div key={violation.id} className="bg-red-950/10 hover:bg-red-950/15 border border-red-500/20 rounded-xl p-4 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in">
-                        <div className="flex-1 space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-white font-extrabold text-sm uppercase">
-                              👤 {violation.studentName}
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">
-                              (ID: {violation.session?.students?.application_id || 'N/A'})
-                            </span>
-                            {violation.type === 'UNLOCK_REQUEST' ? (
-                              <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                                UNLOCK REQUESTED
-                              </span>
-                            ) : (
-                              <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                                INTERFACE LOCKED
-                              </span>
-                            )}
-                          </div>
-                          
-                          <div className="space-y-1 text-xs">
-                            <p className="text-slate-300 font-semibold">
-                              📝 Exam: <span className="text-white font-bold">{violation.examName}</span>
-                            </p>
-                            <p className="text-slate-400">
-                              ⚠️ Reason: <strong className="text-red-400">{violation.reason}</strong>
-                            </p>
-                            <p className="text-[10px] text-slate-500">
-                              ⏰ Detected: {new Date(violation.timestamp).toLocaleTimeString()}
-                            </p>
-                          </div>
-                        </div>
 
-                        {/* Action Control Buttons */}
-                        <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleGlobalApproveUnlock(violation)}
-                            className="flex-1 md:flex-initial bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
-                          >
-                            ✓ Approve Unlock
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleGlobalRejectUnlock(violation)}
-                            className="flex-1 md:flex-initial bg-red-500 hover:bg-red-600 text-white font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
-                          >
-                            ✕ Reject & Fail
-                          </button>
-                        </div>
+                  <div className="p-6">
+                    {globalViolations.length === 0 ? (
+                      <div className="py-8 text-center text-slate-500 font-bold">
+                        <p className="text-sm text-slate-400 mb-1">🛡️ System Secure & Monitored</p>
+                        <p className="text-[10px] font-normal text-slate-500">No active lockout alerts or violations reported.</p>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Live Proctoring Control Room Panel */}
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
-              <div className="h-0.5 w-full bg-gradient-to-r from-red-500 to-rose-600 animate-pulse" />
-              
-              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                <div>
-                  <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    🔴 Live Proctoring Control Room
-                  </h2>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    Real-time silent candidate camera streams. View live feeds of students currently writing exams.
-                  </p>
-                </div>
-                <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
-                  {activeSessions.length} Active
-                </span>
-              </div>
-
-              <div className="p-6">
-                {activeSessions.length === 0 ? (
-                  <div className="py-8 text-center text-slate-500 font-bold">
-                    <p className="text-lg text-slate-400 mb-1">💤 No Active Examinations</p>
-                    <p className="text-xs font-normal">There are no candidates currently taking exams in the portal.</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {activeSessions.map((session) => {
-                      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000));
-                      const durationStr = formatDuration(elapsedSeconds);
-
-                      return (
-                        <div key={session.id} className="bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 hover:border-white/10 rounded-xl p-4 transition-all flex flex-col justify-between gap-3 group">
-                          <div>
-                            <div className="flex justify-between items-start gap-2">
-                              <h3 className="font-bold text-sm text-cyan-400 group-hover:text-cyan-300 transition-colors">
-                                {session.students?.full_name || 'Candidate'}
-                              </h3>
-                              <span className="flex items-center gap-1 bg-green-500/10 border border-green-500/20 text-green-400 text-[9px] px-1.5 py-0.5 rounded font-black uppercase">
-                                <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
-                                Testing
-                              </span>
-                            </div>
-                            <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-                              ID: {session.students?.application_id || 'N/A'}
-                            </p>
-                            
-                            <div className="mt-3 space-y-1 text-xs">
-                              <p className="font-bold text-white truncate">
-                                📝 {session.exams?.title || 'Exam'}
-                              </p>
-                              {session.exams?.subject && (
-                                <p className="text-[10px] text-slate-400 uppercase tracking-wide">
-                                  📚 Subject: {session.exams.subject}
+                    ) : (
+                      <div className="space-y-4">
+                        {globalViolations.map((violation) => (
+                          <div key={violation.id} className="bg-red-950/10 hover:bg-red-950/15 border border-red-500/20 rounded-xl p-4 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in">
+                            <div className="flex-1 space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-white font-extrabold text-sm uppercase">
+                                  👤 {violation.studentName}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  (ID: {violation.session?.students?.application_id || 'N/A'})
+                                </span>
+                                {violation.type === 'UNLOCK_REQUEST' ? (
+                                  <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                    UNLOCK REQUESTED
+                                  </span>
+                                ) : (
+                                  <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse"></span>
+                                    INTERFACE LOCKED
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="space-y-1 text-xs">
+                                <p className="text-slate-300 font-semibold">
+                                  📝 Exam: <span className="text-white font-bold">{violation.examName}</span>
                                 </p>
-                              )}
-                              <p className="text-[10px] text-slate-400">
-                                ⏱️ Time Elapsed: <span className="font-mono text-cyan-400">{durationStr}</span>
-                              </p>
+                                <p className="text-slate-400">
+                                  ⚠️ Reason: <strong className="text-red-400">{violation.reason}</strong>
+                                </p>
+                                <p className="text-[10px] text-slate-500">
+                                  ⏰ Detected: {new Date(violation.timestamp).toLocaleTimeString()}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleGlobalApproveUnlock(violation)}
+                                className="flex-1 md:flex-initial bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
+                              >
+                                ✓ Approve Unlock
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleGlobalRejectUnlock(violation)}
+                                className="flex-1 md:flex-initial bg-red-500 hover:bg-red-600 text-white font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
+                              >
+                                ✕ Reject & Fail
+                              </button>
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-                          <button
-                            onClick={() => startMonitoring(session)}
-                            className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500 text-slate-950 py-2 rounded-lg font-extrabold text-[10px] uppercase tracking-wider transition-all shadow-md active:translate-y-0.5 cursor-pointer"
-                          >
-                            📺 Monitor Live Feed
-                          </button>
+                {/* Live Proctoring Control Room Panel */}
+                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+                  <div className="h-0.5 w-full bg-gradient-to-r from-red-500 to-rose-600 animate-pulse" />
+                  
+                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                    <div>
+                      <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                        </span>
+                        🔴 Live Proctoring Control Room
+                      </h2>
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Real-time silent candidate camera streams. View live feeds of students currently writing exams.
+                      </p>
+                    </div>
+                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
+                      {activeSessions.length} Active
+                    </span>
+                  </div>
+
+                  <div className="p-6">
+                    {activeSessions.length === 0 ? (
+                      <div className="py-8 text-center text-slate-500 font-bold">
+                        <p className="text-lg text-slate-400 mb-1">💤 No Active Examinations</p>
+                        <p className="text-xs font-normal">There are no candidates currently taking exams in the portal.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {activeSessions.map((session) => {
+                          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000));
+                          const durationStr = formatDuration(elapsedSeconds);
+
+                          return (
+                            <div key={session.id} className="bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 hover:border-white/10 rounded-xl p-4 transition-all flex flex-col justify-between gap-3 group">
+                              <div>
+                                <div className="flex justify-between items-start gap-2">
+                                  <h3 className="font-bold text-sm text-cyan-400 group-hover:text-cyan-300 transition-colors">
+                                    {session.students?.full_name || 'Candidate'}
+                                  </h3>
+                                  <span className="flex items-center gap-1 bg-green-500/10 border border-green-500/20 text-green-400 text-[9px] px-1.5 py-0.5 rounded font-black uppercase">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                                    Testing
+                                  </span>
+                                </div>
+                                <p className="text-[10px] font-mono text-slate-500 mt-0.5">
+                                  ID: {session.students?.application_id || 'N/A'}
+                                </p>
+                                
+                                <div className="mt-3 space-y-1 text-xs">
+                                  <p className="font-bold text-white truncate">
+                                    📝 {session.exams?.title || 'Exam'}
+                                  </p>
+                                  {session.exams?.subject && (
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wide">
+                                      📚 Subject: {session.exams.subject}
+                                    </p>
+                                  )}
+                                  <p className="text-[10px] text-slate-400">
+                                    ⏱️ Time Elapsed: <span className="font-mono text-cyan-400">{durationStr}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => startMonitoring(session)}
+                                className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500 text-slate-950 py-2 rounded-lg font-extrabold text-[10px] uppercase tracking-wider transition-all shadow-md active:translate-y-0.5 cursor-pointer"
+                              >
+                                📺 Monitor Live Feed
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pending Evaluations */}
+                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                    <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Pending Evaluations</h2>
+                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{stats.pendingSubmissions} Pending</span>
+                  </div>
+                  
+                  <div className="p-0 overflow-x-auto">
+                    {pendingResults.length === 0 ? (
+                      <div className="p-12 text-center text-slate-500 font-bold">
+                        <p className="text-lg text-emerald-400 mb-2">🎉 All Caught Up!</p>
+                        No pending exam submissions require manual evaluation right now.
+                      </div>
+                    ) : (
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="border-b border-white/5">
+                          <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                            <th className="px-6 py-4">Candidate</th>
+                            <th className="px-6 py-4">Exam Title</th>
+                            <th className="px-6 py-4">Submitted At</th>
+                            <th className="px-6 py-4 text-center">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
+                          {pendingResults.map((result) => (
+                            <tr key={result.id} className="hover:bg-white/[0.02] transition-colors">
+                              <td className="px-6 py-4">
+                                <p className="text-sm font-bold text-cyan-400">{result.students?.full_name}</p>
+                                <p className="text-[10px] text-slate-500 mt-0.5">{result.students?.application_id}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="text-sm font-bold text-white">{result.exams?.title}</p>
+                              </td>
+                              <td className="px-6 py-4">
+                                <p className="text-xs text-slate-300">{new Date(result.submitted_at).toLocaleDateString()}</p>
+                                <p className="text-[10px] text-slate-500 mt-0.5">{new Date(result.submitted_at).toLocaleTimeString()}</p>
+                              </td>
+                              <td className="px-6 py-4 text-center">
+                                <Link to={`/admin/results/${result.id}`}>
+                                  <button className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 px-4 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer">
+                                    Review & Publish
+                                  </button>
+                                </Link>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+
+                {/* Late attempts table */}
+                {!requestsError && (
+                  <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden mt-8">
+                    <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                      <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Late attempt requests</h2>
+                      <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{lateRequests.length} Pending</span>
+                    </div>
+                    <div className="p-0 overflow-x-auto">
+                      {lateRequests.length === 0 ? (
+                        <div className="p-12 text-center text-slate-500 font-bold">
+                          <p className="text-lg text-emerald-400 mb-2">🎉 No Pending Requests</p>
+                          All late attempt requests have been processed.
                         </div>
-                      );
-                    })}
+                      ) : (
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="border-b border-white/5">
+                            <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                              <th className="px-6 py-4">Candidate</th>
+                              <th className="px-6 py-4">Exam Title</th>
+                              <th className="px-6 py-4">Requested At</th>
+                              <th className="px-6 py-4 text-center">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
+                            {lateRequests.map((req) => (
+                              <tr key={req.id} className="hover:bg-white/[0.02] transition-colors">
+                                <td className="px-6 py-4">
+                                  <p className="text-sm font-bold text-cyan-400">{req.students?.full_name || 'Candidate'}</p>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">{req.students?.application_id || 'ID'}</p>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <p className="text-sm font-bold text-white">{req.exams?.title || 'Exam'}</p>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <p className="text-xs text-slate-300">{new Date(req.created_at).toLocaleDateString()}</p>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">{new Date(req.created_at).toLocaleTimeString()}</p>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                  <div className="flex gap-2 justify-center">
+                                    <button 
+                                      onClick={() => handleApproveRequest(req.id)}
+                                      className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-slate-950 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
+                                    >
+                                      Approve
+                                    </button>
+                                    <button 
+                                      onClick={() => handleRejectRequest(req.id)}
+                                      className="bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-550 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
+                                    >
+                                      Reject
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
 
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-              <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Pending Evaluations</h2>
-              <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{stats.pendingSubmissions} Pending</span>
-            </div>
-            
-            <div className="p-0 overflow-x-auto">
-              {pendingResults.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 font-bold">
-                  <p className="text-lg text-emerald-400 mb-2">🎉 All Caught Up!</p>
-                  No pending exam submissions require manual evaluation right now.
-                </div>
-              ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="border-b border-white/5">
-                    <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                      <th className="px-6 py-4">Candidate</th>
-                      <th className="px-6 py-4">Exam Title</th>
-                      <th className="px-6 py-4">Submitted At</th>
-                      <th className="px-6 py-4 text-center">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                    {pendingResults.map((result) => (
-                      <tr key={result.id} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-6 py-4">
-                          <p className="text-sm font-bold text-cyan-400">{result.students?.full_name}</p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">{result.students?.application_id}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-sm font-bold text-white">{result.exams?.title}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-xs text-slate-300">{new Date(result.submitted_at).toLocaleDateString()}</p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">{new Date(result.submitted_at).toLocaleTimeString()}</p>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <Link to={`/admin/results/${result.id}`}>
-                            <button className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 px-4 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider">
-                              Review & Publish
-                            </button>
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              {stats.pendingSubmissions > 5 && (
-                <div className="bg-transparent px-6 py-4 text-center border-t border-white/5">
-                  <Link to="/admin/results" className="text-xs font-bold text-cyan-400 hover:text-cyan-300 hover:underline uppercase tracking-wider">
-                    View All {stats.pendingSubmissions} Pending Submissions &rarr;
-                  </Link>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Late attempt request approvals panel */}
-          {requestsError ? (
-            <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-6 shadow-xl text-xs font-semibold text-amber-300 mt-6">
-              <div className="flex items-start gap-3.5">
-                <span className="text-xl">⚠️</span>
-                <div>
-                  <h3 className="font-bold text-amber-400 text-sm mb-1 uppercase tracking-wider">Late Attempt Requests: Database Table Required</h3>
-                  <p className="text-slate-400 mb-4 leading-relaxed">
-                    To enable late attempt approvals, please create the <code>exam_late_requests</code> table in your Supabase database.
-                  </p>
-                  <p className="mb-2 text-slate-350">Go to your <strong>Supabase Dashboard &gt; SQL Editor &gt; New Query</strong>, paste the following SQL, and click <strong>Run</strong>:</p>
-                  <pre className="bg-[#020205] border border-white/10 p-4 rounded-xl font-mono text-[10px] text-cyan-300 overflow-x-auto select-all max-h-48">
-{`CREATE TABLE public.exam_late_requests (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
-    exam_id UUID NOT NULL REFERENCES public.exams(id) ON DELETE CASCADE,
-    status VARCHAR(50) DEFAULT 'pending',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE public.exam_late_requests ADD CONSTRAINT unique_student_exam_request UNIQUE(student_id, exam_id);
-
-ALTER TABLE public.exam_late_requests ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests FOR ALL TO anon USING (true) WITH CHECK (true);`}
-                  </pre>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden mt-8">
-              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Late attempt requests</h2>
-                <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{lateRequests.length} Pending</span>
-              </div>
-              
-              <div className="p-0 overflow-x-auto">
-                {lateRequests.length === 0 ? (
-                  <div className="p-12 text-center text-slate-500 font-bold">
-                    <p className="text-lg text-emerald-400 mb-2">🎉 No Pending Requests</p>
-                    All late attempt requests have been processed.
+              {/* Sidebar Quick Widgets */}
+              <div className="space-y-6">
+                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+                  <div className="bg-transparent border-b border-white/5 px-5 py-4">
+                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">Administrative Tools</h2>
                   </div>
+                  <div className="p-3 space-y-2">
+                    <Link to="/admin/students" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
+                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">👤</span>
+                      Manage Candidates Database
+                    </Link>
+                    <Link to="/admin/exams" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
+                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📝</span>
+                      Manage Examination Roster
+                    </Link>
+                    <Link to="/admin/materials" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
+                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📚</span>
+                      Upload Study Materials
+                    </Link>
+                    <Link to="/admin/messages" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-purple-500/10 hover:text-purple-300 rounded-xl transition-all group uppercase tracking-wider border border-purple-500/10 bg-purple-500/5">
+                      <span className="bg-white/5 group-hover:bg-purple-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">✉️</span>
+                      Message Center (Send to Gmail)
+                    </Link>
+                    <Link to="/admin/settings" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
+                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">⚙️</span>
+                      Platform Settings & Limits
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Support Tickets */}
+                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+                  <div className="bg-transparent border-b border-white/5 px-5 py-4 flex justify-between items-center">
+                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">Support Tickets</h2>
+                    <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">
+                      {supportTickets.filter(t => t.status === 'pending').length} Pending
+                    </span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {supportTickets.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500 text-xs font-semibold">
+                        No support tickets logged.
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                        {supportTickets.slice(0, 3).map((ticket) => (
+                          <div 
+                            key={ticket.id} 
+                            onClick={() => navigate('/admin/support')}
+                            className="bg-white/5 hover:bg-white/[0.08] border border-white/5 rounded-xl p-3 cursor-pointer transition-all flex flex-col gap-1.5"
+                          >
+                            <div className="flex justify-between items-start">
+                              <strong className="text-white text-xs block font-bold leading-normal truncate max-w-[150px]">{ticket.subject}</strong>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
+                                ticket.status === 'pending'
+                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                {ticket.status}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-normal truncate">{ticket.message}</p>
+                            <div className="flex justify-between items-center text-[8px] text-slate-500 font-medium">
+                              <span>👤 {ticket.name}</span>
+                              <span>⏰ {new Date(ticket.created_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* System Status */}
+                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
+                  <div className="bg-transparent border-b border-white/5 px-5 py-4">
+                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">System Health</h2>
+                  </div>
+                  <div className="p-5 space-y-5 text-xs">
+                    <div>
+                      <div className="flex justify-between font-bold text-slate-400 mb-1.5">
+                        <span>Database Status (Supabase)</span>
+                        <span className="text-emerald-400 font-extrabold">ONLINE</span>
+                      </div>
+                      <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
+                    </div>
+                    <div>
+                      <div className="flex justify-between font-bold text-slate-400 mb-1.5">
+                        <span>Email OTP Service (Resend)</span>
+                        <span className="text-emerald-400 font-extrabold">ACTIVE</span>
+                      </div>
+                      <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Results publishing center */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-cyan-500 via-purple-500 via-pink-500 via-yellow-400 to-emerald-500 animate-pulse" />
+              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-sm text-white flex items-center gap-2">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
+                    </span>
+                    📢 Results Publishing Control Center
+                  </h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Publish, unpublish, or edit marks for any submission. Changes go live instantly to student dashboards.</p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button onClick={loadAllResults} className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-all">↻ Refresh</button>
+                </div>
+              </div>
+
+              <div className="px-6 pt-4 flex gap-2 flex-wrap">
+                {['all','submitted','published','reviewed','blocked'].map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => {
+                      const el = document.getElementById('results-table-body-2');
+                      if (el) {
+                        const rows = el.querySelectorAll('tr[data-status]');
+                        rows.forEach(r => {
+                          r.style.display = (tab === 'all' || r.dataset.status === tab) ? '' : 'none';
+                        });
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
+                      tab === 'all' ? 'bg-white/10 border-white/20 text-white' :
+                      tab === 'submitted' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' :
+                      tab === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' :
+                      tab === 'reviewed' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20' :
+                      'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-550/20'
+                    }`}
+                  >
+                    {tab === 'submitted' ? '⏳ Pending' : tab === 'published' ? '✅ Published' : tab === 'reviewed' ? '🔒 Unpublished' : tab === 'blocked' ? '🚫 Blocked' : '📋 All'}
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-0 overflow-x-auto mt-3">
+                {resultsLoading ? (
+                  <div className="p-12 text-center text-cyan-400 font-bold">Loading results...</div>
+                ) : allResults.length === 0 ? (
+                  <div className="p-12 text-center text-slate-500 font-bold">No submissions yet.</div>
                 ) : (
                   <table className="w-full text-left border-collapse text-xs">
                     <thead className="border-b border-white/5">
                       <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                        <th className="px-6 py-4">Candidate</th>
-                        <th className="px-6 py-4">Exam Title</th>
-                        <th className="px-6 py-4">Requested At</th>
-                        <th className="px-6 py-4 text-center">Action</th>
+                        <th className="px-6 py-3">Candidate</th>
+                        <th className="px-6 py-3">Exam</th>
+                        <th className="px-6 py-3">Score</th>
+                        <th className="px-6 py-3">Submitted</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-center">Quick Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                      {lateRequests.map((req) => (
-                        <tr key={req.id} className="hover:bg-white/[0.02] transition-colors">
+                    <tbody id="results-table-body-2" className="divide-y divide-white/5 font-semibold text-slate-300">
+                      {allResults.map(result => {
+                        const studentName = result.students?.full_name || 'Student';
+                        const appId = result.students?.application_id || 'N/A';
+                        const examTitle = result.exams?.title || 'Exam';
+                        const isPublished = result.status === 'published';
+                        const isPending = result.status === 'submitted';
+                        const isBlocked = result.status === 'blocked';
+                        const isUnpublished = result.status === 'reviewed';
+                        const isProcessing = publishingId === result.id;
+
+                        return (
+                          <tr key={result.id} data-status={result.status} className="hover:bg-white/[0.025] transition-colors group">
+                            <td className="px-6 py-3.5">
+                              <p className="font-bold text-cyan-400">{studentName}</p>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">{appId}</p>
+                            </td>
+                            <td className="px-6 py-3.5">
+                              <p className="font-bold text-white">{examTitle}</p>
+                              <span className="text-[9px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-black uppercase">
+                                Attempt #{result.attempt_number || 1}
+                              </span>
+                            </td>
+                            <td className="px-6 py-3.5">
+                              {result.total_score !== null && result.total_score !== undefined ? (
+                                <div>
+                                  <p className="font-black text-white">{result.total_score} <span className="text-slate-500 font-normal">/ {result.total_marks}</span></p>
+                                  <div className="w-16 bg-white/5 rounded-full h-1 mt-1">
+                                    <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-1 rounded-full" style={{ width: `${Math.min(100,Math.max(0,result.percentage||0))}%` }} />
+                                  </div>
+                                  <p className="text-[10px] text-cyan-400 mt-0.5 font-bold">{result.percentage}%</p>
+                                </div>
+                              ) : <span className="text-slate-600">Not scored</span>}
+                            </td>
+                            <td className="px-6 py-3.5">
+                              <p className="text-slate-300">{result.submitted_at ? new Date(result.submitted_at).toLocaleDateString() : '-'}</p>
+                              <p className="text-[10px] text-slate-500">{result.submitted_at ? new Date(result.submitted_at).toLocaleTimeString() : ''}</p>
+                            </td>
+                            <td className="px-6 py-3.5">
+                              {isPublished && (
+                                <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black px-2 py-0.5 rounded w-fit uppercase">
+                                  <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span></span>
+                                  Live
+                                </span>
+                              )}
+                              {isPending && <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">⏳ Pending</span>}
+                              {isUnpublished && <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🔒 Unpublished</span>}
+                              {isBlocked && <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🚫 Blocked</span>}
+                            </td>
+                            <td className="px-6 py-3.5">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <Link to={`/admin/results/${result.id}`}>
+                                  <button className="bg-white/5 hover:bg-cyan-500/15 border border-white/10 hover:border-cyan-500/25 text-slate-300 hover:text-cyan-300 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer">
+                                    ✏️ Review
+                                  </button>
+                                </Link>
+                                {(isPending || isUnpublished) && (
+                                  <button
+                                    onClick={() => handleQuickPublish(result.id, studentName)}
+                                    disabled={isProcessing}
+                                    className="bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                  >
+                                    {isProcessing ? '...' : '📢 Publish'}
+                                  </button>
+                                )}
+                                {isPublished && (
+                                  <button
+                                    onClick={() => handleQuickUnpublish(result.id, studentName)}
+                                    disabled={isProcessing}
+                                    className="bg-orange-500/10 hover:bg-orange-500/25 border border-orange-500/20 text-orange-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                  >
+                                    {isProcessing ? '...' : '🔒 Unpublish'}
+                                  </button>
+                                )}
+                                {isPublished && (
+                                  <button
+                                    onClick={() => handleResendEmail(result.id)}
+                                    disabled={isProcessing}
+                                    className="bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/20 text-cyan-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                                  >
+                                    ✉️ Email
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'sessions' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Zero-Trust Device Control Panel */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-cyan-500 to-blue-600" />
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">Zero-Trust Active Device Roster</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Real-time status of authenticated sessions. Revoked sessions are blocked instantly at backend gateways.</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    const token = (await supabase.auth.getSession()).data.session?.access_token || '';
+                    const loginLogId = sessionStorage.getItem('loginLogId') || '';
+                    const res = await fetch(`${API_BASE_URL}/api/admin/generate-test-token`, {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Session-ID': loginLogId,
+                        'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+                      }
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      navigator.clipboard.writeText(data.token);
+                      toast.success("Generated Custom JWT token and copied to clipboard!");
+                    } else {
+                      toast.error("Failed to generate administrative token.");
+                    }
+                  }}
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all shadow-md"
+                >
+                  ⚡ Generate Custom Token
+                </button>
+              </div>
+
+              <div className="p-0 overflow-x-auto">
+                {sessionsRoster.length === 0 ? (
+                  <div className="p-12 text-center text-slate-500 font-bold">No active sessions tracked.</div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="border-b border-white/5 bg-white/[0.01]">
+                      <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                        <th className="px-6 py-4">User</th>
+                        <th className="px-6 py-4">Role</th>
+                        <th className="px-6 py-4">IP Address & Location</th>
+                        <th className="px-6 py-4">Country & ASN</th>
+                        <th className="px-6 py-4">Browser / Device (User Agent)</th>
+                        <th className="px-6 py-4">Last Activity</th>
+                        <th className="px-6 py-4 text-center">Identity Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-semibold text-slate-350">
+                      {sessionsRoster.map((session) => (
+                        <tr key={session.id} className="hover:bg-white/[0.02] transition-colors">
                           <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-cyan-400">{req.students?.full_name || 'Candidate'}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{req.students?.application_id || 'ID'}</p>
+                            <p className="text-sm font-bold text-white">{session.display_name || 'Candidate'}</p>
+                            <p className="text-[10px] text-slate-500 font-mono mt-0.5">{session.user_id}</p>
+                          </td>
+                          <td className="px-6 py-4 uppercase">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              session.user_role === 'super_admin' ? 'bg-red-500/10 text-red-400' :
+                              session.user_role === 'admin' ? 'bg-purple-500/10 text-purple-400' :
+                              'bg-cyan-500/10 text-cyan-400'
+                            }`}>
+                              {session.user_role}
+                            </span>
                           </td>
                           <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-white">{req.exams?.title || 'Exam'}</p>
+                            <p className="font-mono text-slate-300">{session.ip_address}</p>
+                            <p className="text-[10px] text-slate-500">📍 {session.location || 'Unknown'}</p>
                           </td>
-                          <td className="px-6 py-4">
-                            <p className="text-xs text-slate-300">{new Date(req.created_at).toLocaleDateString()}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{new Date(req.created_at).toLocaleTimeString()}</p>
+                          <td className="px-6 py-4 font-mono text-cyan-400 text-[10px]">
+                            {session.metadata?.country || 'US'} • {session.metadata?.asn || 'AS15169'}
+                          </td>
+                          <td className="px-6 py-4 truncate max-w-xs text-slate-400" title={session.user_agent}>
+                            {session.user_agent || 'Unknown browser'}
+                          </td>
+                          <td className="px-6 py-4 text-slate-400">
+                            <p>{new Date(session.last_activity_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] mt-0.5">{new Date(session.last_activity_at).toLocaleTimeString()}</p>
                           </td>
                           <td className="px-6 py-4 text-center">
-                            <div className="flex gap-2 justify-center">
-                              <button 
-                                onClick={() => handleApproveRequest(req.id)}
-                                className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-slate-950 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
+                            {session.is_revoked ? (
+                              <span className="bg-red-500/10 border border-red-500/20 text-red-400 px-2 py-0.5 rounded text-[9px] font-black uppercase">Revoked</span>
+                            ) : (
+                              <button
+                                onClick={() => handleRevokeSession(session.id)}
+                                className="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-red-500/20 transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer"
                               >
-                                Approve
+                                Revoke Session
                               </button>
-                              <button 
-                                onClick={() => handleRejectRequest(req.id)}
-                                className="bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-550 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
-                              >
-                                Reject
-                              </button>
-                            </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1670,559 +2243,307 @@ CREATE POLICY "Allow all actions for late requests" ON public.exam_late_requests
                 )}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Sidebar Area - Quick Links & System Health (Glassmorphism) */}
-          <div className="space-y-6">
-            
-            {/* Quick Actions */}
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-              <div className="bg-transparent border-b border-white/5 px-5 py-4">
-                <h2 className="font-bold text-white uppercase tracking-wider text-xs">Administrative Tools</h2>
+        {activeTab === 'intrusion' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Threat Alerts Log */}
+            <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+              <div className="bg-transparent border-b border-white/5 px-6 py-5">
+                <h2 className="font-bold uppercase tracking-wider text-xs text-white">Real-Time Threat Detection Log</h2>
+                <p className="text-[10px] text-slate-500 mt-1">Suspicious payloads, failed logins, VPN bypass indicators, and geographical travel violations flag here.</p>
               </div>
-              <div className="p-3 space-y-2">
-                <Link to="/admin/students" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                  <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">👤</span>
-                  Manage Candidates Database
-                </Link>
-                <Link to="/admin/exams" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                  <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📝</span>
-                  Manage Examination Roster
-                </Link>
-                <Link to="/admin/materials" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                  <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📚</span>
-                  Upload Study Materials
-                </Link>
-                <Link to="/admin/messages" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-purple-500/10 hover:text-purple-300 rounded-xl transition-all group uppercase tracking-wider border border-purple-500/10 bg-purple-500/5">
-                  <span className="bg-white/5 group-hover:bg-purple-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">✉️</span>
-                  Message Center (Send to Gmail)
-                </Link>
-                <Link to="/admin/settings" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                  <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">⚙️</span>
-                  Platform Settings & Limits
-                </Link>
-              </div>
-            </div>
 
-            {/* Support Tickets Dashboard Widget */}
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-              <div className="bg-transparent border-b border-white/5 px-5 py-4 flex justify-between items-center">
-                <h2 className="font-bold text-white uppercase tracking-wider text-xs">Support Tickets</h2>
-                <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">
-                  {supportTickets.filter(t => t.status === 'pending').length} Pending
-                </span>
-              </div>
-              <div className="p-4 space-y-3">
-                {ticketsError ? (
-                  <div className="p-4 bg-amber-500/5 border border-amber-500/10 text-amber-300 text-[10px] rounded-xl leading-normal space-y-2">
-                    <p className="font-bold text-amber-400">Database Table Migration Required!</p>
-                    <p>To record and view support tickets, please copy the DDL script in <code>scratch/create_support_tickets.sql</code> and execute it in your Supabase SQL Editor.</p>
-                  </div>
-                ) : supportTickets.length === 0 ? (
-                  <div className="text-center py-6 text-slate-500 text-xs font-semibold">
-                    No support tickets logged.
+              <div className="p-0 overflow-x-auto">
+                {intrusionAlerts.length === 0 ? (
+                  <div className="p-12 text-center text-slate-500 font-bold">
+                    <p className="text-emerald-400 text-sm mb-1">🛡️ No Intrusion Alerts Logged</p>
+                    All traffic satisfies platform security policies.
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {supportTickets.slice(0, 3).map((ticket) => (
-                      <div 
-                        key={ticket.id} 
-                        onClick={() => navigate('/admin/support')}
-                        className="bg-white/5 hover:bg-white/[0.08] border border-white/5 rounded-xl p-3 cursor-pointer transition-all flex flex-col gap-1.5"
-                      >
-                        <div className="flex justify-between items-start">
-                          <strong className="text-white text-xs block font-bold leading-normal truncate max-w-[150px]">{ticket.subject}</strong>
-                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
-                            ticket.status === 'pending'
-                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          }`}>
-                            {ticket.status}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 leading-normal truncate">{ticket.message}</p>
-                        <div className="flex justify-between items-center text-[8px] text-slate-500 font-medium">
-                          <span>👤 {ticket.name}</span>
-                          <span>⏰ {new Date(ticket.created_at).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {supportTickets.length > 3 && (
-                      <Link 
-                        to="/admin/support" 
-                        className="block text-center text-[10px] font-bold text-cyan-400 hover:text-cyan-300 hover:underline uppercase tracking-wider py-1 mt-2"
-                      >
-                        View All {supportTickets.length} Tickets &rarr;
-                      </Link>
-                    )}
-                  </div>
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="border-b border-white/5 bg-white/[0.01]">
+                      <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                        <th className="px-6 py-4">Threat Level</th>
+                        <th className="px-6 py-4">Alert Type</th>
+                        <th className="px-6 py-4">Description</th>
+                        <th className="px-6 py-4">Source IP</th>
+                        <th className="px-6 py-4">Logged At</th>
+                        <th className="px-6 py-4 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-semibold text-slate-350">
+                      {intrusionAlerts.map((alert) => (
+                        <tr key={alert.id} className="hover:bg-white/[0.02] transition-colors">
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                              alert.severity === 'high' ? 'bg-red-500/15 border border-red-500/30 text-red-400' :
+                              alert.severity === 'medium' ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' :
+                              'bg-cyan-500/15 border border-cyan-500/30 text-cyan-400'
+                            }`}>
+                              {alert.severity}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 font-bold text-white uppercase font-mono tracking-wide">{alert.alert_type}</td>
+                          <td className="px-6 py-4 text-slate-300 max-w-sm leading-relaxed">{alert.description}</td>
+                          <td className="px-6 py-4 font-mono text-slate-400">{alert.ip_address || 'Unknown'}</td>
+                          <td className="px-6 py-4 text-slate-400">
+                            <p>{new Date(alert.created_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] mt-0.5">{new Date(alert.created_at).toLocaleTimeString()}</p>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            {alert.resolved ? (
+                              <span className="text-emerald-400 font-bold uppercase text-[9px]">Resolved</span>
+                            ) : (
+                              <button
+                                onClick={async () => {
+                                  const token = (await supabase.auth.getSession()).data.session?.access_token || '';
+                                  const loginLogId = sessionStorage.getItem('loginLogId') || '';
+                                  const res = await fetch(`${API_BASE_URL}/api/admin/intrusion-alerts/resolve`, {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'Authorization': `Bearer ${token}`,
+                                      'X-Session-ID': loginLogId,
+                                      'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+                                    },
+                                    body: JSON.stringify({ alertId: alert.id })
+                                  });
+                                  if (res.ok) {
+                                    toast.success("Alert marked as resolved.");
+                                    loadSecurityData();
+                                  } else {
+                                    toast.error("Failed to update status.");
+                                  }
+                                }}
+                                className="bg-white/5 hover:bg-emerald-500 hover:text-slate-950 px-2 py-1 rounded text-[10px] font-black uppercase transition-all cursor-pointer"
+                              >
+                                Resolve
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
               </div>
             </div>
 
-            {/* System Status */}
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-              <div className="bg-transparent border-b border-white/5 px-5 py-4">
-                <h2 className="font-bold text-white uppercase tracking-wider text-xs">System Health</h2>
+            {/* CSP Violation aggregator widget */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-5">
+                <h2 className="font-bold uppercase tracking-wider text-xs text-white">CSP Violation telemetry Feed</h2>
+                <p className="text-[10px] text-slate-500 mt-1">Real-time alerts showing attempts to execute inline scripts or inject external resources blocked by the Content Security Policy.</p>
               </div>
-              <div className="p-5 space-y-5 text-xs">
-                <div>
-                  <div className="flex justify-between font-bold text-slate-400 mb-1.5">
-                    <span>Database Status (Supabase)</span>
-                    <span className="text-emerald-400 font-extrabold">ONLINE</span>
-                  </div>
-                  <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
-                </div>
-                <div>
-                  <div className="flex justify-between font-bold text-slate-400 mb-1.5">
-                    <span>Email OTP Service (Resend)</span>
-                    <span className="text-emerald-400 font-extrabold">ACTIVE</span>
-                  </div>
-                  <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
-                </div>
-                <div>
-                  <div className="flex justify-between font-bold text-slate-400 mb-1.5">
-                    <span>Image Storage (Cloudinary)</span>
-                    <span className="text-emerald-400 font-extrabold">HEALTHY</span>
-                  </div>
-                  <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
-                </div>
+
+              <div className="p-6 text-center text-slate-500 font-bold">
+                <p className="text-xs font-normal leading-relaxed text-slate-400">
+                  Telemetry report aggregator is online. All inline XSS script injections blocked by browser enforcement are piped directly to <code>/api/csp-report</code> and written to the signed security logs.
+                </p>
               </div>
             </div>
-
           </div>
-        </div>
+        )}
 
-        {/* ===== RESULTS PUBLISHING CONTROL CENTER ===== */}
-        <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
-          {/* Animated rainbow top border */}
-          <div className="h-0.5 w-full bg-gradient-to-r from-cyan-500 via-purple-500 via-pink-500 via-yellow-400 to-emerald-500 animate-pulse" />
+        {activeTab === 'audit' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Signed Chained logs */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-purple-500 to-pink-500" />
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">Immutable Signed Audit Chain</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Log entries are chained cryptographically using HMAC signatures. Database level triggers prevent updates and deletions.</p>
+                </div>
+                <button
+                  onClick={loadSecurityData}
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all shadow-md"
+                >
+                  🔐 Verify Log Chain Integrity
+                </button>
+              </div>
 
-          <div className="bg-transparent border-b border-white/5 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <div>
-              <h2 className="font-bold uppercase tracking-wider text-sm text-white flex items-center gap-2">
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
-                </span>
-                📢 Results Publishing Control Center
-              </h2>
-              <p className="text-[10px] text-slate-500 mt-1">Publish, unpublish, or edit marks for any submission. Changes go live instantly to student dashboards.</p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <button onClick={loadAllResults} className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-all">↻ Refresh</button>
-              <Link to="/admin/results" className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 px-4 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all shadow-lg">View All Results →</Link>
-            </div>
-          </div>
+              {/* Integrity status alert */}
+              <div className="px-6 py-3 border-b border-white/5">
+                {isLogChainValid ? (
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 flex items-center gap-2.5 text-xs text-emerald-400 font-bold">
+                    <span>✓</span>
+                    <span>Crypto Signature Verified (Immutable Chain Valid)</span>
+                  </div>
+                ) : (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 flex items-center gap-2.5 text-xs text-red-400 font-black animate-pulse">
+                    <span>⚠️</span>
+                    <span>CRYPTOGRAPHIC CHAIN CORRUPT: Log entries have been altered or deleted directly inside the database!</span>
+                  </div>
+                )}
+              </div>
 
-          {/* Status Filter Tabs */}
-          <div className="px-6 pt-4 flex gap-2 flex-wrap">
-            {['all','submitted','published','reviewed','blocked'].map(tab => (
-              <button
-                key={tab}
-                onClick={() => {
-                  const el = document.getElementById('results-table-body');
-                  if (el) {
-                    const rows = el.querySelectorAll('tr[data-status]');
-                    rows.forEach(r => {
-                      r.style.display = (tab === 'all' || r.dataset.status === tab) ? '' : 'none';
-                    });
-                  }
-                }}
-                className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
-                  tab === 'all' ? 'bg-white/10 border-white/20 text-white' :
-                  tab === 'submitted' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' :
-                  tab === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' :
-                  tab === 'reviewed' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20' :
-                  'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
-                }`}
-              >
-                {tab === 'submitted' ? '⏳ Pending' : tab === 'published' ? '✅ Published' : tab === 'reviewed' ? '🔒 Unpublished' : tab === 'blocked' ? '🚫 Blocked' : '📋 All'}
-              </button>
-            ))}
-          </div>
-
-          <div className="p-0 overflow-x-auto mt-3">
-            {resultsLoading ? (
-              <div className="p-12 text-center text-cyan-400 font-bold">Loading results...</div>
-            ) : allResults.length === 0 ? (
-              <div className="p-12 text-center text-slate-500 font-bold">No submissions yet.</div>
-            ) : (
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="border-b border-white/5">
-                  <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                    <th className="px-6 py-3">Candidate</th>
-                    <th className="px-6 py-3">Exam</th>
-                    <th className="px-6 py-3">Score</th>
-                    <th className="px-6 py-3">Submitted</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-center">Quick Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="results-table-body" className="divide-y divide-white/5 font-semibold text-slate-300">
-                  {allResults.map(result => {
-                    const studentName = result.students?.full_name || 'Student';
-                    const appId = result.students?.application_id || 'N/A';
-                    const examTitle = result.exams?.title || 'Exam';
-                    const isPublished = result.status === 'published';
-                    const isPending = result.status === 'submitted';
-                    const isBlocked = result.status === 'blocked';
-                    const isUnpublished = result.status === 'reviewed';
-                    const isProcessing = publishingId === result.id;
-
-                    return (
-                      <tr key={result.id} data-status={result.status} className="hover:bg-white/[0.025] transition-colors group">
-                        <td className="px-6 py-3.5">
-                          <p className="font-bold text-cyan-400">{studentName}</p>
-                          <p className="text-[10px] text-slate-500 font-mono mt-0.5">{appId}</p>
-                        </td>
-                        <td className="px-6 py-3.5">
-                          <p className="font-bold text-white">{examTitle}</p>
-                          <span className="text-[9px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-black uppercase">
-                            Attempt #{result.attempt_number || 1}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3.5">
-                          {result.total_score !== null && result.total_score !== undefined ? (
-                            <div>
-                              <p className="font-black text-white">{result.total_score} <span className="text-slate-500 font-normal">/ {result.total_marks}</span></p>
-                              <div className="w-16 bg-white/5 rounded-full h-1 mt-1">
-                                <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-1 rounded-full" style={{ width: `${Math.min(100,Math.max(0,result.percentage||0))}%` }} />
-                              </div>
-                              <p className="text-[10px] text-cyan-400 mt-0.5 font-bold">{result.percentage}%</p>
-                            </div>
-                          ) : <span className="text-slate-600">Not scored</span>}
-                        </td>
-                        <td className="px-6 py-3.5">
-                          <p className="text-slate-300">{result.submitted_at ? new Date(result.submitted_at).toLocaleDateString() : '-'}</p>
-                          <p className="text-[10px] text-slate-500">{result.submitted_at ? new Date(result.submitted_at).toLocaleTimeString() : ''}</p>
-                        </td>
-                        <td className="px-6 py-3.5">
-                          {isPublished && (
-                            <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black px-2 py-0.5 rounded w-fit uppercase">
-                              <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span></span>
-                              Live
-                            </span>
-                          )}
-                          {isPending && <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">⏳ Pending</span>}
-                          {isUnpublished && <span className="bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🔒 Unpublished</span>}
-                          {isBlocked && <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2 py-0.5 rounded uppercase">🚫 Blocked</span>}
-                        </td>
-                        <td className="px-6 py-3.5">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {/* Review / Edit button */}
-                            <Link to={`/admin/results/${result.id}`}>
-                              <button className="bg-white/5 hover:bg-cyan-500/15 border border-white/10 hover:border-cyan-500/25 text-slate-300 hover:text-cyan-300 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer" title="Review & Edit">
-                                ✏️ Review
-                              </button>
-                            </Link>
-
-                            {/* Quick Publish */}
-                            {(isPending || isUnpublished) && (
-                              <button
-                                onClick={() => handleQuickPublish(result.id, studentName)}
-                                disabled={isProcessing}
-                                className="bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
-                                title="Publish Result"
-                              >
-                                {isProcessing ? '...' : '📢 Publish'}
-                              </button>
-                            )}
-
-                            {/* Quick Unpublish */}
-                            {isPublished && (
-                              <button
-                                onClick={() => handleQuickUnpublish(result.id, studentName)}
-                                disabled={isProcessing}
-                                className="bg-orange-500/10 hover:bg-orange-500/25 border border-orange-500/20 text-orange-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
-                                title="Unpublish Result"
-                              >
-                                {isProcessing ? '...' : '🔒 Unpublish'}
-                              </button>
-                            )}
-
-                            {/* Quick Resend Email */}
-                            {isPublished && (
-                              <button
-                                onClick={() => handleResendEmail(result.id)}
-                                disabled={isProcessing}
-                                className="bg-cyan-500/10 hover:bg-cyan-500/25 border border-cyan-500/20 text-cyan-400 px-2.5 py-1.5 rounded-lg transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
-                                title="Send/Resend Scorecard Email"
-                              >
-                                ✉️ Email
-                              </button>
-                            )}
-                          </div>
-                        </td>
+              <div className="p-0 overflow-x-auto">
+                {signedAuditLogs.length === 0 ? (
+                  <div className="p-12 text-center text-slate-500 font-bold">No chained audit logs recorded yet.</div>
+                ) : (
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="border-b border-white/5 bg-white/[0.01]">
+                      <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                        <th className="px-6 py-4">Event Type</th>
+                        <th className="px-6 py-4">Description</th>
+                        <th className="px-6 py-4">IP & Device</th>
+                        <th className="px-6 py-4 font-mono">Previous Signature</th>
+                        <th className="px-6 py-4 font-mono">Log Signature</th>
+                        <th className="px-6 py-4">Created At</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Summary Footer */}
-          <div className="px-6 py-3 border-t border-white/5 flex gap-4 text-[10px] font-bold">
-            <span className="text-emerald-400">✅ Published: {allResults.filter(r => r.status === 'published').length}</span>
-            <span className="text-amber-400">⏳ Pending: {allResults.filter(r => r.status === 'submitted').length}</span>
-            <span className="text-blue-400">🔒 Unpublished: {allResults.filter(r => r.status === 'reviewed').length}</span>
-            <span className="text-red-400">🚫 Blocked: {allResults.filter(r => r.status === 'blocked').length}</span>
-          </div>
-        </div>
-
-        {/* Live Security Audit & Session Monitor Feed */}
-        {logsError ? (
-          <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-6 shadow-xl text-xs font-semibold text-amber-300">
-            <div className="flex items-start gap-3.5">
-              <span className="text-xl">⚠️</span>
-              <div>
-                <h3 className="font-bold text-amber-400 text-sm mb-1 uppercase tracking-wider">Live Security Audit Feed: Database Table Required</h3>
-                <p className="text-slate-400 mb-4 leading-relaxed">
-                  To enable tracking of logins, IP addresses, geolocations, and active session durations, please create the <code>login_logs</code> table in your Supabase database.
-                </p>
-                <p className="mb-2 text-slate-300">Go to your <strong>Supabase Dashboard &gt; SQL Editor &gt; New Query</strong>, paste the following SQL, and click <strong>Run</strong>:</p>
-                <pre className="bg-[#020205] border border-white/10 p-4 rounded-xl font-mono text-[10px] text-cyan-300 overflow-x-auto select-all max-h-48">
-{`CREATE TABLE public.login_logs (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID NOT NULL,
-    user_role VARCHAR(50) NOT NULL,
-    display_name VARCHAR(255),
-    ip_address VARCHAR(100),
-    location VARCHAR(255) DEFAULT 'Resolving...',
-    login_at TIMESTAMPTZ DEFAULT now(),
-    last_activity_at TIMESTAMPTZ DEFAULT now(),
-    session_duration_seconds INTEGER DEFAULT 0
-);
-
--- Enable Row Level Security (RLS) but allow anonymous operations
-ALTER TABLE public.login_logs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow all actions for logs" ON public.login_logs FOR ALL TO anon USING (true) WITH CHECK (true);`}
-                </pre>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-            <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-              <div>
-                <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-                  </span>
-                  Live Security Audit & Session Monitor
-                </h2>
-                <p className="text-[10px] text-slate-500 mt-1">Real-time tracking of admin and candidate sessions, IPs, geolocations, and activity pulses.</p>
-              </div>
-              <button 
-                onClick={fetchSecurityLogs}
-                className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-350 px-3 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
-              >
-                Refresh Feed
-              </button>
-            </div>
-
-            <div className="p-0 overflow-x-auto">
-              {loginLogs.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 font-bold">
-                  No login logs recorded yet.
-                </div>
-              ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="border-b border-white/5">
-                    <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                      <th className="px-6 py-4">User</th>
-                      <th className="px-6 py-4">Role</th>
-                      <th className="px-6 py-4">IP Address</th>
-                      <th className="px-6 py-4">Location</th>
-                      <th className="px-6 py-4">Logged In At</th>
-                      <th className="px-6 py-4">Session Duration</th>
-                      <th className="px-6 py-4 text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                    {loginLogs.map((log) => {
-                      const active = isSessionActive(log.last_activity_at);
-                      return (
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-semibold text-slate-350">
+                      {signedAuditLogs.map((log) => (
                         <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
                           <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-white">{log.display_name || 'Unknown User'}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{log.user_id}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            {log.user_role === 'super_admin' ? (
-                              <span className="bg-red-500/10 border border-red-500/30 text-red-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Super Admin
-                              </span>
-                            ) : log.user_role === 'admin' ? (
-                              <span className="bg-purple-500/10 border border-purple-500/30 text-purple-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Admin
-                              </span>
-                            ) : (
-                              <span className="bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Student
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 font-mono text-slate-400">{log.ip_address || 'Unknown'}</td>
-                          <td className="px-6 py-4 text-slate-300">
-                            <span className="flex items-center gap-1.5">
-                              📍 {log.location || 'Resolving...'}
+                            <span className="bg-white/5 border border-white/10 text-white px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider font-mono">
+                              {log.event_type}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-slate-400">
-                            <p>{new Date(log.login_at).toLocaleDateString()}</p>
-                            <p className="text-[10px] mt-0.5">{new Date(log.login_at).toLocaleTimeString()}</p>
+                          <td className="px-6 py-4 text-slate-200 max-w-xs truncate" title={log.description}>{log.description}</td>
+                          <td className="px-6 py-4">
+                            <p className="font-mono text-slate-300">{log.ip_address}</p>
+                            <p className="text-[10px] text-slate-500 truncate max-w-[150px]" title={log.user_agent}>{log.user_agent}</p>
                           </td>
-                          <td className="px-6 py-4 font-mono text-cyan-400">{formatDuration(log.session_duration_seconds)}</td>
-                          <td className="px-6 py-4 text-center">
-                            {active ? (
-                              <span className="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
-                                <span className="relative flex h-1.5 w-1.5">
-                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                                </span>
-                                Active
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 bg-slate-500/10 border border-white/5 text-slate-500 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
-                                <span className="h-1.5 w-1.5 rounded-full bg-slate-600"></span>
-                                Offline
-                              </span>
-                            )}
+                          <td className="px-6 py-4 font-mono text-slate-500 text-[10px]">
+                            {log.previous_signature ? log.previous_signature.substring(0, 12) + '...' : 'GENESIS'}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-purple-400 text-[10px]">
+                            {log.signature ? log.signature.substring(0, 12) + '...' : 'MISSING'}
+                          </td>
+                          <td className="px-6 py-4 text-slate-450">
+                            <p>{new Date(log.created_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] mt-0.5">{new Date(log.created_at).toLocaleTimeString()}</p>
                           </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Live Proctoring Violations & Audit Logs Feed */}
-        {auditError ? (
-          <div className="bg-amber-500/5 border border-amber-500/15 rounded-2xl p-6 shadow-xl text-xs font-semibold text-amber-300 mt-8">
-            <div className="flex items-start gap-3.5">
-              <span className="text-xl">⚠️</span>
-              <div>
-                <h3 className="font-bold text-amber-400 text-sm mb-1 uppercase tracking-wider">Live Proctoring & Audit Feed: Table Error</h3>
-                <p className="text-slate-400 leading-relaxed">
-                  Unable to fetch from the audit logs table. Please verify that the <code>audit_logs</code> table exists and contains correct columns.
-                </p>
+        {activeTab === 'keys' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Keys Status Grid */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl p-6 relative overflow-hidden">
+              <div className="h-0.5 w-full bg-gradient-to-r from-amber-500 to-orange-500 absolute top-0 left-0" />
+              
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                <div>
+                  <h3 className="font-extrabold text-white text-base uppercase tracking-wider">Active Cryptographic Keys Status</h3>
+                  <p className="text-xs text-slate-400 mt-1">Platform data security keys derived from independent environment variables.</p>
+                </div>
+                <div className="bg-amber-500/10 border border-amber-500/20 px-3.5 py-1.5 rounded-xl text-amber-400 text-xs font-black uppercase tracking-wider">
+                  Active version: {keyStatus?.activeVersion || 'v1'}
+                </div>
               </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden mt-8">
-            <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-              <div>
-                <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-405 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                  </span>
-                  Live Candidate Proctoring & Security Audit Logs
-                </h2>
-                <p className="text-[10px] text-slate-500 mt-1">Real-time candidate violations (tab switching, camera blocks, screen logs, screenshot warnings).</p>
+
+              {/* Status indicators */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                {['student', 'exam', 'payment', 'video', 'session'].map((k) => {
+                  const label = k === 'student' ? 'Student Data' :
+                                k === 'exam' ? 'Exam Questions' :
+                                k === 'payment' ? 'Payment Gate' :
+                                k === 'video' ? 'Proctor Snapshots' : 'Session Tokens';
+                  const isLoaded = keyStatus?.keys?.[k]?.status === 'loaded';
+                  const version = keyStatus?.keys?.[k]?.version || 'v1';
+
+                  return (
+                    <div key={k} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex flex-col justify-between h-28 relative">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{label}</span>
+                        <span className={`w-2.5 h-2.5 rounded-full ${isLoaded ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-mono text-slate-500 mt-1 uppercase">Method: AES-256-GCM</p>
+                        <p className="text-xs font-mono text-cyan-400 font-black mt-2">Key: {version}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <button 
-                onClick={fetchAuditLogs}
-                className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-350 px-3 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
-              >
-                Refresh Logs
-              </button>
             </div>
 
-            <div className="p-0 overflow-x-auto max-h-96">
-              {auditLogs.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 font-bold">
-                  No proctoring violation logs recorded yet.
+            {/* Rotation monitoring */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl p-6 relative">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div className="space-y-1">
+                  <h4 className="font-bold text-white text-sm uppercase tracking-wide">Key Rotation Timeline</h4>
+                  <p className="text-xs text-slate-400">The 120-day automatic scheduler checks once per day on backend start-up.</p>
+                  <p className="text-[10px] text-slate-500 mt-2">Last rotated: {keyStatus?.lastRotated ? new Date(keyStatus.lastRotated).toLocaleString() : 'System Start-up'}</p>
                 </div>
-              ) : (
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead className="border-b border-white/5 bg-white/[0.01]">
-                    <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                      <th className="px-6 py-4">Candidate / Admin</th>
-                      <th className="px-6 py-4">Role</th>
-                      <th className="px-6 py-4">Event / Action</th>
-                      <th className="px-6 py-4">Event Details</th>
-                      <th className="px-6 py-4">IP Address</th>
-                      <th className="px-6 py-4">Logged At</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                    {auditLogs.map((log) => {
-                      const isViolation = log.action && (
-                        log.action.includes('VIOLATION') ||
-                        log.action.includes('LOCK') ||
-                        log.action.includes('LOST') ||
-                        log.action.includes('MUTED') ||
-                        log.action.includes('SCREENSHOT') ||
-                        log.action.includes('FAILURE')
-                      );
-                      
-                      return (
-                        <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-white">{log.display_name || 'System / Cron'}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{log.user_id}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            {log.user_role === 'super_admin' ? (
-                              <span className="bg-red-500/10 border border-red-500/30 text-red-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Super Admin
-                              </span>
-                            ) : log.user_role === 'admin' ? (
-                              <span className="bg-purple-500/10 border border-purple-500/30 text-purple-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Admin
-                              </span>
-                            ) : log.user_role === 'student' ? (
-                              <span className="bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                Student
-                              </span>
-                            ) : (
-                              <span className="bg-slate-500/10 border border-white/5 text-slate-400 px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider">
-                                {log.user_role || 'System'}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                              isViolation 
-                                ? 'bg-red-500/15 border border-red-500/30 text-red-400' 
-                                : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                            }`}>
-                              {log.action?.replace(/_/g, ' ') || 'UNKNOWN_EVENT'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 max-w-xs truncate text-slate-350" title={typeof log.details === 'object' ? JSON.stringify(log.details) : log.details}>
-                            {typeof log.details === 'object' ? (
-                              <span>
-                                {log.details?.note || log.details?.reason || JSON.stringify(log.details)}
-                              </span>
-                            ) : (
-                              <span>{log.details || 'N/A'}</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 font-mono text-slate-400">{log.ip_address || 'Unknown'}</td>
-                          <td className="px-6 py-4 text-slate-400">
-                            <p>{log.created_at ? new Date(log.created_at).toLocaleDateString() : 'N/A'}</p>
-                            <p className="text-[10px] mt-0.5">{log.created_at ? new Date(log.created_at).toLocaleTimeString() : 'N/A'}</p>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="text-right">
+                    <p className="text-2xl font-black text-amber-400 font-mono">{keyStatus?.daysUntilRotation || '120'} Days</p>
+                    <p className="text-[9px] text-slate-450 uppercase tracking-widest font-bold">Until Automatic Rotation</p>
+                  </div>
+                  <button
+                    onClick={() => setIsRotatorOpen(!isRotatorOpen)}
+                    className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 px-5 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider cursor-pointer shadow-lg transition-all"
+                  >
+                    🔐 Rotate Keys Now (2FA Step-up)
+                  </button>
+                </div>
+              </div>
+
+              {/* Step-up 2FA manually rotate keys dialog */}
+              {isRotatorOpen && (
+                <div className="mt-6 border-t border-white/5 pt-6 max-w-md space-y-4 animate-slide-down">
+                  <h5 className="text-xs font-black text-red-400 uppercase tracking-wider flex items-center gap-2">
+                    <span>⚠️</span> Administrative Authorization Required
+                  </h5>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Rotating keys generates new write keys for all categories. Old keys are archived to decrypt old database records. Never trust current login session; re-enter Superadmin Secret and Authenticator TOTP PIN.
+                  </p>
+
+                  <div className="space-y-3.5">
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Super Admin Secret Key</label>
+                      <input
+                        type="password"
+                        placeholder="••••••••••••••••"
+                        value={superadminSecret}
+                        onChange={(e) => setSuperadminSecret(e.target.value)}
+                        className="w-full bg-[#020205] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">6-Digit Google Authenticator OTP</label>
+                      <input
+                        type="text"
+                        placeholder="000 000"
+                        maxLength={6}
+                        value={mfaPin}
+                        onChange={(e) => setMfaPin(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-[#020205] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono tracking-widest text-center"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleRotateKeys}
+                      disabled={loadingKeys}
+                      className="w-full bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all disabled:opacity-50 cursor-pointer shadow-md"
+                    >
+                      {loadingKeys ? 'Deriving new keys...' : 'Authorize Rotation & Re-encrypt'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
         )}
-      </div>
+      </main>
+
 
       {/* Live Proctoring Monitor Stream Modal */}
       {monitoringStudent && (

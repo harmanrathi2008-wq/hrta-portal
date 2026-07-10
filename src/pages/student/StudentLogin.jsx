@@ -14,36 +14,31 @@ export default function StudentLogin() {
     setLoading(true)
 
     try {
-      // Find student by Application ID
-      const { data: student, error } = await supabase
-        .from('students')
-        .select('*')
-        .eq('application_id', applicationId.toUpperCase())
-        .single()
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const response = await fetch(`${apiBaseUrl}/api/student/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          applicationId: applicationId,
+          password: dateOfBirth
+        })
+      });
 
-      if (error || !student) {
-        toast.error('Invalid Application ID')
-        setLoading(false)
-        return
+      if (!response.ok) {
+        const errData = await response.json();
+        toast.error(errData.error || 'Invalid Application ID or Date of Birth');
+        setLoading(false);
+        return;
       }
 
-      // Verify Date of Birth
-      if (student.date_of_birth !== dateOfBirth) {
-        toast.error('Invalid Date of Birth')
-        setLoading(false)
-        return
-      }
-
-      // Check if account is disabled
-      if (student.status === 'disabled') {
-        toast.error('Account disabled. Contact administrator.')
-        setLoading(false)
-        return
-      }
+      const data = await response.json();
 
       // Store student info in session
-      sessionStorage.setItem('student', JSON.stringify(student))
+      sessionStorage.setItem('student', JSON.stringify(data.student))
       sessionStorage.setItem('role', 'student')
+      sessionStorage.setItem('studentSessionToken', data.sessionToken)
 
       toast.success('Login successful!')
       navigate('/student')

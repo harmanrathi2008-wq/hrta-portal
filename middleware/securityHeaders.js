@@ -40,6 +40,7 @@ const helmetMiddleware = helmet({
       baseUri: ["'self'"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
+      requireTrustedTypesFor: ["'script'"]
     },
   },
   crossOriginEmbedderPolicy: false,
@@ -63,6 +64,11 @@ export const configureSecurityHeaders = (req, res, next) => {
 
     // Add X-XSS-Protection header to prevent XSS reflection attacks on legacy browsers
     res.setHeader('X-XSS-Protection', '1; mode=block');
+
+    // Set Cross-Origin Isolation & Resource Policy headers
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
 
     // Clean headers to prevent information exposure
     res.setHeader('Server', 'HRTA Secure Server');

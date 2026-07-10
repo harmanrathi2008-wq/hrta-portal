@@ -32,8 +32,19 @@ export default function ExamLogin() {
           return;
         }
 
+        const token = sessionStorage.getItem("studentSessionToken") || '';
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+        const studentFetch = fetch(`${apiBaseUrl}/api/student/profile?studentId=${userId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }).then(async r => {
+          if (!r.ok) throw new Error("Failed to load candidate details.");
+          return { data: await r.json(), error: null };
+        });
+
         const [studentRes, examRes, resultsRes, assignmentRes] = await Promise.all([
-          supabase.from("students").select("*").eq("id", userId).single(),
+          studentFetch,
           supabase.from("exams").select("*").eq("id", examId).single(),
           supabase.from("exam_results").select("status").eq("student_id", userId).eq("exam_id", examId).order('submitted_at', { ascending: false }).limit(5),
           supabase.from("personal_assignments").select("*").eq("student_id", userId).eq("exam_id", examId).eq("status", "active").maybeSingle()

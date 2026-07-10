@@ -26,6 +26,12 @@ const ManageStudents = () => {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
 
+  // 2FA Step-up Administrative authorization state
+  const [showStepUpModal, setShowStepUpModal] = useState(false);
+  const [stepUpSecret, setStepUpSecret] = useState('');
+  const [stepUpOtp, setStepUpOtp] = useState('');
+  const [studentToDelete, setStudentToDelete] = useState(null);
+
   // Fetch Students
   useEffect(() => {
     fetchStudents();
@@ -39,12 +45,21 @@ const ManageStudents = () => {
         return;
       }
       
-      const { data, error } = await supabase
-        .from('students')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
-      if (error) throw error;
+      const response = await fetch(`${apiBaseUrl}/api/admin/students`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch candidates roster');
+      }
+      const data = await response.json();
       setStudents(data || []);
     } catch (err) {
       console.error("Error fetching students:", err);
@@ -143,24 +158,36 @@ const ManageStudents = () => {
         newStudent.photo_url = photoUrl;
       }
 
-      // 4. Save to Supabase
-      const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
-      
-      if (error) throw error;
+      // 4. Save to Backend Proxy
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      const response = await fetch(`${apiBaseUrl}/api/admin/students`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify(newStudent)
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to register candidate.');
+      }
+      const savedStudent = await response.json();
 
       // Update UI
-      setStudents([data, ...students]);
+      setStudents([savedStudent, ...students]);
       setShowAddModal(false);
       resetForm();
-      alert(`Student added successfully! App ID: ${newAppId}`);
+      alert(`Student registered successfully! App ID: ${newAppId}`);
 
     } catch (err) {
       console.error("Add student error:", err);
-      if (err.message && err.message.includes('schema cache')) {
-        alert("DATABASE ERROR: You need to add the 'photo_url' column to your 'students' table in Supabase. Please run the SQL command provided.");
-      } else {
-        alert(err.message || "Failed to add student. Ensure email is unique.");
-      }
+      alert(err.message || "Failed to add student. Ensure email is unique.");
     } finally {
       setSaving(false);
     }
@@ -177,24 +204,69 @@ const ManageStudents = () => {
   const toggleStudentStatus = async (id, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'disabled' : 'active';
     try {
-      const { error } = await supabase.from('students').update({ status: newStatus }).eq('id', id);
-      if (error) throw error;
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      const response = await fetch(`${apiBaseUrl}/api/admin/students/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to update status.');
+      }
       setStudents(students.map(s => s.id === id ? { ...s, status: newStatus } : s));
     } catch (err) {
-      alert("Failed to update status.");
+      alert(err.message || "Failed to update status.");
     }
   };
 
-  const deleteStudent = async (id, name) => {
-    if (!window.confirm(`WARNING: Are you sure you want to PERMANENTLY delete ${name}? This will erase all their exam results, history, and logs.`)) {
-      return;
-    }
+  const deleteStudent = (id, name) => {
+    setStudentToDelete({ id, name });
+    setShowStepUpModal(true);
+  };
+
+  const handleConfirmDelete = async (e) => {
+    e.preventDefault();
+    if (!studentToDelete) return;
+
     try {
-      const { error } = await supabase.from('students').delete().eq('id', id);
-      if (error) throw error;
-      setStudents(students.filter(s => s.id !== id));
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+
+      const response = await fetch(`${apiBaseUrl}/api/admin/students/${studentToDelete.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId,
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026',
+          'x-stepup-secret': stepUpSecret,
+          'x-stepup-otp': stepUpOtp
+        }
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to delete student.');
+      }
+
+      setStudents(students.filter(s => s.id !== studentToDelete.id));
+      setShowStepUpModal(false);
+      setStudentToDelete(null);
+      setStepUpSecret('');
+      setStepUpOtp('');
+      alert("Candidate deleted successfully!");
     } catch (err) {
-      alert("Failed to delete student. They may have dependent records that need deleting first.");
+      alert(err.message || "Failed to delete student.");
     }
   };
 
@@ -423,6 +495,80 @@ const ManageStudents = () => {
                 {saving ? 'Registering...' : 'Register Candidate'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP-UP 2FA AUTHORIZATION MODAL FOR DELETION */}
+      {showStepUpModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+          <div className="bg-[#0b0c10] border border-red-500/30 rounded-2xl max-w-md w-full overflow-hidden shadow-[0_0_50px_rgba(239,68,68,0.25)]">
+            <div className="bg-gradient-to-r from-red-950/40 to-black px-6 py-4 flex justify-between items-center border-b border-white/5">
+              <h2 className="font-extrabold text-white text-sm uppercase tracking-wider flex items-center gap-2">
+                <span className="text-red-500">⚠️</span> Step-Up Authentication Required
+              </h2>
+              <button 
+                onClick={() => {
+                  setShowStepUpModal(false);
+                  setStudentToDelete(null);
+                  setStepUpSecret('');
+                  setStepUpOtp('');
+                }}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-xl font-bold"
+              >
+                &times;
+              </button>
+            </div>
+            
+            <form onSubmit={handleConfirmDelete} className="p-6 space-y-4">
+              <p className="text-xs text-slate-400 leading-relaxed">
+                You are performing a dangerous operation: deleting candidate <strong className="text-white">{studentToDelete?.name}</strong>. This will erase all their exams, results, and histories permanently. Re-verify your administrator identity below.
+              </p>
+              
+              <div>
+                <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">Super Admin Secret Key</label>
+                <input 
+                  type="password" required
+                  placeholder="••••••••••••••••"
+                  value={stepUpSecret}
+                  onChange={e => setStepUpSecret(e.target.value)}
+                  className="w-full bg-[#020205] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1.5">6-Digit Google Authenticator OTP</label>
+                <input 
+                  type="text" required
+                  placeholder="000 000"
+                  maxLength={6}
+                  value={stepUpOtp}
+                  onChange={e => setStepUpOtp(e.target.value.replace(/\D/g, ''))}
+                  className="w-full bg-[#020205] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors font-mono tracking-widest text-center"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowStepUpModal(false);
+                    setStudentToDelete(null);
+                    setStepUpSecret('');
+                    setStepUpOtp('');
+                  }}
+                  className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 bg-gradient-to-r from-red-650 to-rose-700 hover:from-red-500 hover:to-rose-600 text-white py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

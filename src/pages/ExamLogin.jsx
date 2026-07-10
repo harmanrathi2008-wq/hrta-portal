@@ -31,32 +31,27 @@ export default function ExamLogin() {
     setLoading(true)
 
     try {
-      // Find student by Application ID
-      const { data: studentData, error } = await supabase
-        .from('students')
-        .select('*')
-        .eq('application_id', applicationId.toUpperCase())
-        .single()
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      const response = await fetch(`${apiBaseUrl}/api/student/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          applicationId: applicationId,
+          password: password
+        })
+      });
 
-      if (error || !studentData) {
-        toast.error('Invalid Application ID')
-        setLoading(false)
-        return
+      if (!response.ok) {
+        const errData = await response.json();
+        toast.error(errData.error || 'Invalid Application ID or Date of Birth');
+        setLoading(false);
+        return;
       }
 
-      // Verify password (Date of Birth)
-      if (studentData.date_of_birth !== password) {
-        toast.error('Invalid Date of Birth')
-        setLoading(false)
-        return
-      }
-
-      // Check if account is active
-      if (studentData.status === 'disabled') {
-        toast.error('Account disabled. Contact administrator.')
-        setLoading(false)
-        return
-      }
+      const data = await response.json();
+      const studentData = data.student;
 
       setStudent(studentData)
       setPhotoUrl(studentData.photo_url)
@@ -64,6 +59,7 @@ export default function ExamLogin() {
       // Store exam session info
       sessionStorage.setItem('examStudentId', studentData.id)
       sessionStorage.setItem('examId', examId)
+      sessionStorage.setItem('studentSessionToken', data.sessionToken)
 
       // Redirect to instructions page
       navigate(`/student/exam/${examId}/instructions`)

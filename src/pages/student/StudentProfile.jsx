@@ -34,13 +34,19 @@ export default function StudentProfile() {
   }, [studentId])
 
   const loadStudentData = async () => {
-    const { data, error } = await supabase
-      .from('students')
-      .select('*')
-      .eq('id', studentId)
-      .single()
-
-    if (!error && data) {
+    try {
+      const token = sessionStorage.getItem("studentSessionToken") || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
+      
+      const response = await fetch(`${apiBaseUrl}/api/student/profile?studentId=${studentId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to fetch candidate details');
+      }
+      const data = await response.json();
       setStudent(data)
       setProfile({
         full_name: data.full_name || '',
@@ -49,8 +55,11 @@ export default function StudentProfile() {
         date_of_birth: data.date_of_birth || '',
         category: data.category || 'general',
       })
+    } catch (err) {
+      console.error("Error loading profile:", err);
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const loadStats = async () => {
@@ -80,20 +89,32 @@ export default function StudentProfile() {
 
   const handleUpdateProfile = async () => {
     setSaving(true)
-    const { error } = await supabase
-      .from('students')
-      .update({
-        phone: profile.phone,
-        category: profile.category,
-      })
-      .eq('id', studentId)
+    try {
+      const token = sessionStorage.getItem("studentSessionToken") || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
-    if (error) {
-      toast.error(error.message)
-    } else {
+      const response = await fetch(`${apiBaseUrl}/api/student/profile/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          studentId: studentId,
+          phone: profile.phone,
+          category: profile.category
+        })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to update profile.');
+      }
       toast.success('Profile updated successfully')
+    } catch (err) {
+      toast.error(err.message || 'Failed to update profile.')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const handleSetParentPin = async () => {
@@ -103,18 +124,32 @@ export default function StudentProfile() {
     }
 
     setSaving(true)
-    const { error } = await supabase
-      .from('students')
-      .update({ parent_pin: parentPin })
-      .eq('id', studentId)
+    try {
+      const token = sessionStorage.getItem("studentSessionToken") || '';
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
 
-    if (error) {
-      toast.error(error.message)
-    } else {
+      const response = await fetch(`${apiBaseUrl}/api/student/profile/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          studentId: studentId,
+          parent_pin: parentPin
+        })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to set parent PIN.');
+      }
       toast.success('Parent PIN set successfully')
       setParentPin('')
+    } catch (err) {
+      toast.error(err.message || 'Failed to set parent PIN.')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   const handleLogout = () => {
