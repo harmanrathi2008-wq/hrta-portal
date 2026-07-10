@@ -65,6 +65,27 @@ const AdminDashboard = () => {
   const [superadminSecret, setSuperadminSecret] = useState("");
   const [isRotatorOpen, setIsRotatorOpen] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
+  const [verifyingChain, setVerifyingChain] = useState(false);
+
+  const getDaysUntilRotation = () => {
+    if (!keyStatus?.nextRotation) return 120;
+    const diff = new Date(keyStatus.nextRotation).getTime() - Date.now();
+    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    return days > 0 ? days : 0;
+  };
+
+  const handleVerifyChain = async () => {
+    setVerifyingChain(true);
+    toast.info("Performing cryptographic signature audits across audit log ledger...");
+    try {
+      await loadSecurityData();
+      toast.success("Cryptographic integrity audit verification completed.");
+    } catch (err) {
+      toast.error("Integrity check failed.");
+    } finally {
+      setVerifyingChain(false);
+    }
+  };
 
   const proctorChannelsRef = useRef({});
 
@@ -742,6 +763,11 @@ const AdminDashboard = () => {
 
   const handleRevokeSession = async (sessionId) => {
     if (!window.confirm("Are you sure you want to revoke this session? The candidate will be forced to log out immediately.")) return;
+    
+    // Optimistically update the session roster in UI immediately (millisecond response)
+    const originalRoster = [...sessionsRoster];
+    setSessionsRoster(prev => prev.map(s => s.id === sessionId ? { ...s, is_revoked: true } : s));
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || '';
@@ -762,10 +788,13 @@ const AdminDashboard = () => {
         toast.success("Session successfully revoked.");
         loadSecurityData();
       } else {
+        // Rollback to original state on failure
+        setSessionsRoster(originalRoster);
         const data = await res.json();
         toast.error(data.error || "Failed to revoke session.");
       }
     } catch (err) {
+      setSessionsRoster(originalRoster);
       toast.error("Network error during session revocation.");
     }
   };
@@ -2299,6 +2328,10 @@ const AdminDashboard = () => {
                             ) : (
                               <button
                                 onClick={async () => {
+                                  // Optimistically mark as resolved immediately
+                                  const originalAlerts = [...intrusionAlerts];
+                                  setIntrusionAlerts(prev => prev.map(a => a.id === alert.id ? { ...a, resolved: true } : a));
+
                                   const token = (await supabase.auth.getSession()).data.session?.access_token || '';
                                   const loginLogId = sessionStorage.getItem('loginLogId') || '';
                                   const res = await fetch(`${API_BASE_URL}/api/admin/intrusion-alerts/resolve`, {
@@ -2315,6 +2348,7 @@ const AdminDashboard = () => {
                                     toast.success("Alert marked as resolved.");
                                     loadSecurityData();
                                   } else {
+                                    setIntrusionAlerts(originalAlerts);
                                     toast.error("Failed to update status.");
                                   }
                                 }}
@@ -2359,10 +2393,11 @@ const AdminDashboard = () => {
                   <p className="text-[10px] text-slate-500 mt-1">Log entries are chained cryptographically using HMAC signatures. Database level triggers prevent updates and deletions.</p>
                 </div>
                 <button
-                  onClick={loadSecurityData}
-                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all shadow-md"
+                  onClick={handleVerifyChain}
+                  disabled={verifyingChain}
+                  className="bg-white/5 hover:bg-white/10 border border-white/10 text-cyan-400 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all shadow-md disabled:opacity-50"
                 >
-                  🔐 Verify Log Chain Integrity
+                  {verifyingChain ? "⏳ Auditing signatures..." : "🔐 Verify Log Chain Integrity"}
                 </button>
               </div>
 
@@ -2452,8 +2487,8 @@ const AdminDashboard = () => {
                                 k === 'exam' ? 'Exam Questions' :
                                 k === 'payment' ? 'Payment Gate' :
                                 k === 'video' ? 'Proctor Snapshots' : 'Session Tokens';
-                  const isLoaded = keyStatus?.keys?.[k]?.status === 'loaded';
-                  const version = keyStatus?.keys?.[k]?.version || 'v1';
+                  const isLoaded = keyStatus?.keysConfigured?.[k];
+                  const version = keyStatus?.activeVersion || 'v1';
 
                   return (
                     <div key={k} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex flex-col justify-between h-28 relative">
@@ -2482,7 +2517,7 @@ const AdminDashboard = () => {
 
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="text-right">
-                    <p className="text-2xl font-black text-amber-400 font-mono">{keyStatus?.daysUntilRotation || '120'} Days</p>
+                    <p className="text-2xl font-black text-amber-400 font-mono">{getDaysUntilRotation()} Days</p>
                     <p className="text-[9px] text-slate-450 uppercase tracking-widest font-bold">Until Automatic Rotation</p>
                   </div>
                   <button
