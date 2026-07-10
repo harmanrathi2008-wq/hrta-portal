@@ -3181,9 +3181,58 @@ app.get('/api/admin/students', verifyAdminJWT, async (req, res) => {
 app.post('/api/admin/students', verifyAdminJWT, async (req, res) => {
   try {
     const rawStudent = req.body;
-    
-    // Encrypt sensitive fields
-    const encryptedStudent = encryptStudent(rawStudent);
+
+    // Auto-generate a unique application ID: HRTA-XXXXXX (6 random uppercase alphanumeric)
+    const generateAppId = () => {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let id = 'HRTA-';
+      for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+      return id;
+    };
+
+    // Ensure application_id is unique
+    let application_id = rawStudent.application_id || generateAppId();
+    const { data: existing } = await supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('application_id', application_id)
+      .maybeSingle();
+    if (existing) application_id = generateAppId(); // regenerate on collision
+
+    // Initial password = DOB in DDMMYYYY format
+    const dobRaw = rawStudent.date_of_birth || '';
+    // Normalize YYYY-MM-DD -> DDMMYYYY for password
+    let initialPassword = dobRaw.replace(/-/g, '');
+    if (initialPassword.length === 8 && /^\d{8}$/.test(initialPassword)) {
+      // If YYYYMMDD, convert to DDMMYYYY
+      if (parseInt(initialPassword.substring(0, 4)) > 1900) {
+        initialPassword = initialPassword.slice(6) + initialPassword.slice(4, 6) + initialPassword.slice(0, 4);
+      }
+    }
+    if (!initialPassword || initialPassword.length < 6) initialPassword = application_id;
+
+    // Create Supabase Auth user so candidate can log in
+    let authUserId = null;
+    try {
+      const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+        email: rawStudent.email,
+        password: initialPassword,
+        email_confirm: true,
+        user_metadata: { role: 'student', application_id }
+      });
+      if (authErr) {
+        console.error('Auth user create error:', authErr.message);
+      } else {
+        authUserId = authData.user?.id || null;
+      }
+    } catch (authEx) {
+      console.error('Auth creation exception:', authEx.message);
+    }
+
+    // Encrypt sensitive fields and insert into students table
+    const studentRecord = { ...rawStudent, application_id };
+    if (authUserId) studentRecord.id = authUserId; // link auth ID as student ID
+    const encryptedStudent = encryptStudent(studentRecord);
 
     const { data, error } = await supabaseAdmin
       .from('students')
@@ -3191,10 +3240,14 @@ app.post('/api/admin/students', verifyAdminJWT, async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      // Rollback auth user if DB insert fails
+      if (authUserId) await supabaseAdmin.auth.admin.deleteUser(authUserId).catch(() => {});
+      throw error;
+    }
 
-    await logSecurityEvent('candidate_create', `Admin created candidate ${rawStudent.full_name} (${rawStudent.application_id})`, req.user.id, req);
-    res.json(decryptStudent(data));
+    await logSecurityEvent('candidate_create', `Admin created candidate ${rawStudent.full_name} (${application_id})`, req.user.id, req);
+    res.json({ ...decryptStudent(data), _initialPassword: initialPassword });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to create candidate.' });
   }
@@ -3235,6 +3288,13 @@ app.delete('/api/admin/students/:id', verifyAdminJWT, requireStepUp2FA, async (r
       .eq('id', id);
 
     if (error) throw error;
+
+    // Also delete the Supabase Auth user so they can't log in
+    try {
+      await supabaseAdmin.auth.admin.deleteUser(id);
+    } catch (authDelErr) {
+      console.warn('Could not delete auth user (may not exist):', authDelErr.message);
+    }
 
     await logSecurityEvent('candidate_delete', `Superadmin deleted candidate ${id}`, req.user.id, req);
     res.json({ ok: true });

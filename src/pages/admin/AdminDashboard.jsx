@@ -1020,12 +1020,14 @@ const AdminDashboard = () => {
       const token = session?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
 
-      const response = await fetch(`${API_BASE_URL}/api/admin/students/register`, {
+      // Use POST /api/admin/students (correct endpoint)
+      const response = await fetch(`${API_BASE_URL}/api/admin/students`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'X-Session-ID': loginLogId
+          'X-Session-ID': loginLogId,
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
         },
         body: JSON.stringify({
           ...studentFormData,
@@ -1035,10 +1037,17 @@ const AdminDashboard = () => {
 
       const resData = await response.json();
       if (!response.ok) {
-        throw new Error(resData.error || 'Failed to register student');
+        throw new Error(resData.error || 'Failed to register candidate');
       }
 
-      toast.success("Candidate registered successfully!");
+      // Show initial password to admin so they can share with candidate
+      const initialPwd = resData._initialPassword;
+      const appId = resData.application_id;
+      toast.success(
+        `✅ Candidate registered! App ID: ${appId} | Initial Password: ${initialPwd} (DOB-based)`,
+        { duration: 12000 }
+      );
+
       setShowAddStudentModal(false);
       setStudentImagePreview('');
       setStudentImageFile(null);
@@ -2410,14 +2419,20 @@ const AdminDashboard = () => {
                   <h2 className="font-bold uppercase tracking-wider text-xs text-white">Candidates Roster</h2>
                   <p className="text-[10px] text-slate-500 mt-1">Browse registered students, edit records, toggle access permissions, or perform password DOB resets.</p>
                 </div>
-                <div className="w-full sm:w-64">
+                <div className="flex gap-3 items-center w-full sm:w-auto">
                   <input
                     type="text"
                     placeholder="Search candidates..."
                     value={studentSearch}
                     onChange={(e) => setStudentSearch(e.target.value)}
-                    className="w-full bg-[#020205]/60 border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/80 transition-colors"
+                    className="flex-1 sm:w-56 bg-[#020205]/60 border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/80 transition-colors"
                   />
+                  <button
+                    onClick={() => setShowAddStudentModal(true)}
+                    className="whitespace-nowrap bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer shadow-[0_4px_12px_rgba(6,182,212,0.2)]"
+                  >
+                    + Register Candidate
+                  </button>
                 </div>
               </div>
 
