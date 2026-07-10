@@ -653,9 +653,13 @@ async function verifyRecaptchaToken(req, res, next) {
 
     // A score of 1.0 is very likely a human, 0.0 is very likely a bot.
     const score = assessment?.riskAnalysis?.score;
-    if (score !== undefined && score < 0.4) {
-      console.warn('reCAPTCHA Enterprise score too low:', score);
-      return res.status(400).json({ error: 'High security risk detected. Access denied.' });
+    if (score !== undefined) {
+      if (score < 0.15) {
+        console.warn('reCAPTCHA Enterprise score too low (bot detected):', score);
+        return res.status(400).json({ error: 'High security risk detected. Access denied.' });
+      } else if (score < 0.4) {
+        console.log('reCAPTCHA Enterprise suspicious human score:', score);
+      }
     }
 
     next();
