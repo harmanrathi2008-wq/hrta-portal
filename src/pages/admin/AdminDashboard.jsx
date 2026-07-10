@@ -835,22 +835,22 @@ const AdminDashboard = () => {
       const resSessions = await fetch(`${API_BASE_URL}/api/admin/sessions`, { headers });
       if (resSessions.ok) {
         const data = await resSessions.json();
-        setSessionsRoster(data);
+        setSessionsRoster(Array.isArray(data) ? data : []);
       }
 
       // 2. Fetch Intrusion Alerts
       const resIntrusion = await fetch(`${API_BASE_URL}/api/admin/intrusion-alerts`, { headers });
       if (resIntrusion.ok) {
         const data = await resIntrusion.json();
-        setIntrusionAlerts(data);
+        setIntrusionAlerts(Array.isArray(data) ? data : []);
       }
 
       // 3. Fetch Signed Audit Logs
       const resLogs = await fetch(`${API_BASE_URL}/api/admin/audit-logs`, { headers });
       if (resLogs.ok) {
         const data = await resLogs.json();
-        setSignedAuditLogs(data.logs || []);
-        setIsLogChainValid(data.isChainValid);
+        setSignedAuditLogs(data && Array.isArray(data.logs) ? data.logs : []);
+        setIsLogChainValid(data ? data.isChainValid : false);
       }
 
       // 4. Fetch Key Status
@@ -865,7 +865,7 @@ const AdminDashboard = () => {
       const resStudents = await fetch(`${API_BASE_URL}/api/admin/students`, { headers });
       if (resStudents.ok) {
         const data = await resStudents.json();
-        setStudents(data || []);
+        setStudents(Array.isArray(data) ? data : []);
       }
       setStudentsLoading(false);
 
@@ -876,7 +876,7 @@ const AdminDashboard = () => {
         .select('*')
         .order('created_at', { ascending: false });
       if (!examsErr) {
-        setExams(examsData || []);
+        setExams(Array.isArray(examsData) ? examsData : []);
       }
       setExamsLoading(false);
     } catch (err) {

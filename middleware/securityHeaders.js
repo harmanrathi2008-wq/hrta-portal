@@ -39,8 +39,7 @@ const helmetMiddleware = helmet({
       frameAncestors: ["'none'"],
       baseUri: ["'self'"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
-      requireTrustedTypesFor: ["'script'"]
+      upgradeInsecureRequests: []
     },
   },
   crossOriginEmbedderPolicy: false,
