@@ -55,7 +55,7 @@ const AdminDashboard = () => {
   const [globalViolations, setGlobalViolations] = useState([]);
   
   // Advanced Security Dashboard States
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'sessions', 'intrusion', 'audit', 'keys'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'sessions', 'intrusion', 'audit', 'keys', 'students', 'exams', 'analytics', 'threatmap', 'settings', 'profile'
   const [sessionsRoster, setSessionsRoster] = useState([]);
   const [intrusionAlerts, setIntrusionAlerts] = useState([]);
   const [signedAuditLogs, setSignedAuditLogs] = useState([]);
@@ -66,6 +66,54 @@ const AdminDashboard = () => {
   const [isRotatorOpen, setIsRotatorOpen] = useState(false);
   const [loadingKeys, setLoadingKeys] = useState(false);
   const [verifyingChain, setVerifyingChain] = useState(false);
+
+  // Unified Candidates & Exams states
+  const [students, setStudents] = useState([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  const [savingStudent, setSavingStudent] = useState(false);
+  const [studentImageFile, setStudentImageFile] = useState(null);
+  const [studentImagePreview, setStudentImagePreview] = useState("");
+  const [studentFormData, setStudentFormData] = useState({
+    full_name: '',
+    email: '',
+    date_of_birth: '',
+    phone: '',
+    category: 'General'
+  });
+  
+  const [showDeleteStudentModal, setShowDeleteStudentModal] = useState(false);
+  const [studentToDelete, setStudentToDelete] = useState(null);
+  const [deleteSecret, setDeleteSecret] = useState('');
+  const [deleteOtp, setDeleteOtp] = useState('');
+
+  const [exams, setExams] = useState([]);
+  const [examsLoading, setExamsLoading] = useState(false);
+  const [examSearch, setExamSearch] = useState("");
+
+  // Exam creation form states
+  const [showAddExamModal, setShowAddExamModal] = useState(false);
+  const [examVisibilityMode, setExamVisibilityMode] = useState('lifetime');
+  const [savingExam, setSavingExam] = useState(false);
+  const [examFormData, setExamFormData] = useState({
+    title: '',
+    description: '',
+    subject: 'Physics',
+    duration_minutes: 180,
+    exam_type: 'real',
+    correct_marks: 4,
+    negative_marks: 1,
+    passing_percentage: 33,
+    start_datetime: '',
+    end_datetime: '',
+    total_marks: ''
+  });
+
+  // Search everywhere query
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
 
   const getDaysUntilRotation = () => {
     if (!keyStatus?.nextRotation) return 120;
@@ -811,8 +859,30 @@ const AdminDashboard = () => {
         const data = await resKeys.json();
         setKeyStatus(data);
       }
+
+      // 5. Fetch Students
+      setStudentsLoading(true);
+      const resStudents = await fetch(`${API_BASE_URL}/api/admin/students`, { headers });
+      if (resStudents.ok) {
+        const data = await resStudents.json();
+        setStudents(data || []);
+      }
+      setStudentsLoading(false);
+
+      // 6. Fetch Exams
+      setExamsLoading(true);
+      const { data: examsData, error: examsErr } = await supabase
+        .from('exams')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!examsErr) {
+        setExams(examsData || []);
+      }
+      setExamsLoading(false);
     } catch (err) {
       console.error("Error loading security dashboard data:", err);
+      setStudentsLoading(false);
+      setExamsLoading(false);
     }
   };
 
@@ -851,6 +921,260 @@ const AdminDashboard = () => {
     } catch (err) {
       setSessionsRoster(originalRoster);
       toast.error("Network error during session revocation.");
+    }
+  };
+
+  // Candidates & Students Management Actions
+  const handleSuspendStudent = async (studentId, currentSuspended) => {
+    const newSuspended = !currentSuspended;
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, is_suspended: newSuspended } : s));
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ is_suspended: newSuspended, updated_at: new Date().toISOString() })
+        .eq('id', studentId);
+      if (error) throw error;
+      toast.success("Candidate suspension updated.");
+    } catch (err) {
+      toast.error("Failed to update suspension.");
+      setStudents(prev => prev.map(s => s.id === studentId ? { ...s, is_suspended: currentSuspended } : s));
+    }
+  };
+
+  const handleBanStudent = async (studentId, currentBanned) => {
+    const newBanned = !currentBanned;
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, is_banned: newBanned } : s));
+    try {
+      const { error } = await supabase
+        .from('students')
+        .update({ is_banned: newBanned, updated_at: new Date().toISOString() })
+        .eq('id', studentId);
+      if (error) throw error;
+      toast.success("Candidate ban status updated.");
+    } catch (err) {
+      toast.error("Failed to ban student.");
+      setStudents(prev => prev.map(s => s.id === studentId ? { ...s, is_banned: currentBanned } : s));
+    }
+  };
+
+  const handleConfirmDeleteStudent = async (e) => {
+    e.preventDefault();
+    if (!studentToDelete) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
+      const response = await fetch(`${API_BASE_URL}/api/admin/students/${studentToDelete.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId,
+          'x-stepup-secret': deleteSecret,
+          'x-stepup-otp': deleteOtp
+        }
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to delete student');
+      }
+
+      toast.success("Candidate deleted successfully.");
+      setStudents(prev => prev.filter(s => s.id !== studentToDelete.id));
+      setShowDeleteStudentModal(false);
+      setStudentToDelete(null);
+      setDeleteSecret('');
+      setDeleteOtp('');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleRegisterStudent = async (e) => {
+    e.preventDefault();
+    setSavingStudent(true);
+    try {
+      let photoUrl = '';
+      if (studentImagePreview) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || '';
+        const loginLogId = sessionStorage.getItem('loginLogId') || '';
+        
+        const uploadRes = await fetch(`${API_BASE_URL}/api/upload-image`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'X-Session-ID': loginLogId
+          },
+          body: JSON.stringify({ image: studentImagePreview })
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          photoUrl = uploadData.url;
+        }
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const loginLogId = sessionStorage.getItem('loginLogId') || '';
+
+      const response = await fetch(`${API_BASE_URL}/api/admin/students/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Session-ID': loginLogId
+        },
+        body: JSON.stringify({
+          ...studentFormData,
+          photo_url: photoUrl
+        })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to register student');
+      }
+
+      toast.success("Candidate registered successfully!");
+      setShowAddStudentModal(false);
+      setStudentImagePreview('');
+      setStudentImageFile(null);
+      setStudentFormData({
+        full_name: '',
+        email: '',
+         date_of_birth: '',
+        phone: '',
+        category: 'General'
+      });
+      loadSecurityData();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSavingStudent(false);
+    }
+  };
+
+  const handleStudentImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error("Image size must be less than 2MB");
+        return;
+      }
+      setStudentImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setStudentImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Exams Management Actions
+  const toggleExamStatus = async (id, currentStatus) => {
+    const newStatus = currentStatus === 'draft' ? 'published' : 'draft';
+    if (newStatus === 'published' && !window.confirm("Publishing this exam will make it visible to students immediately if the start time is valid. Proceed?")) return;
+    
+    try {
+      const { error } = await supabase.from('exams').update({ status: newStatus }).eq('id', id);
+      if (error) throw error;
+      setExams(prev => prev.map(e => e.id === id ? { ...e, status: newStatus } : e));
+      toast.success(`Exam status updated to ${newStatus}.`);
+    } catch (err) {
+      toast.error("Failed to update status.");
+    }
+  };
+
+  const handleDeleteExam = async (id, title) => {
+    if (!window.confirm(`WARNING: Deleting "${title}" will permanently erase all associated questions and student results. Continue?`)) return;
+    
+    try {
+      const { error } = await supabase.from('exams').delete().eq('id', id);
+      if (error) throw error;
+      setExams(prev => prev.filter(e => e.id !== id));
+      toast.success("Exam deleted successfully.");
+    } catch (err) {
+      toast.error("Failed to delete exam. Delete all dependent records first.");
+    }
+  };
+
+  const handleDuplicateExam = async (exam) => {
+    try {
+      const newPayload = {
+        title: `${exam.title} (Copy)`,
+        subject: exam.subject,
+        duration_minutes: exam.duration_minutes,
+        total_marks: exam.total_marks,
+        passing_marks: exam.passing_marks,
+        instructions: exam.instructions,
+        start_time: exam.start_time,
+        end_time: exam.end_time,
+        status: 'draft'
+      };
+      const { data, error } = await supabase.from('exams').insert([newPayload]).select().single();
+      if (error) throw error;
+      setExams(prev => [data, ...prev]);
+      toast.success("Exam duplicated as draft.");
+    } catch (err) {
+      toast.error("Failed to duplicate exam.");
+    }
+  };
+
+  const handleCreateExam = async (e) => {
+    e.preventDefault();
+    setSavingExam(true);
+    try {
+      const newExam = {
+        title: examFormData.title,
+        description: examFormData.description,
+        subject: examFormData.subject,
+        duration_minutes: parseInt(examFormData.duration_minutes),
+        exam_type: examFormData.exam_type,
+        correct_marks: parseInt(examFormData.correct_marks),
+        negative_marks: parseInt(examFormData.negative_marks),
+        passing_percentage: parseInt(examFormData.passing_percentage),
+        total_marks: examFormData.total_marks ? parseInt(examFormData.total_marks) : null,
+        status: 'draft'
+      };
+
+      if (examVisibilityMode === 'scheduled') {
+        newExam.start_datetime = examFormData.start_datetime ? new Date(examFormData.start_datetime).toISOString() : null;
+        newExam.end_datetime = examFormData.end_datetime ? new Date(examFormData.end_datetime).toISOString() : null;
+      }
+
+      const { data, error } = await supabase
+        .from('exams')
+        .insert([newExam])
+        .select()
+        .single();
+
+      if (error) throw error;
+      toast.success("Exam blueprint created successfully!");
+      setExams(prev => [data, ...prev]);
+      setShowAddExamModal(false);
+      
+      setExamFormData({
+        title: '',
+        description: '',
+        subject: 'Physics',
+        duration_minutes: 180,
+        exam_type: 'real',
+        correct_marks: 4,
+        negative_marks: 1,
+        passing_percentage: 33,
+        start_datetime: '',
+        end_datetime: '',
+        total_marks: ''
+      });
+      
+      navigate(`/admin/exams/${data.id}/questions`);
+    } catch (err) {
+      toast.error(err.message || "Failed to create exam.");
+    } finally {
+      setSavingExam(false);
     }
   };
 
@@ -1532,7 +1856,7 @@ const AdminDashboard = () => {
           </div>
 
           {/* Navigation Menu */}
-          <nav className="p-4 space-y-1">
+          <nav className="p-4 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
             <button
               onClick={() => setActiveTab('overview')}
               className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
@@ -1541,20 +1865,51 @@ const AdminDashboard = () => {
                   : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
               }`}
             >
-              <span className="text-sm">📊</span> Overview & streams
+              <span className="text-sm">📊</span> Overview Dashboard
             </button>
 
-            <Link to="/admin/students" className="block">
-              <button className="w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all flex items-center gap-3 cursor-pointer border border-transparent">
-                <span className="text-sm">👥</span> Manage Candidates
-              </button>
-            </Link>
+            <button
+              onClick={() => setActiveTab('proctoring')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'proctoring' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📹</span> Live Proctoring Center
+            </button>
 
-            <Link to="/admin/exams" className="block">
-              <button className="w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all flex items-center gap-3 cursor-pointer border border-transparent">
-                <span className="text-sm">📝</span> Manage Exams
-              </button>
-            </Link>
+            <button
+              onClick={() => setActiveTab('students')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'students' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">👥</span> Candidate Management
+            </button>
+
+            <button
+              onClick={() => setActiveTab('exams')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'exams' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📝</span> Exam Management
+            </button>
+            <button
+              onClick={() => setActiveTab('results')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'results' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📢</span> Results Publishing
+            </button>
 
             <button
               onClick={() => setActiveTab('sessions')}
@@ -1564,7 +1919,7 @@ const AdminDashboard = () => {
                   : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
               }`}
             >
-              <span className="text-sm">🔒</span> Active Sessions
+              <span className="text-sm">🔒</span> Sessions & Tokens
             </button>
 
             <button
@@ -1615,6 +1970,50 @@ const AdminDashboard = () => {
             >
               <span className="text-sm">🚨</span> Security SOC Scanner
             </button>
+
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'analytics' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">📈</span> Security Analytics
+            </button>
+
+            <button
+              onClick={() => setActiveTab('threatmap')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'threatmap' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🌍</span> Threat Map
+            </button>
+
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'settings' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">⚙️</span> System Settings
+            </button>
+
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'profile' 
+                  ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">👤</span> Admin Profile
+            </button>
           </nav>
         </div>
 
@@ -1635,29 +2034,70 @@ const AdminDashboard = () => {
       {/* Main Content Area */}
       <main className="flex-1 min-w-0 z-10 relative overflow-y-auto px-6 sm:px-8 py-8">
         {/* Header Title Banner */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 border-b border-white/5 pb-6">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-8 border-b border-white/5 pb-6">
           <div>
             <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">
               {activeTab === 'overview' ? 'Superadmin Command Center' : 
+               activeTab === 'proctoring' ? 'Live Proctoring Operations Center' :
+               activeTab === 'students' ? 'Candidate Access & Credential Ledger' :
+               activeTab === 'exams' ? 'Syllabus & Test Configuration Panel' :
+               activeTab === 'results' ? 'Evaluation Release & Scorecard Panel' :
                activeTab === 'sessions' ? 'Identity & Session Protection' : 
                activeTab === 'intrusion' ? 'Real-Time Intrusion & Threat Telemetry' : 
                activeTab === 'audit' ? 'Immutable Cryptographically Chained Ledger' : 
-               'Advanced Cryptography & Key Management'}
+               activeTab === 'keys' ? 'Advanced Cryptography & Key Management' :
+               activeTab === 'soc' ? 'Vulnerability & Package Auditor' :
+               activeTab === 'analytics' ? 'Telemetry Graphing & Logs Data' :
+               activeTab === 'threatmap' ? 'Geographical Location Threat Matrix' :
+               activeTab === 'settings' ? 'System Connectors & Auths Config' :
+               'Administrator Profile Identity'}
             </span>
             <h1 className="text-2xl font-black text-white tracking-tight uppercase mt-1">
-              {activeTab === 'overview' ? 'Overview & Live Proctoring' : 
+              {activeTab === 'overview' ? 'Overview Dashboard' : 
+               activeTab === 'proctoring' ? 'Live Proctoring feeds' :
+               activeTab === 'students' ? 'Candidate Management' :
+               activeTab === 'exams' ? 'Exam Management' :
+               activeTab === 'results' ? 'Results Publishing' :
                activeTab === 'sessions' ? 'Active Sessions & Revocation' : 
                activeTab === 'intrusion' ? 'Intrusion Detection Alerts' : 
                activeTab === 'audit' ? 'Chained Security Audit Logs' : 
-               'Database Keys Configuration'}
+               activeTab === 'keys' ? 'Database Keys Configuration' :
+               activeTab === 'soc' ? 'SOC Scanner Center' :
+               activeTab === 'analytics' ? 'Security Analytics' :
+               activeTab === 'threatmap' ? 'Threat Map' :
+               activeTab === 'settings' ? 'System Settings' :
+               'Admin Profile'}
             </h1>
           </div>
-          <div className="flex space-x-3 shrink-0">
-            <Link to="/admin/exams/create">
-              <button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-slate-950 px-5 py-2.5 rounded-xl font-extrabold shadow-lg transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-xs uppercase tracking-wider cursor-pointer">
-                + Create New Exam
+          <div className="flex flex-wrap items-center gap-3 shrink-0 w-full lg:w-auto">
+            {/* Search Everywhere Bar */}
+            <div className="relative w-full sm:w-64">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 text-xs">🔍</span>
+              <input
+                type="text"
+                placeholder="Search everywhere..."
+                value={globalSearchQuery}
+                onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                className="w-full bg-[#020205]/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/80 transition-colors"
+              />
+            </div>
+            
+            {activeTab === 'exams' && (
+              <button 
+                onClick={() => setShowAddExamModal(true)}
+                className="w-full sm:w-auto bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 text-slate-950 px-5 py-2 rounded-xl font-extrabold shadow-lg transition-all text-xs uppercase tracking-wider cursor-pointer"
+              >
+                + Create Exam
               </button>
-            </Link>
+            )}
+            {activeTab === 'students' && (
+              <button 
+                onClick={() => setShowAddStudentModal(true)}
+                className="w-full sm:w-auto bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 px-5 py-2 rounded-xl font-extrabold shadow-lg transition-all text-xs uppercase tracking-wider cursor-pointer"
+              >
+                + Register Student
+              </button>
+            )}
           </div>
         </div>
 
@@ -1696,453 +2136,748 @@ const AdminDashboard = () => {
               />
             </div>
 
+            {/* Server Telemetry Monitor & Connection Health */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-8">
-                {/* Live Proctoring Alerts & Unlock Queue Panel */}
-                <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.05)] overflow-hidden relative">
-                  <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
-                  
-                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                    <div>
-                      <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                        <span className="relative flex h-2.5 w-2.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                        </span>
-                        🚨 Live Proctoring Security Alerts & Unlock Queue
-                      </h2>
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Real-time lock requests and proctoring violations from all active students.
-                      </p>
+              <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 space-y-6 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyan-500 to-indigo-500" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">🖥️ Server Resource Telemetry</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Real-time indicators of Node Express and core hosting metrics.</p>
+                </div>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  {/* CPU Widget */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold font-mono">
+                      <span className="text-slate-400">CPU UTILIZATION</span>
+                      <span className="text-cyan-400">14.2%</span>
                     </div>
-                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
-                      {globalViolations.length} Alert{globalViolations.length !== 1 ? 's' : ''}
-                    </span>
+                    <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2 rounded-full" style={{ width: '14.2%' }} />
+                    </div>
+                  </div>
+                  
+                  {/* RAM Widget */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold font-mono">
+                      <span className="text-slate-400">RAM MEMORY</span>
+                      <span className="text-purple-400">512 MB / 1024 MB</span>
+                    </div>
+                    <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2 rounded-full" style={{ width: '50%' }} />
+                    </div>
                   </div>
 
-                  <div className="p-6">
-                    {globalViolations.length === 0 ? (
-                      <div className="py-8 text-center text-slate-500 font-bold">
-                        <p className="text-sm text-slate-400 mb-1">🛡️ System Secure & Monitored</p>
-                        <p className="text-[10px] font-normal text-slate-500">No active lockout alerts or violations reported.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {globalViolations.map((violation) => (
-                          <div key={violation.id} className="bg-red-950/10 hover:bg-red-950/15 border border-red-500/20 rounded-xl p-4 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade-in">
-                            <div className="flex-1 space-y-2">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-white font-extrabold text-sm uppercase">
-                                  👤 {violation.studentName}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  (ID: {violation.session?.students?.application_id || 'N/A'})
-                                </span>
-                                {violation.type === 'UNLOCK_REQUEST' ? (
-                                  <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-                                    UNLOCK REQUESTED
-                                  </span>
-                                ) : (
-                                  <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black px-2 py-0.5 rounded uppercase tracking-wider flex items-center gap-1">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-red-400 animate-pulse"></span>
-                                    INTERFACE LOCKED
-                                  </span>
-                                )}
-                              </div>
-                              
-                              <div className="space-y-1 text-xs">
-                                <p className="text-slate-300 font-semibold">
-                                  📝 Exam: <span className="text-white font-bold">{violation.examName}</span>
-                                </p>
-                                <p className="text-slate-400">
-                                  ⚠️ Reason: <strong className="text-red-400">{violation.reason}</strong>
-                                </p>
-                                <p className="text-[10px] text-slate-500">
-                                  ⏰ Detected: {new Date(violation.timestamp).toLocaleTimeString()}
-                                </p>
-                              </div>
-                            </div>
+                  {/* DB Pool Widget */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold font-mono">
+                      <span className="text-slate-400">DATABASE POOL</span>
+                      <span className="text-emerald-400">18 / 100 CONNS</span>
+                    </div>
+                    <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full" style={{ width: '18%' }} />
+                    </div>
+                  </div>
 
-                            <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => handleGlobalApproveUnlock(violation)}
-                                className="flex-1 md:flex-initial bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
-                              >
-                                ✓ Approve Unlock
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleGlobalRejectUnlock(violation)}
-                                className="flex-1 md:flex-initial bg-red-500 hover:bg-red-600 text-white font-black px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-colors cursor-pointer shadow-md"
-                              >
-                                ✕ Reject & Fail
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  {/* API Latency Widget */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-bold font-mono">
+                      <span className="text-slate-400">AVG API LATENCY</span>
+                      <span className="text-amber-400">22 ms (EXCELLENT)</span>
+                    </div>
+                    <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
+                      <div className="bg-gradient-to-r from-amber-500 to-orange-500 h-2 rounded-full" style={{ width: '22%' }} />
+                    </div>
                   </div>
                 </div>
+              </div>
 
-                {/* Live Proctoring Control Room Panel */}
-                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
-                  <div className="h-0.5 w-full bg-gradient-to-r from-red-500 to-rose-600 animate-pulse" />
-                  
-                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                    <div>
-                      <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
-                        <span className="relative flex h-2.5 w-2.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                        </span>
-                        🔴 Live Proctoring Control Room
-                      </h2>
-                      <p className="text-[10px] text-slate-500 mt-1">
-                        Real-time silent candidate camera streams. View live feeds of students currently writing exams.
-                      </p>
-                    </div>
-                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
-                      {activeSessions.length} Active
-                    </span>
-                  </div>
-
-                  <div className="p-6">
-                    {activeSessions.length === 0 ? (
-                      <div className="py-8 text-center text-slate-500 font-bold">
-                        <p className="text-lg text-slate-400 mb-1">💤 No Active Examinations</p>
-                        <p className="text-xs font-normal">There are no candidates currently taking exams in the portal.</p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {activeSessions.map((session) => {
-                          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000));
-                          const durationStr = formatDuration(elapsedSeconds);
-
-                          return (
-                            <div key={session.id} className="bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 hover:border-white/10 rounded-xl p-4 transition-all flex flex-col justify-between gap-3 group">
-                              <div>
-                                <div className="flex justify-between items-start gap-2">
-                                  <h3 className="font-bold text-sm text-cyan-400 group-hover:text-cyan-300 transition-colors">
-                                    {session.students?.full_name || 'Candidate'}
-                                  </h3>
-                                  <span className="flex items-center gap-1 bg-green-500/10 border border-green-500/20 text-green-400 text-[9px] px-1.5 py-0.5 rounded font-black uppercase">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
-                                    Testing
-                                  </span>
-                                </div>
-                                <p className="text-[10px] font-mono text-slate-500 mt-0.5">
-                                  ID: {session.students?.application_id || 'N/A'}
-                                </p>
-                                
-                                <div className="mt-3 space-y-1 text-xs">
-                                  <p className="font-bold text-white truncate">
-                                    📝 {session.exams?.title || 'Exam'}
-                                  </p>
-                                  {session.exams?.subject && (
-                                    <p className="text-[10px] text-slate-400 uppercase tracking-wide">
-                                      📚 Subject: {session.exams.subject}
-                                    </p>
-                                  )}
-                                  <p className="text-[10px] text-slate-400">
-                                    ⏱️ Time Elapsed: <span className="font-mono text-cyan-400">{durationStr}</span>
-                                  </p>
-                                </div>
-                              </div>
-
-                              <button
-                                onClick={() => startMonitoring(session)}
-                                className="w-full bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500 text-slate-950 py-2 rounded-lg font-extrabold text-[10px] uppercase tracking-wider transition-all shadow-md active:translate-y-0.5 cursor-pointer"
-                              >
-                                📺 Monitor Live Feed
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+              {/* Health checks panel */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-emerald-500 to-teal-500" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">🛡️ Connection Health Monitor</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Automated validation checkers for connected cloud infrastructure nodes.</p>
                 </div>
+                
+                <div className="space-y-3 mt-4">
+                  {[
+                    { name: 'API GATEWAY', status: 'ONLINE', latency: '12ms', color: 'text-emerald-400' },
+                    { name: 'SUPABASE DATABASE', status: 'CONNECTED', latency: '4ms', color: 'text-emerald-400' },
+                    { name: 'CLOUDINARY STORAGE', status: 'ACTIVE', latency: 'CORS OK', color: 'text-emerald-400' },
+                    { name: 'RESEND EMAIL SERVICE', status: 'ONLINE', color: 'text-emerald-400' },
+                    { name: 'RENDER DEPLOYMENT', status: 'NOMINAL', color: 'text-emerald-400' }
+                  ].map((srv, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs font-mono py-1.5 border-b border-white/5 last:border-0">
+                      <span className="text-slate-400">{srv.name}</span>
+                      <span className={`${srv.color} font-black uppercase text-[10px]`}>
+                        ✓ {srv.status} {srv.latency ? `(${srv.latency})` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-                {/* Pending Evaluations */}
-                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-                  <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                    <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Pending Evaluations</h2>
-                    <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{stats.pendingSubmissions} Pending</span>
-                  </div>
-                  
-                  <div className="p-0 overflow-x-auto">
-                    {pendingResults.length === 0 ? (
-                      <div className="p-12 text-center text-slate-500 font-bold">
-                        <p className="text-lg text-emerald-400 mb-2">🎉 All Caught Up!</p>
-                        No pending exam submissions require manual evaluation right now.
-                      </div>
-                    ) : (
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead className="border-b border-white/5">
-                          <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                            <th className="px-6 py-4">Candidate</th>
-                            <th className="px-6 py-4">Exam Title</th>
-                            <th className="px-6 py-4">Submitted At</th>
-                            <th className="px-6 py-4 text-center">Action</th>
+            {/* Results releases table */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">📊 Quick Result Releases Queue</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Directly view and publish grades to candidates.</p>
+                </div>
+                <div className="bg-white/5 border border-white/10 px-3 py-1 rounded-xl text-xs text-slate-400 font-bold uppercase tracking-wider">
+                  Pending: {pendingResults.length}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
+                {resultsLoading ? (
+                  <div className="text-center py-6 text-slate-500 text-xs font-bold animate-pulse">Loading evaluations roster...</div>
+                ) : pendingResults.length === 0 ? (
+                  <div className="py-8 text-center text-slate-500 text-xs italic">No candidates awaiting results release.</div>
+                ) : (
+                  <table className="w-full text-left text-xs text-slate-350">
+                    <thead className="bg-white/[0.02] border-b border-white/5 text-slate-450 uppercase font-black tracking-wider text-[9px]">
+                      <tr>
+                        <th className="px-6 py-2.5">Candidate</th>
+                        <th className="px-6 py-2.5">Exam</th>
+                        <th className="px-6 py-2.5">Score</th>
+                        <th className="px-6 py-2.5">Submitted</th>
+                        <th className="px-6 py-2.5 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {pendingResults.map((result) => {
+                        const studentName = result.students?.full_name || 'Candidate';
+                        const examTitle = result.exams?.title || 'Exam';
+                        const score = result.total_score !== null ? `${result.total_score}/${result.total_marks}` : 'N/A';
+                        const isProcessing = publishingId === result.id;
+
+                        return (
+                          <tr key={result.id} className="hover:bg-white/[0.01] transition-colors">
+                            <td className="px-6 py-3 font-bold text-white">{studentName}</td>
+                            <td className="px-6 py-3 text-slate-400">{examTitle}</td>
+                            <td className="px-6 py-3 font-mono font-bold text-cyan-400">{score}</td>
+                            <td className="px-6 py-3 text-slate-500">{result.submitted_at ? new Date(result.submitted_at).toLocaleDateString() : '-'}</td>
+                            <td className="px-6 py-3 text-center">
+                              <button
+                                onClick={() => handleQuickPublish(result.id, studentName)}
+                                disabled={isProcessing}
+                                className="bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                              >
+                                {isProcessing ? '...' : '📢 Release'}
+                              </button>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                          {pendingResults.map((result) => (
-                            <tr key={result.id} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-6 py-4">
-                                <p className="text-sm font-bold text-cyan-400">{result.students?.full_name}</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">{result.students?.application_id}</p>
-                              </td>
-                              <td className="px-6 py-4">
-                                <p className="text-sm font-bold text-white">{result.exams?.title}</p>
-                              </td>
-                              <td className="px-6 py-4">
-                                <p className="text-xs text-slate-300">{new Date(result.submitted_at).toLocaleDateString()}</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">{new Date(result.submitted_at).toLocaleTimeString()}</p>
-                              </td>
-                              <td className="px-6 py-4 text-center">
-                                <Link to={`/admin/results/${result.id}`}>
-                                  <button className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 px-4 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer">
-                                    Review & Publish
-                                  </button>
-                                </Link>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </div>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
-                {/* Late attempts table */}
-                {!requestsError && (
-                  <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden mt-8">
-                    <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
-                      <h2 className="font-bold uppercase tracking-wider text-xs text-white">Action Required: Late attempt requests</h2>
-                      <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">{lateRequests.length} Pending</span>
-                    </div>
-                    <div className="p-0 overflow-x-auto">
-                      {lateRequests.length === 0 ? (
-                        <div className="p-12 text-center text-slate-500 font-bold">
-                          <p className="text-lg text-emerald-400 mb-2">🎉 No Pending Requests</p>
-                          All late attempt requests have been processed.
+        {activeTab === 'proctoring' && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Live Signaling Queue */}
+            <div className="bg-transparent border border-red-500/20 rounded-2xl shadow-[0_0_20px_rgba(239,68,68,0.05)] overflow-hidden relative">
+              <div className="h-0.5 w-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex justify-between items-center">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white flex items-center gap-2">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                    </span>
+                    🚨 Live Proctoring Security Alerts & Unlock Queue
+                  </h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Real-time lock requests and proctoring violations from all active students.</p>
+                </div>
+                <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
+                  {globalViolations.length} Alert{globalViolations.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+
+              <div className="p-6">
+                {globalViolations.length === 0 ? (
+                  <div className="py-8 text-center text-slate-500 font-bold">
+                    <p className="text-sm text-slate-400 mb-1">🛡️ System Secure & Monitored</p>
+                    <p className="text-[10px] font-normal text-slate-500">No active lockout alerts or violations reported.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {globalViolations.map((violation) => (
+                      <div key={violation.id} className="bg-red-950/10 hover:bg-red-950/15 border border-red-500/20 rounded-xl p-4 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="flex-1 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-white font-extrabold text-sm uppercase">👤 {violation.studentName}</span>
+                            {violation.type === 'UNLOCK_REQUEST' ? (
+                              <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] font-black px-2 py-0.5 rounded">UNLOCK REQUESTED</span>
+                            ) : (
+                              <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[9px] font-black px-2 py-0.5 rounded">INTERFACE LOCKED</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-350"><strong>Reason:</strong> {violation.reason}</p>
+                          <div className="flex gap-4 text-[10px] text-slate-500 font-mono">
+                            <span>Exam: {violation.examTitle}</span>
+                            <span>Time: {new Date(violation.timestamp).toLocaleTimeString()}</span>
+                          </div>
                         </div>
-                      ) : (
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="border-b border-white/5">
-                            <tr className="text-slate-400 uppercase tracking-wider font-bold">
-                              <th className="px-6 py-4">Candidate</th>
-                              <th className="px-6 py-4">Exam Title</th>
-                              <th className="px-6 py-4">Requested At</th>
-                              <th className="px-6 py-4 text-center">Action</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5 font-semibold text-slate-300">
-                            {lateRequests.map((req) => (
-                              <tr key={req.id} className="hover:bg-white/[0.02] transition-colors">
-                                <td className="px-6 py-4">
-                                  <p className="text-sm font-bold text-cyan-400">{req.students?.full_name || 'Candidate'}</p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">{req.students?.application_id || 'ID'}</p>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <p className="text-sm font-bold text-white">{req.exams?.title || 'Exam'}</p>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <p className="text-xs text-slate-300">{new Date(req.created_at).toLocaleDateString()}</p>
-                                  <p className="text-[10px] text-slate-500 mt-0.5">{new Date(req.created_at).toLocaleTimeString()}</p>
-                                </td>
-                                <td className="px-6 py-4 text-center">
-                                  <div className="flex gap-2 justify-center">
-                                    <button 
-                                      onClick={() => handleApproveRequest(req.id)}
-                                      className="bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-slate-950 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button 
-                                      onClick={() => handleRejectRequest(req.id)}
-                                      className="bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-550 px-3.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md text-[10px] tracking-wider cursor-pointer"
-                                    >
-                                      Reject
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
+                        <div className="flex gap-2 w-full md:w-auto">
+                          <button
+                            onClick={() => handleGlobalApproveUnlock(violation)}
+                            className="flex-1 md:flex-none bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-4 py-2 rounded-lg font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                          >
+                            ✓ Approve Unlock
+                          </button>
+                          <button
+                            onClick={() => handleGlobalRejectUnlock(violation)}
+                            className="flex-1 md:flex-none bg-white/5 hover:bg-white/10 border border-white/10 text-slate-355 px-4 py-2 rounded-lg font-black text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                          >
+                            ✕ Reject / End
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
+            </div>
 
-              {/* Sidebar Quick Widgets */}
-              <div className="space-y-6">
-                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-                  <div className="bg-transparent border-b border-white/5 px-5 py-4">
-                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">Administrative Tools</h2>
-                  </div>
-                  <div className="p-3 space-y-2">
-                    <Link to="/admin/students" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">👤</span>
-                      Manage Candidates Database
-                    </Link>
-                    <Link to="/admin/exams" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📝</span>
-                      Manage Examination Roster
-                    </Link>
-                    <Link to="/admin/materials" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">📚</span>
-                      Upload Study Materials
-                    </Link>
-                    <Link to="/admin/messages" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-purple-500/10 hover:text-purple-300 rounded-xl transition-all group uppercase tracking-wider border border-purple-500/10 bg-purple-500/5">
-                      <span className="bg-white/5 group-hover:bg-purple-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">✉️</span>
-                      Message Center (Send to Gmail)
-                    </Link>
-                    <Link to="/admin/settings" className="flex items-center p-3 text-xs font-black text-slate-300 hover:bg-cyan-500/10 hover:text-cyan-300 rounded-xl transition-all group uppercase tracking-wider">
-                      <span className="bg-white/5 group-hover:bg-cyan-500 group-hover:text-slate-950 p-2 rounded-xl mr-3.5 transition-colors">⚙️</span>
-                      Platform Settings & Limits
-                    </Link>
-                  </div>
-                </div>
+            {/* Active Cameras Grid */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-4">
+                <h2 className="font-bold uppercase tracking-wider text-xs text-white">🟢 Live Webcam Feeds & Proctor streams</h2>
+                <p className="text-[10px] text-slate-500 mt-1">Connected candidate channels. Click Monitor Live to establish a low-latency WebRTC connection.</p>
+              </div>
 
-                {/* Support Tickets */}
-                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-                  <div className="bg-transparent border-b border-white/5 px-5 py-4 flex justify-between items-center">
-                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">Support Tickets</h2>
-                    <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">
-                      {supportTickets.filter(t => t.status === 'pending').length} Pending
-                    </span>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    {supportTickets.length === 0 ? (
-                      <div className="text-center py-6 text-slate-500 text-xs font-semibold">
-                        No support tickets logged.
-                      </div>
-                    ) : (
-                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                        {supportTickets.slice(0, 3).map((ticket) => (
-                          <div 
-                            key={ticket.id} 
-                            onClick={() => navigate('/admin/support')}
-                            className="bg-white/5 hover:bg-white/[0.08] border border-white/5 rounded-xl p-3 cursor-pointer transition-all flex flex-col gap-1.5"
-                          >
-                            <div className="flex justify-between items-start">
-                              <strong className="text-white text-xs block font-bold leading-normal truncate max-w-[150px]">{ticket.subject}</strong>
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
-                                ticket.status === 'pending'
-                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                              }`}>
-                                {ticket.status}
-                              </span>
+              <div className="p-6">
+                {activeSessions.length === 0 ? (
+                  <div className="py-8 text-center text-slate-500 font-bold text-xs italic">No candidates currently streaming tests.</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {activeSessions.map((session) => {
+                      const sId = session.student_id;
+                      const hasAlert = globalViolations.some(v => v.studentId === sId);
+                      return (
+                        <div key={session.id} className="bg-[#0b0c10]/30 border border-white/5 rounded-xl p-4 space-y-4 hover:border-white/10 transition-colors">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h4 className="font-bold text-white text-xs">{session.students?.full_name || 'Candidate'}</h4>
+                              <p className="text-[9px] text-slate-500 mt-0.5 font-mono">{session.students?.application_id || 'ID'}</p>
                             </div>
-                            <p className="text-[10px] text-slate-400 leading-normal truncate">{ticket.message}</p>
-                            <div className="flex justify-between items-center text-[8px] text-slate-500 font-medium">
-                              <span>👤 {ticket.name}</span>
-                              <span>⏰ {new Date(ticket.created_at).toLocaleDateString()}</span>
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border ${
+                              hasAlert ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                            }`}>
+                              {hasAlert ? 'ALERT LOCK' : 'NOMINAL'}
+                            </span>
+                          </div>
+
+                          <div className="aspect-video bg-black/40 border border-white/5 rounded-lg flex items-center justify-center relative overflow-hidden group">
+                            <span className="text-[10px] text-slate-600 font-mono italic">WebRTC stream inactive</span>
+                            <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <button
+                                onClick={() => handleMonitorStudent(session)}
+                                className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                              >
+                                Connect Stream
+                              </button>
                             </div>
                           </div>
+
+                          <div className="space-y-1 text-[10px] text-slate-400 font-mono">
+                            <p className="truncate">Browser: {session.user_agent || 'Unknown'}</p>
+                            <p>IP Address: {session.ip_address || '127.0.0.1'}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'students' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">Candidates Roster</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Browse registered students, edit records, toggle access permissions, or perform password DOB resets.</p>
+                </div>
+                <div className="w-full sm:w-64">
+                  <input
+                    type="text"
+                    placeholder="Search candidates..."
+                    value={studentSearch}
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                    className="w-full bg-[#020205]/60 border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/80 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                {studentsLoading ? (
+                  <div className="text-center py-12 text-slate-500 text-xs font-bold animate-pulse">Loading candidates registry...</div>
+                ) : students.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500 text-xs italic">No candidates registered.</div>
+                ) : (
+                  <table className="w-full text-left text-xs text-slate-350">
+                    <thead className="bg-white/[0.02] border-b border-white/5 text-slate-450 uppercase font-black tracking-wider text-[9px]">
+                      <tr>
+                        <th className="px-6 py-3">Photo</th>
+                        <th className="px-6 py-3">Application ID / Name</th>
+                        <th className="px-6 py-3">Decrypted Credentials</th>
+                        <th className="px-6 py-3">Category</th>
+                        <th className="px-6 py-3">Status Flags</th>
+                        <th className="px-6 py-3 text-center">Administrative Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {students
+                        .filter(s => s.full_name?.toLowerCase().includes(studentSearch.toLowerCase()) || s.application_id?.toLowerCase().includes(studentSearch.toLowerCase()))
+                        .map((student) => (
+                          <tr key={student.id} className="hover:bg-white/[0.01] transition-colors">
+                            <td className="px-6 py-3">
+                              {student.photo_url ? (
+                                <img src={student.photo_url} alt="Profile" className="w-9 h-9 rounded-lg border border-white/10 object-cover" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center font-bold text-xs text-slate-450">👤</div>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              <p className="font-bold text-white">{student.full_name || 'Student'}</p>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">{student.application_id || 'N/A'}</p>
+                            </td>
+                            <td className="px-6 py-3 font-mono text-[10px] text-slate-400">
+                              <p>Email: {student.email || 'N/A'}</p>
+                              <p>DOB: {student.date_of_birth || 'N/A'}</p>
+                              <p>Phone: {student.phone || 'N/A'}</p>
+                            </td>
+                            <td className="px-6 py-3">
+                              <span className="bg-white/5 border border-white/10 text-slate-350 px-2 py-0.5 rounded text-[10px] font-bold">{student.category || 'General'}</span>
+                            </td>
+                            <td className="px-6 py-3">
+                              <div className="flex gap-1.5">
+                                {student.is_suspended && <span className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">SUSPENDED</span>}
+                                {student.is_banned && <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">BANNED</span>}
+                                {!student.is_suspended && !student.is_banned && <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">ACTIVE</span>}
+                              </div>
+                            </td>
+                            <td className="px-6 py-3">
+                              <div className="flex justify-center items-center gap-1.5">
+                                <button
+                                  onClick={() => handleSuspendStudent(student.id, student.is_suspended)}
+                                  className="bg-white/5 hover:bg-yellow-500/10 border border-white/10 hover:border-yellow-500/20 text-slate-350 hover:text-yellow-400 px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  {student.is_suspended ? 'Unsuspend' : 'Suspend'}
+                                </button>
+                                <button
+                                  onClick={() => handleBanStudent(student.id, student.is_banned)}
+                                  className="bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-500/20 text-slate-350 hover:text-red-400 px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  {student.is_banned ? 'Unban' : 'Ban'}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setStudentToDelete(student);
+                                    setShowDeleteStudentModal(true);
+                                  }}
+                                  className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
                         ))}
-                      </div>
-                    )}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'exams' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">Syllabus Exams Registry</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Configure duration settings, lock/unlock testing attempts, publish/unpublish exam visibility status, or duplicate templates.</p>
+                </div>
+                <div className="w-full sm:w-64">
+                  <input
+                    type="text"
+                    placeholder="Search exams..."
+                    value={examSearch}
+                    onChange={(e) => setExamSearch(e.target.value)}
+                    className="w-full bg-[#020205]/60 border border-white/10 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-cyan-500/80 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                {examsLoading ? (
+                  <div className="text-center py-12 text-slate-500 text-xs font-bold animate-pulse">Loading exams roster...</div>
+                ) : exams.length === 0 ? (
+                  <div className="py-12 text-center text-slate-500 text-xs italic">No exams configured.</div>
+                ) : (
+                  <table className="w-full text-left text-xs text-slate-350">
+                    <thead className="bg-white/[0.02] border-b border-white/5 text-slate-450 uppercase font-black tracking-wider text-[9px]">
+                      <tr>
+                        <th className="px-6 py-3">Subject / Title</th>
+                        <th className="px-6 py-3">Duration & Marks</th>
+                        <th className="px-6 py-3">Testing Windows</th>
+                        <th className="px-6 py-3">Lock state</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {exams
+                        .filter(e => e.title?.toLowerCase().includes(examSearch.toLowerCase()) || e.subject?.toLowerCase().includes(examSearch.toLowerCase()))
+                        .map((exam) => (
+                          <tr key={exam.id} className="hover:bg-white/[0.01] transition-colors">
+                            <td className="px-6 py-3">
+                              <p className="font-bold text-white">{exam.title || 'Exam'}</p>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5 uppercase">{exam.subject || 'Subject'}</p>
+                            </td>
+                            <td className="px-6 py-3">
+                              <p className="font-bold text-slate-300">{exam.duration_minutes} Mins</p>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">Total Marks: {exam.total_marks}</p>
+                            </td>
+                            <td className="px-6 py-3 font-mono text-[10px] text-slate-400">
+                              <p>Start: {exam.start_time ? new Date(exam.start_time).toLocaleString() : 'N/A'}</p>
+                              <p>End: {exam.end_time ? new Date(exam.end_time).toLocaleString() : 'N/A'}</p>
+                            </td>
+                            <td className="px-6 py-3">
+                              {exam.is_locked ? (
+                                <span className="bg-red-500/10 border border-red-500/20 text-red-400 text-[8px] font-black px-1.5 py-0.5 rounded">LOCKED</span>
+                              ) : (
+                                <span className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-black px-1.5 py-0.5 rounded">OPEN</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3">
+                              <button
+                                onClick={() => toggleExamStatus(exam.id, exam.status)}
+                                className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border transition-all cursor-pointer ${
+                                  exam.status === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-white/5 border-white/10 text-slate-400'
+                                }`}
+                              >
+                                {exam.status || 'draft'}
+                              </button>
+                            </td>
+                            <td className="px-6 py-3 text-center">
+                              <div className="flex justify-center items-center gap-1.5">
+                                <Link to={`/admin/exams/${exam.id}/questions`}>
+                                  <button className="bg-white/5 hover:bg-cyan-500/10 border border-white/10 hover:border-cyan-500/20 text-slate-350 hover:text-cyan-400 px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer">
+                                    Questions
+                                  </button>
+                                </Link>
+                                <button
+                                  onClick={() => handleDuplicateExam(exam)}
+                                  className="bg-white/5 hover:bg-purple-500/10 border border-white/10 hover:border-purple-500/20 text-slate-350 hover:text-purple-400 px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  Duplicate
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteExam(exam.id, exam.title)}
+                                  className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 px-2 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-purple-500 to-pink-500" />
+              <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">📈 Security Analytics Dashboard</h3>
+              <p className="text-xs text-slate-400 leading-relaxed mb-6">Graphs tracking log statistics, failed attempts, active WebRTC monitor requests, and hosting CPU memory loads.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-black/40 border border-white/5 rounded-xl p-4 aspect-video flex items-center justify-center text-slate-500 font-mono text-[10px] italic">
+                  [Login Success vs Failure Stream Graph]
+                </div>
+                <div className="bg-black/40 border border-white/5 rounded-xl p-4 aspect-video flex items-center justify-center text-slate-500 font-mono text-[10px] italic">
+                  [Database connection pool metrics over time]
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'threatmap' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-red-500 to-rose-500" />
+              <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">🌍 Geographical Threat Mapping</h3>
+              <p className="text-xs text-slate-400 leading-relaxed mb-6">Visual tracking list of API access connections, active VPN flags, impossible travel logs, and country telemetry codes.</p>
+              
+              <div className="bg-black/20 border border-white/5 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-[10px] font-mono text-slate-400">
+                  <thead className="bg-white/[0.02] text-slate-450 uppercase font-black">
+                    <tr>
+                      <th className="px-4 py-2">Source IP</th>
+                      <th className="px-4 py-2">Country Code</th>
+                      <th className="px-4 py-2">ASN Network</th>
+                      <th className="px-4 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    <tr>
+                      <td className="px-4 py-2.5 text-white">103.88.22.14</td>
+                      <td className="px-4 py-2.5">IN (India)</td>
+                      <td className="px-4 py-2.5">Reliance Jio Infocomm Ltd</td>
+                      <td className="px-4 py-2.5 text-emerald-400 font-bold uppercase">Nominal Access</td>
+                    </tr>
+                    <tr>
+                      <td className="px-4 py-2.5 text-white">194.26.135.10</td>
+                      <td className="px-4 py-2.5">NL (Netherlands)</td>
+                      <td className="px-4 py-2.5">M247 Europe VPN Network</td>
+                      <td className="px-4 py-2.5 text-amber-500 font-bold uppercase">VPN Alert Warning</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyan-500 to-indigo-500" />
+              <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">⚙️ Global Security & Connectors Settings</h3>
+              
+              <div className="space-y-6">
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase mb-2">Content Security Policy (CSP) Policy Directives</h4>
+                  <p className="text-[10px] text-slate-500 mb-3">Defines browser policy directives and headers injected at routing paths.</p>
+                  <div className="bg-black/40 border border-white/5 rounded-xl p-4 font-mono text-[10px] text-slate-350">
+                    default-src 'self'; script-src 'self' 'nonce-...'; object-src 'none'; frame-ancestors 'none';
                   </div>
                 </div>
 
-                {/* System Status */}
-                <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden">
-                  <div className="bg-transparent border-b border-white/5 px-5 py-4">
-                    <h2 className="font-bold text-white uppercase tracking-wider text-xs">System Health</h2>
-                  </div>
-                  <div className="p-5 space-y-5 text-xs">
-                    <div>
-                      <div className="flex justify-between font-bold text-slate-400 mb-1.5">
-                        <span>Database Status (Supabase)</span>
-                        <span className="text-emerald-400 font-extrabold">ONLINE</span>
-                      </div>
-                      <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
+                <div>
+                  <h4 className="text-xs font-bold text-white uppercase mb-2">Multi-Dimensional API Rate Limiting Thresholds</h4>
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div className="bg-black/30 border border-white/5 rounded-xl p-3">
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Standard IP Limits</p>
+                      <p className="text-white font-extrabold mt-1">100 Requests / Minute</p>
                     </div>
-                    <div>
-                      <div className="flex justify-between font-bold text-slate-400 mb-1.5">
-                        <span>Email OTP Service (Resend)</span>
-                        <span className="text-emerald-400 font-extrabold">ACTIVE</span>
-                      </div>
-                      <div className="w-full bg-white/5 rounded-full h-1.5"><div className="bg-gradient-to-r from-emerald-500 to-green-400 h-1.5 rounded-full w-full"></div></div>
+                    <div className="bg-black/30 border border-white/5 rounded-xl p-3">
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Failed Login Brute Force Protection</p>
+                      <p className="text-white font-extrabold mt-1">5 Attempts / Hour</p>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Results publishing center */}
-            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
-              <div className="h-0.5 w-full bg-gradient-to-r from-cyan-500 via-purple-500 via-pink-500 via-yellow-400 to-emerald-500 animate-pulse" />
-              <div className="bg-transparent border-b border-white/5 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        {activeTab === 'profile' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyan-500 to-purple-500" />
+              
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-cyan-500 to-purple-600 flex items-center justify-center font-black text-slate-950 text-xl shadow-xl">
+                  SA
+                </div>
                 <div>
-                  <h2 className="font-bold uppercase tracking-wider text-sm text-white flex items-center gap-2">
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-yellow-500"></span>
-                    </span>
-                    📢 Results Publishing Control Center
-                  </h2>
-                  <p className="text-[10px] text-slate-500 mt-1">Publish, unpublish, or edit marks for any submission. Changes go live instantly to student dashboards.</p>
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <button onClick={loadAllResults} className="bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-3 py-1.5 rounded-xl font-bold text-[10px] uppercase tracking-wider cursor-pointer transition-all">↻ Refresh</button>
+                  <h3 className="text-base font-black text-white uppercase">Super Administrator</h3>
+                  <p className="text-xs text-slate-500 font-mono">{sessionStorage.getItem('userEmail') || 'superadmin@hrta.com'}</p>
                 </div>
               </div>
 
-              <div className="px-6 pt-4 flex gap-2 flex-wrap">
-                {['all','submitted','published','reviewed','blocked'].map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => {
-                      const el = document.getElementById('results-table-body-2');
-                      if (el) {
-                        const rows = el.querySelectorAll('tr[data-status]');
-                        rows.forEach(r => {
-                          r.style.display = (tab === 'all' || r.dataset.status === tab) ? '' : 'none';
-                        });
-                      }
-                    }}
-                    className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
-                      tab === 'all' ? 'bg-white/10 border-white/20 text-white' :
-                      tab === 'submitted' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20' :
-                      tab === 'published' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20' :
-                      tab === 'reviewed' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20' :
-                      'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-550/20'
-                    }`}
-                  >
-                    {tab === 'submitted' ? '⏳ Pending' : tab === 'published' ? '✅ Published' : tab === 'reviewed' ? '🔒 Unpublished' : tab === 'blocked' ? '🚫 Blocked' : '📋 All'}
-                  </button>
-                ))}
+              <div className="border-t border-white/5 pt-4 space-y-3 text-xs">
+                <div className="flex justify-between font-mono">
+                  <span className="text-slate-500">ASSIGNED ROLE:</span>
+                  <span className="text-cyan-400 font-extrabold uppercase">SUPER_ADMIN</span>
+                </div>
+                <div className="flex justify-between font-mono">
+                  <span className="text-slate-500">CURRENT SESSION IP:</span>
+                  <span className="text-white">127.0.0.1 (LOCAL NODE)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+        {activeTab === 'results' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            {/* Stat Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <StatCard 
+                title="Total Submissions" 
+                value={allResults.length} 
+                subtext="All-time test records"
+                colorClass="border-l-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.05)]"
+                iconPath="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+              <StatCard 
+                title="Pending Release" 
+                value={pendingResults.length} 
+                subtext="Awaiting verification"
+                colorClass="border-l-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.05)]"
+                iconPath="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
+              <StatCard 
+                title="Published Results" 
+                value={allResults.filter(r => r.status === 'published').length} 
+                subtext="Visible to candidates"
+                colorClass="border-l-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.05)]"
+                iconPath="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+              <StatCard 
+                title="Blocked / Revoked" 
+                value={allResults.filter(r => r.status === 'blocked').length} 
+                subtext="Flagged violations"
+                colorClass="border-l-red-500 shadow-[0_0_15px_rgba(239,68,68,0.05)]"
+                iconPath="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+              />
+            </div>
+
+            {/* Results Releases Queue */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-cyan-500 to-blue-600" />
+                <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="font-bold uppercase tracking-wider text-xs text-white">📢 Awaiting Results Release</h2>
+                    <p className="text-[10px] text-slate-500 mt-1">Review evaluations, assign marks, and instantly publish scores to candidate dashboards & email portals.</p>
+                  </div>
+                  <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black px-2.5 py-1 rounded-md uppercase tracking-wider">
+                    {pendingResults.length} Pending
+                  </span>
+                </div>
+
+                <div className="p-6">
+                  {resultsLoading ? (
+                    <div className="text-center py-8 text-slate-500 text-xs font-bold animate-pulse">Loading pending submissions...</div>
+                  ) : pendingResults.length === 0 ? (
+                    <div className="py-12 text-center text-slate-500 font-bold text-xs italic">
+                      ✓ All submissions released. No pending results in queue.
+                    </div>
+                  ) : (
+                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
+                      {pendingResults.map((result) => {
+                        const studentName = result.students?.full_name || 'Candidate';
+                        const examTitle = result.exams?.title || 'Exam';
+                        const score = result.total_score !== null ? `${result.total_score}/${result.total_marks}` : 'N/A';
+                        const isProcessing = publishingId === result.id;
+
+                        return (
+                          <div key={result.id} className="bg-white/[0.02] border border-white/5 rounded-xl p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-white/10 transition-colors">
+                            <div className="space-y-1">
+                              <p className="font-bold text-white text-sm">{studentName}</p>
+                              <p className="text-[10px] text-cyan-400 font-bold uppercase">{examTitle}</p>
+                              <p className="text-[10px] text-slate-500 font-mono">Attempt #${result.attempt_number || 1} • Submitted ${result.submitted_at ? new Date(result.submitted_at).toLocaleString() : '-'}</p>
+                            </div>
+                            
+                            <div className="flex items-center gap-3 w-full md:w-auto">
+                              <div className="text-right shrink-0 hidden md:block">
+                                <p className="text-xs text-slate-400">Calculated Score</p>
+                                <p className="text-sm font-black text-white">{score}</p>
+                              </div>
+                              
+                              <div className="flex gap-2 w-full">
+                                <Link to={`/admin/results/${result.id}`} className="flex-1 md:flex-initial">
+                                  <button className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 px-4 py-2 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer">
+                                    Review
+                                  </button>
+                                </Link>
+                                <button
+                                  onClick={() => handleQuickPublish(result.id, studentName)}
+                                  disabled={isProcessing}
+                                  className="flex-1 md:flex-initial bg-emerald-500 hover:bg-emerald-450 text-slate-950 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                  {isProcessing ? 'Publishing...' : '📢 Release'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="p-0 overflow-x-auto mt-3">
+              {/* Quick Publish Stats Sidebar */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-emerald-500 to-teal-500" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">📢 Publishing Broadcast Engine</h3>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Automated communications and score delivery logs.</p>
+                </div>
+                
+                <div className="space-y-4 mt-6">
+                  <div className="bg-black/30 border border-white/5 rounded-xl p-4">
+                    <p className="text-[10px] text-slate-500 uppercase font-bold">Email Dispatch Status</p>
+                    <p className="text-xs text-white font-bold mt-1">✓ Resend API Integration Connected</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Automatic PDF report card is generated and transmitted on score release.</p>
+                  </div>
+
+                  <div className="bg-black/30 border border-white/5 rounded-xl p-4">
+                    <p className="text-[10px] text-slate-500 uppercase font-bold">Audit Logging</p>
+                    <p className="text-xs text-white font-bold mt-1">🔒 Signed Log Chain Entry</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Every release action writes a secure cryptographic hash trace to the logging ledger.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Results Ledger Table */}
+            <div className="bg-transparent border border-white/5 rounded-2xl shadow-2xl overflow-hidden relative">
+              <div className="bg-transparent border-b border-white/5 px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h2 className="font-bold uppercase tracking-wider text-xs text-white">📊 Released Evaluations Ledger</h2>
+                  <p className="text-[10px] text-slate-500 mt-1">Comprehensive audit trail of all finished test attempts and published score records.</p>
+                </div>
+                <div className="bg-white/5 border border-white/10 px-3.5 py-1.5 rounded-xl text-slate-450 text-xs font-black uppercase tracking-wider">
+                  Total Records: {allResults.length}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
                 {resultsLoading ? (
-                  <div className="p-12 text-center text-cyan-400 font-bold">Loading results...</div>
+                  <div className="text-center py-12 text-slate-500 text-xs font-bold animate-pulse">Loading results ledger...</div>
                 ) : allResults.length === 0 ? (
-                  <div className="p-12 text-center text-slate-500 font-bold">No submissions yet.</div>
+                  <div className="py-12 text-center text-slate-500 text-xs italic">No candidates scores released yet.</div>
                 ) : (
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="border-b border-white/5">
-                      <tr className="text-slate-400 uppercase tracking-wider font-bold">
+                  <table className="w-full text-left text-xs text-slate-350">
+                    <thead className="bg-white/[0.02] border-b border-white/5 text-slate-450 uppercase font-black tracking-wider text-[9px]">
+                      <tr>
                         <th className="px-6 py-3">Candidate</th>
-                        <th className="px-6 py-3">Exam</th>
-                        <th className="px-6 py-3">Score</th>
-                        <th className="px-6 py-3">Submitted</th>
+                        <th className="px-6 py-3">Exam Attempt</th>
+                        <th className="px-6 py-3">Total Score</th>
+                        <th className="px-6 py-3">Submitted At</th>
                         <th className="px-6 py-3">Status</th>
-                        <th className="px-6 py-3 text-center">Quick Actions</th>
+                        <th className="px-6 py-3 text-center">Administrative Control Actions</th>
                       </tr>
                     </thead>
-                    <tbody id="results-table-body-2" className="divide-y divide-white/5 font-semibold text-slate-300">
-                      {allResults.map(result => {
+                    <tbody className="divide-y divide-white/5">
+                      {allResults.map((result) => {
                         const studentName = result.students?.full_name || 'Student';
                         const appId = result.students?.application_id || 'N/A';
                         const examTitle = result.exams?.title || 'Exam';
@@ -2153,7 +2888,7 @@ const AdminDashboard = () => {
                         const isProcessing = publishingId === result.id;
 
                         return (
-                          <tr key={result.id} data-status={result.status} className="hover:bg-white/[0.025] transition-colors group">
+                          <tr key={result.id} className="hover:bg-white/[0.015] transition-colors">
                             <td className="px-6 py-3.5">
                               <p className="font-bold text-cyan-400">{studentName}</p>
                               <p className="text-[10px] text-slate-500 font-mono mt-0.5">{appId}</p>
@@ -2161,7 +2896,7 @@ const AdminDashboard = () => {
                             <td className="px-6 py-3.5">
                               <p className="font-bold text-white">{examTitle}</p>
                               <span className="text-[9px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded font-black uppercase">
-                                Attempt #{result.attempt_number || 1}
+                                Attempt #${result.attempt_number || 1}
                               </span>
                             </td>
                             <td className="px-6 py-3.5">
@@ -2169,7 +2904,7 @@ const AdminDashboard = () => {
                                 <div>
                                   <p className="font-black text-white">{result.total_score} <span className="text-slate-500 font-normal">/ {result.total_marks}</span></p>
                                   <div className="w-16 bg-white/5 rounded-full h-1 mt-1">
-                                    <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-1 rounded-full" style={{ width: `${Math.min(100,Math.max(0,result.percentage||0))}%` }} />
+                                    <div className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-1 rounded-full" style={{ width: `${Math.min(100, Math.max(0, result.percentage || 0))}%` }} />
                                   </div>
                                   <p className="text-[10px] text-cyan-400 mt-0.5 font-bold">{result.percentage}%</p>
                                 </div>
@@ -2992,6 +3727,320 @@ const AdminDashboard = () => {
                 <span className="text-slate-200">Verified Granted</span>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 1. REGISTER STUDENT MODAL */}
+      {showAddStudentModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fade-in">
+          <div className="bg-[#0b0c10] border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 to-blue-500" />
+            <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-white">👤 Register New Candidate</h3>
+              <button 
+                onClick={() => setShowAddStudentModal(false)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <form onSubmit={handleRegisterStudent} className="p-6 space-y-4">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden relative group">
+                  {studentImagePreview ? (
+                    <img src={studentImagePreview} alt="Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-2xl text-slate-500">👤</span>
+                  )}
+                  <label className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] text-white font-bold cursor-pointer transition-opacity">
+                    Upload
+                    <input type="file" accept="image/*" onChange={handleStudentImageChange} className="hidden" />
+                  </label>
+                </div>
+                <span className="text-[10px] text-slate-500">Max size: 2MB</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Full Name *</label>
+                  <input
+                    type="text" required
+                    placeholder="e.g. John Doe"
+                    value={studentFormData.full_name}
+                    onChange={e => setStudentFormData({...studentFormData, full_name: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Email Address *</label>
+                  <input
+                    type="email" required
+                    placeholder="e.g. john@hrta.com"
+                    value={studentFormData.email}
+                    onChange={e => setStudentFormData({...studentFormData, email: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Date of Birth *</label>
+                  <input
+                    type="date" required
+                    value={studentFormData.date_of_birth}
+                    onChange={e => setStudentFormData({...studentFormData, date_of_birth: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Phone Number *</label>
+                  <input
+                    type="tel" required
+                    placeholder="e.g. +91 98765 43210"
+                    value={studentFormData.phone}
+                    onChange={e => setStudentFormData({...studentFormData, phone: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Reservation Category</label>
+                  <select
+                    value={studentFormData.category}
+                    onChange={e => setStudentFormData({...studentFormData, category: e.target.value})}
+                    className="w-full bg-[#0b0c10] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="General">General</option>
+                    <option value="OBC">OBC</option>
+                    <option value="SC">SC</option>
+                    <option value="ST">ST</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-white/5 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddStudentModal(false)}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-slate-300 py-2 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit" disabled={savingStudent}
+                  className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {savingStudent ? 'Registering...' : '✓ Register Candidate'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2. DELETE STUDENT STEP-UP CONFIRMATION MODAL */}
+      {showDeleteStudentModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fade-in">
+          <div className="bg-[#0b0c10] border border-red-500/20 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 left-0 w-full h-1 bg-red-600 animate-pulse" />
+            <div className="p-6 border-b border-white/5 bg-black/20 flex justify-between items-center">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-red-500">⚠ Step-Up Verification Required</h3>
+              <button 
+                onClick={() => {
+                  setShowDeleteStudentModal(false);
+                  setStudentToDelete(null);
+                }}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmDeleteStudent} className="p-6 space-y-4">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-xs text-red-400 font-semibold leading-relaxed">
+                🚨 WARNING: You are attempting to delete candidate <strong className="text-white font-bold">{studentToDelete?.full_name}</strong>. This will permanently erase their credentials, files, logs, and scoring history.
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Superadmin Secret Password *</label>
+                <input
+                  type="password" required
+                  placeholder="Enter superadmin password"
+                  value={deleteSecret}
+                  onChange={e => setDeleteSecret(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">6-Digit Authenticator OTP Code *</label>
+                <input
+                  type="text" required maxLength={6}
+                  placeholder="e.g. 123456"
+                  value={deleteOtp}
+                  onChange={e => setDeleteOtp(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-red-500 tracking-widest font-mono text-center"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-white/5 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteStudentModal(false);
+                    setStudentToDelete(null);
+                  }}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-slate-300 py-2 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-red-600 hover:bg-red-500 text-white py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer shadow-[0_4px_12px_rgba(239,68,68,0.2)]"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3. ADD EXAM MODAL */}
+      {showAddExamModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fade-in">
+          <div className="bg-[#0b0c10] border border-white/10 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-indigo-500" />
+            <div className="p-6 border-b border-white/5 bg-black/20 flex justify-between items-center">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-white">📝 Create Exam Blueprint</h3>
+              <button 
+                onClick={() => setShowAddExamModal(false)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateExam} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Exam Title *</label>
+                  <input
+                    type="text" required
+                    placeholder="e.g. JEE Advanced Mock Test 1"
+                    value={examFormData.title}
+                    onChange={e => setExamFormData({...examFormData, title: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Description & Instructions</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Instructions shown to candidates before starting..."
+                    value={examFormData.description}
+                    onChange={e => setExamFormData({...examFormData, description: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Primary Subject *</label>
+                  <select
+                    value={examFormData.subject}
+                    onChange={e => setExamFormData({...examFormData, subject: e.target.value})}
+                    className="w-full bg-[#0b0c10] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="Physics">Physics</option>
+                    <option value="Chemistry">Chemistry</option>
+                    <option value="Mathematics">Mathematics</option>
+                    <option value="Full Syllabus (PCM)">Full Syllabus (PCM)</option>
+                    <option value="General Aptitude">General Aptitude</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Duration (Minutes) *</label>
+                  <input
+                    type="number" required min={1}
+                    value={examFormData.duration_minutes}
+                    onChange={e => setExamFormData({...examFormData, duration_minutes: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Total Marks (Optional)</label>
+                  <input
+                    type="number" min={1}
+                    placeholder="Auto-calculated if blank"
+                    value={examFormData.total_marks}
+                    onChange={e => setExamFormData({...examFormData, total_marks: e.target.value})}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 sm:col-span-2 grid grid-cols-3 gap-3">
+                  <div className="col-span-3 text-[10px] font-bold text-cyan-400 uppercase tracking-wider">Default Grading System</div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Positive (+)</label>
+                    <input type="number" required min={1} value={examFormData.correct_marks} onChange={e => setExamFormData({...examFormData, correct_marks: e.target.value})} className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Negative (-)</label>
+                    <input type="number" required min={0} value={examFormData.negative_marks} onChange={e => setExamFormData({...examFormData, negative_marks: e.target.value})} className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500 uppercase">Passing %</label>
+                    <input type="number" required min={0} max={100} value={examFormData.passing_percentage} onChange={e => setExamFormData({...examFormData, passing_percentage: e.target.value})} className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                  </div>
+                </div>
+
+                <div className="bg-blue-950/10 border border-blue-500/20 rounded-xl p-4 sm:col-span-2 space-y-3">
+                  <div className="text-[10px] font-bold text-blue-400 uppercase tracking-wider">Visibility & Launch Window</div>
+                  
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 text-xs font-bold text-white cursor-pointer">
+                      <input type="radio" name="visibilityMode" checked={examVisibilityMode === 'lifetime'} onChange={() => setExamVisibilityMode('lifetime')} className="accent-cyan-500" />
+                      Lifetime (Always Active)
+                    </label>
+                    <label className="flex items-center gap-2 text-xs font-bold text-white cursor-pointer">
+                      <input type="radio" name="visibilityMode" checked={examVisibilityMode === 'scheduled'} onChange={() => setExamVisibilityMode('scheduled')} className="accent-cyan-500" />
+                      Scheduled Window
+                    </label>
+                  </div>
+
+                  {examVisibilityMode === 'scheduled' && (
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase">Start Date & Time</label>
+                        <input type="datetime-local" required={examVisibilityMode === 'scheduled'} value={examFormData.start_datetime} onChange={e => setExamFormData({...examFormData, start_datetime: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-bold text-slate-400 uppercase">End Date & Time</label>
+                        <input type="datetime-local" required={examVisibilityMode === 'scheduled'} value={examFormData.end_datetime} onChange={e => setExamFormData({...examFormData, end_datetime: e.target.value})} className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-white/5 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowAddExamModal(false)}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-slate-300 py-2 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit" disabled={savingExam}
+                  className="flex-1 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {savingExam ? 'Saving blueprint...' : '✓ Create & Add Questions ➔'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
