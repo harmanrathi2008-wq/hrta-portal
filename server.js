@@ -3368,43 +3368,48 @@ app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req,
 
 // Security SOC & Deep System Scanner API Router Proxy
 app.post('/api/admin/security/run-dependency-scan', verifyAdminJWT, async (req, res) => {
-  try {
-    // Use npm audit programmatically
-    exec('npm audit --json 2>/dev/null || echo "{}"', { timeout: 30000 }, (err, stdout, stderr) => {
-      let auditResult = { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0, info: 0 } };
+  const runAudit = () => new Promise((resolve) => {
+    exec('npm audit --json 2>/dev/null || echo "{}"', { timeout: 8000 }, (err, stdout) => {
+      let vulnerabilities = { critical: 0, high: 0, moderate: 0, low: 0, info: 0 };
       try {
         const raw = (stdout || '{}').trim();
-        // Find the first valid JSON object in output
         const jsonStart = raw.indexOf('{');
         if (jsonStart !== -1) {
           const parsed = JSON.parse(raw.substring(jsonStart));
           if (parsed.metadata && parsed.metadata.vulnerabilities) {
-            auditResult.vulnerabilities = parsed.metadata.vulnerabilities;
+            vulnerabilities = parsed.metadata.vulnerabilities;
           }
         }
       } catch (parseErr) {
         console.warn('npm audit parse error:', parseErr.message);
       }
+      resolve(vulnerabilities);
+    });
+  });
 
-      exec('npm outdated --json 2>/dev/null || echo "{}"', { timeout: 15000 }, (err2, stdout2) => {
-        let outdatedResult = [];
-        try {
-          const raw2 = (stdout2 || '{}').trim();
-          const jsonStart2 = raw2.indexOf('{');
-          if (jsonStart2 !== -1) {
-            const parsed2 = JSON.parse(raw2.substring(jsonStart2));
-            outdatedResult = Object.entries(parsed2).map(([pkg, val]) => ({
-              name: pkg, current: val.current, wanted: val.wanted, latest: val.latest
-            }));
-          }
-        } catch (e) {}
+  const runOutdated = () => new Promise((resolve) => {
+    exec('npm outdated --json 2>/dev/null || echo "{}"', { timeout: 6000 }, (err, stdout) => {
+      let outdatedResult = [];
+      try {
+        const raw = (stdout || '{}').trim();
+        const jsonStart = raw.indexOf('{');
+        if (jsonStart !== -1) {
+          const parsed = JSON.parse(raw.substring(jsonStart));
+          outdatedResult = Object.entries(parsed).map(([pkg, val]) => ({
+            name: pkg, current: val.current, wanted: val.wanted, latest: val.latest
+          }));
+        }
+      } catch (e) {}
+      resolve(outdatedResult);
+    });
+  });
 
-        res.json({
-          vulnerabilities: auditResult.vulnerabilities,
-          outdatedPackages: outdatedResult,
-          scannedAt: new Date().toISOString()
-        });
-      });
+  try {
+    const [vulnerabilities, outdatedPackages] = await Promise.all([runAudit(), runOutdated()]);
+    res.json({
+      vulnerabilities,
+      outdatedPackages,
+      scannedAt: new Date().toISOString()
     });
   } catch (err) {
     res.status(500).json({ error: 'Scan failed: ' + err.message, vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } });
