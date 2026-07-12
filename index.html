@@ -39,7 +39,7 @@
               overlay.innerHTML = '<div style="font-size:50px;margin-bottom:20px;filter:drop-shadow(0 0 15px rgba(239,68,68,0.3));">🔄</div>' +
                                   '<h2 style="color:#ef4444;margin-bottom:10px;font-weight:900;text-transform:uppercase;letter-spacing:2px;">Update Available</h2>' +
                                   '<p style="color:#94a3b8;max-width:400px;margin-bottom:24px;font-size:13px;line-height:1.6;">We have updated the portal with new security features. Click below to load the latest version.</p>' +
-                                  '<button onclick="window.location.reload(true);" style="background:linear-gradient(to right, #ef4444, #f43f5e);color:#fff;border:none;padding:14px 28px;font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:1px;border-radius:12px;cursor:pointer;box-shadow:0 10px 15px -3px rgba(239,68,68,0.3);">Refresh Portal</button>';
+                                  '<button onclick="window.location.href = window.location.origin + window.location.pathname + \'?u=\' + Date.now();" style="background:linear-gradient(to right, #ef4444, #f43f5e);color:#fff;border:none;padding:14px 28px;font-weight:bold;font-size:12px;text-transform:uppercase;letter-spacing:1px;border-radius:12px;cursor:pointer;box-shadow:0 10px 15px -3px rgba(239,68,68,0.3);">Refresh Portal</button>';
               document.body.appendChild(overlay);
             }
           }
