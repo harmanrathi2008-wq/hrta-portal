@@ -35,7 +35,12 @@ export default function StudentProfile() {
 
   const loadStudentData = async () => {
     try {
-      const token = sessionStorage.getItem("studentSessionToken") || '';
+      // Self-healing fallback: if studentSessionToken is missing, attempt to recover from Supabase session
+      let token = sessionStorage.getItem("studentSessionToken") || '';
+      if (!token) {
+        const { data: { session } } = await supabase.auth.getSession();
+        token = session?.access_token || '';
+      }
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       
       const response = await fetch(`${apiBaseUrl}/api/student/profile?studentId=${studentId}`, {
