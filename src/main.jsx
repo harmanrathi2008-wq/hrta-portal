@@ -20,8 +20,7 @@ if ('serviceWorker' in navigator) {
             installingWorker.onstatechange = () => {
               if (installingWorker.state === 'installed') {
                 if (navigator.serviceWorker.controller) {
-                  console.log('New update installed. Reloading page...');
-                  window.location.reload();
+                  console.log('New update installed. Please refresh to apply.');
                 }
               }
             };
