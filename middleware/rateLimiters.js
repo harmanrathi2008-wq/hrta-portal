@@ -7,6 +7,7 @@ export const apiLimiter = rateLimit({
   message: { error: 'Too many requests from this IP, please try again after 15 minutes.' },
   standardHeaders: true, // Return standard rate limit info headers
   legacyHeaders: false, // Disable X-RateLimit-* headers
+  skip: (req) => req.path && req.path.startsWith('/api/admin/'),
 });
 
 // Stricter limiter for sensitive auth endpoints (Login, Signup, OTP generation)
@@ -26,6 +27,7 @@ export const heavyRequestLimiter = rateLimit({
   message: { error: 'Rate limit exceeded for heavy operations. Please slow down.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path && req.path.startsWith('/api/admin/'),
 });
 
 // Stricter rate limiter specifically for exam submissions (max 5 requests per 1 minute)
