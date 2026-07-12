@@ -55,7 +55,7 @@ const AdminDashboard = () => {
   const [globalViolations, setGlobalViolations] = useState([]);
   
   // Advanced Security Dashboard States
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'sessions', 'intrusion', 'audit', 'keys', 'students', 'exams', 'analytics', 'threatmap', 'settings', 'profile'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'proctoring', 'students', 'exams', 'results', 'sessions', 'intrusion', 'audit', 'keys', 'soc', 'analytics', 'threatmap', 'firewall', 'mail', 'settings', 'profile'
   const [sessionsRoster, setSessionsRoster] = useState([]);
   const [intrusionAlerts, setIntrusionAlerts] = useState([]);
   const [signedAuditLogs, setSignedAuditLogs] = useState([]);
@@ -93,6 +93,39 @@ const AdminDashboard = () => {
   const [exams, setExams] = useState([]);
   const [examsLoading, setExamsLoading] = useState(false);
   const [examSearch, setExamSearch] = useState("");
+
+  // Assign Exam to Student states
+  const [showAssignExamModal, setShowAssignExamModal] = useState(false);
+  const [assignExamStudent, setAssignExamStudent] = useState(null);
+  const [assignExamId, setAssignExamId] = useState('');
+  const [assignExamCustomStart, setAssignExamCustomStart] = useState('');
+  const [assignExamCustomEnd, setAssignExamCustomEnd] = useState('');
+  const [assignExamNote, setAssignExamNote] = useState('');
+  const [assigningExam, setAssigningExam] = useState(false);
+
+  // Mail System states
+  const [mailRecipients, setMailRecipients] = useState('');
+  const [mailSubject, setMailSubject] = useState('');
+  const [mailBody, setMailBody] = useState('');
+  const [mailAttachments, setMailAttachments] = useState([]);
+  const [sendingMail, setSendingMail] = useState(false);
+  const [mailLogs, setMailLogs] = useState([]);
+  const mailAttachInputRef = React.useRef(null);
+
+  // Firewall states
+  const [firewallRules, setFirewallRules] = useState([]);
+  const [firewallLoading, setFirewallLoading] = useState(false);
+  const [blockIpInput, setBlockIpInput] = useState('');
+  const [blockIpReason, setBlockIpReason] = useState('');
+  const [blockingIp, setBlockingIp] = useState(false);
+  const [firewallSearch, setFirewallSearch] = useState('');
+
+  // Real-time Telemetry states
+  const [telemetry, setTelemetry] = useState({ cpu: 0, ram: { used: 0, total: 1024 }, avgLatencyMs: 0, dbConnections: 0, uptime: 0 });
+
+  // Generated Token
+  const [generatedToken, setGeneratedToken] = useState(null);
+  const [generatingToken, setGeneratingToken] = useState(false);
 
   // Exam creation form states
   const [showAddExamModal, setShowAddExamModal] = useState(false);
@@ -1228,6 +1261,136 @@ const AdminDashboard = () => {
     }
   };
 
+  // ===================== FIREWALL HANDLERS =====================
+  const loadFirewallRules = async () => {
+    setFirewallLoading(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/firewall/rules`, { headers: { Authorization: headers.Authorization } });
+      if (res.ok) {
+        const data = await res.json();
+        setFirewallRules(Array.isArray(data) ? data : []);
+      }
+    } catch (e) { console.error('Firewall load error:', e); }
+    finally { setFirewallLoading(false); }
+  };
+
+  const handleBlockIP = async () => {
+    if (!blockIpInput.trim()) { toast.error('Enter an IP address to block.'); return; }
+    setBlockingIp(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/firewall/block`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ ip_address: blockIpInput.trim(), reason: blockIpReason || 'Blocked by administrator' })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`IP ${blockIpInput} has been BLOCKED. Block page will appear immediately.`);
+        setBlockIpInput(''); setBlockIpReason('');
+        loadFirewallRules();
+      } else { toast.error(data.error || 'Failed to block IP.'); }
+    } catch (e) { toast.error('Network error.'); }
+    finally { setBlockingIp(false); }
+  };
+
+  const handleUnblockIP = async (ip) => {
+    if (!window.confirm(`Unblock IP: ${ip}?`)) return;
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/firewall/unblock`, {
+        method: 'POST', headers, body: JSON.stringify({ ip_address: ip })
+      });
+      if (res.ok) { toast.success(`IP ${ip} unblocked.`); loadFirewallRules(); }
+      else { const d = await res.json(); toast.error(d.error || 'Failed to unblock.'); }
+    } catch (e) { toast.error('Network error.'); }
+  };
+
+  // ===================== MAIL SYSTEM HANDLERS =====================
+  const handleMailAttachment = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    const headers = await getAdminHeaders();
+    for (const file of files) {
+      if (file.size > 20 * 1024 * 1024) { toast.error(`${file.name} is too large (max 20MB)`); continue; }
+      try {
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          const base64 = ev.target.result.split(',')[1];
+          const res = await fetch(`${API_BASE_URL}/api/admin/mail/upload-attachment`, {
+            method: 'POST', headers,
+            body: JSON.stringify({ file: base64, filename: file.name, mimetype: file.type })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setMailAttachments(prev => [...prev, { filename: file.name, url: data.url, size: file.size }]);
+            toast.success(`Uploaded: ${file.name}`);
+          }
+        };
+        reader.readAsDataURL(file);
+      } catch (ex) { toast.error(`Failed to upload ${file.name}`); }
+    }
+    e.target.value = '';
+  };
+
+  const handleSendMail = async () => {
+    if (!mailRecipients.trim()) { toast.error('Add at least one recipient.'); return; }
+    if (!mailSubject.trim()) { toast.error('Subject is required.'); return; }
+    if (!mailBody.trim()) { toast.error('Email body is required.'); return; }
+    const recipients = mailRecipients.split(/[\n,;]+/).map(e => e.trim()).filter(e => e.includes('@'));
+    if (recipients.length === 0) { toast.error('No valid email addresses found.'); return; }
+    if (recipients.length > 1000) { toast.error('Maximum 1000 recipients per send.'); return; }
+    setSendingMail(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/mail/compose`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ recipients, subject: mailSubject, body: mailBody.replace(/\n/g, '<br>'), attachments: [] })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`✅ Email sent to ${data.sent} recipients!`);
+        setMailRecipients(''); setMailSubject(''); setMailBody(''); setMailAttachments([]);
+      } else { toast.error(data.error || 'Send failed.'); }
+    } catch (e) { toast.error('Network error.'); }
+    finally { setSendingMail(false); }
+  };
+
+  // ===================== ASSIGN EXAM HANDLER =====================
+  const handleAssignExam = async () => {
+    if (!assignExamStudent || !assignExamId) { toast.error('Select a student and exam.'); return; }
+    setAssigningExam(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/students/${assignExamStudent.id}/assign-exam`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ exam_id: assignExamId, custom_start: assignExamCustomStart || null, custom_end: assignExamCustomEnd || null, note: assignExamNote || null })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Exam assigned to ${assignExamStudent.full_name}!`);
+        setShowAssignExamModal(false); setAssignExamStudent(null); setAssignExamId('');
+        setAssignExamCustomStart(''); setAssignExamCustomEnd(''); setAssignExamNote('');
+      } else { toast.error(data.error || 'Assignment failed.'); }
+    } catch (e) { toast.error('Network error.'); }
+    finally { setAssigningExam(false); }
+  };
+
+  // ===================== TOKEN GENERATION =====================
+  const handleGenerateToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/generate-test-token`, { method: 'POST', headers });
+      const data = await res.json();
+      if (res.ok) {
+        setGeneratedToken(data);
+        toast.success('Administrative token generated successfully.');
+      } else { toast.error(data.error || 'Failed to generate token.'); }
+    } catch (e) { toast.error('Network error.'); }
+    finally { setGeneratingToken(false); }
+  };
+
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
@@ -1357,11 +1520,26 @@ const AdminDashboard = () => {
     loadProctorLocks();
     loadSupportTickets();
     loadSecurityData();
+    loadFirewallRules();
 
-    // Poll security data every 10 seconds for real-time threat feed
+    // Poll security data every 30 seconds for real-time threat feed
     const pollSecInterval = setInterval(() => {
       loadSecurityData();
-    }, 10000);
+    }, 30000);
+
+    // Poll telemetry every 10 seconds for real-time server stats
+    const pollTelemetry = async () => {
+      try {
+        const headers = await getAdminHeaders();
+        const res = await fetch(`${API_BASE_URL}/api/admin/telemetry`, { headers: { Authorization: headers.Authorization } });
+        if (res.ok) {
+          const data = await res.json();
+          setTelemetry(data);
+        }
+      } catch (e) {}
+    };
+    pollTelemetry();
+    const pollTelemetryInterval = setInterval(pollTelemetry, 10000);
 
     // Subscribe to real-time updates of exam_results
     const realtimeChannel = supabase
@@ -1430,6 +1608,7 @@ const AdminDashboard = () => {
 
     return () => {
       clearInterval(pollSecInterval);
+      clearInterval(pollTelemetryInterval);
       supabase.removeChannel(realtimeChannel);
       supabase.removeChannel(locksRealtimeChannel);
       supabase.removeChannel(ticketsRealtimeChannel);
@@ -2003,6 +2182,33 @@ const AdminDashboard = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab('firewall')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'firewall' 
+                  ? 'bg-red-500/10 text-red-400 border border-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">🔥</span> IP Firewall
+              {firewallRules.filter(r => r.is_blocked).length > 0 && (
+                <span className="ml-auto bg-red-500/20 text-red-400 text-[9px] font-black px-1.5 py-0.5 rounded-full border border-red-500/30">
+                  {firewallRules.filter(r => r.is_blocked).length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('mail')}
+              className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
+                activeTab === 'mail' 
+                  ? 'bg-violet-500/10 text-violet-400 border border-violet-500/20 shadow-[0_0_15px_rgba(139,92,246,0.05)]' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <span className="text-sm">✉️</span> Mail System
+            </button>
+
+            <button
               onClick={() => setActiveTab('settings')}
               className={`w-full text-left p-3 text-xs font-bold uppercase tracking-wider rounded-xl transition-all flex items-center gap-3 cursor-pointer ${
                 activeTab === 'settings' 
@@ -2159,10 +2365,10 @@ const AdminDashboard = () => {
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-bold font-mono">
                       <span className="text-slate-400">CPU UTILIZATION</span>
-                      <span className="text-cyan-400">14.2%</span>
+                      <span className={`font-black ${telemetry.cpu > 80 ? 'text-red-400' : 'text-cyan-400'}`}>{telemetry.cpu}%</span>
                     </div>
                     <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
-                      <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2 rounded-full" style={{ width: '14.2%' }} />
+                      <div className="bg-gradient-to-r from-cyan-500 to-blue-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(telemetry.cpu, 100)}%` }} />
                     </div>
                   </div>
                   
@@ -2170,10 +2376,10 @@ const AdminDashboard = () => {
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-bold font-mono">
                       <span className="text-slate-400">RAM MEMORY</span>
-                      <span className="text-purple-400">512 MB / 1024 MB</span>
+                      <span className="text-purple-400">{telemetry.ram?.used || 0} MB / {telemetry.ram?.total || 1024} MB</span>
                     </div>
                     <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
-                      <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2 rounded-full" style={{ width: '50%' }} />
+                      <div className="bg-gradient-to-r from-purple-500 to-indigo-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min(((telemetry.ram?.used||0)/(telemetry.ram?.total||1024))*100, 100)}%` }} />
                     </div>
                   </div>
 
@@ -2181,10 +2387,10 @@ const AdminDashboard = () => {
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-bold font-mono">
                       <span className="text-slate-400">DATABASE POOL</span>
-                      <span className="text-emerald-400">18 / 100 CONNS</span>
+                      <span className="text-emerald-400">{telemetry.dbConnections || 0} Active Sessions</span>
                     </div>
                     <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
-                      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full" style={{ width: '18%' }} />
+                      <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min((telemetry.dbConnections||0)*3, 100)}%` }} />
                     </div>
                   </div>
 
@@ -2192,10 +2398,10 @@ const AdminDashboard = () => {
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-bold font-mono">
                       <span className="text-slate-400">AVG API LATENCY</span>
-                      <span className="text-amber-400">22 ms (EXCELLENT)</span>
+                      <span className="text-amber-400">{telemetry.avgLatencyMs || 0} ms {(telemetry.avgLatencyMs||0) < 100 ? '(EXCELLENT)' : (telemetry.avgLatencyMs||0) < 300 ? '(GOOD)' : '(SLOW)'}</span>
                     </div>
                     <div className="w-full bg-white/5 rounded-full h-2 overflow-hidden border border-white/5">
-                      <div className="bg-gradient-to-r from-amber-500 to-orange-500 h-2 rounded-full" style={{ width: '22%' }} />
+                      <div className="bg-gradient-to-r from-amber-500 to-orange-500 h-2 rounded-full transition-all duration-1000" style={{ width: `${Math.min((telemetry.avgLatencyMs||0)/10, 100)}%` }} />
                     </div>
                   </div>
                 </div>
@@ -2487,6 +2693,15 @@ const AdminDashboard = () => {
                             <td className="px-6 py-3">
                               <div className="flex justify-center items-center gap-1.5">
                                 <button
+                                  onClick={() => {
+                                    setAssignExamStudent(student);
+                                    setShowAssignExamModal(true);
+                                  }}
+                                  className="bg-purple-500/10 hover:bg-purple-500/25 border border-purple-500/20 text-purple-400 px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                                >
+                                  Assign Exam
+                                </button>
+                                <button
                                   onClick={() => handleSuspendStudent(student.id, student.is_suspended)}
                                   className="bg-white/5 hover:bg-yellow-500/10 border border-white/10 hover:border-yellow-500/20 text-slate-350 hover:text-yellow-400 px-2 py-1 rounded-lg text-[10px] font-bold uppercase transition-colors cursor-pointer"
                                 >
@@ -2670,6 +2885,253 @@ const AdminDashboard = () => {
                     </tr>
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'firewall' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Block IP Form */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden h-fit">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-red-500 to-rose-500" />
+                <h3 className="text-sm font-black text-white uppercase tracking-wider mb-2">🔥 Add IP Block Rule</h3>
+                <p className="text-[10px] text-slate-500 mb-4">Instantly blacklist an IP address and deny access to the portal.</p>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">IP Address</label>
+                    <input
+                      type="text"
+                      value={blockIpInput}
+                      onChange={(e) => setBlockIpInput(e.target.value)}
+                      placeholder="e.g. 192.168.1.1 or 8.8.8.8"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-red-500 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Reason for Block</label>
+                    <textarea
+                      value={blockIpReason}
+                      onChange={(e) => setBlockIpReason(e.target.value)}
+                      placeholder="e.g. Suspicious credential stuffing or VPN bypass attempt"
+                      rows="3"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-red-500 transition-colors resize-none font-sans"
+                    />
+                  </div>
+                  <button
+                    onClick={handleBlockIP}
+                    disabled={blockingIp}
+                    className="w-full bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                  >
+                    {blockingIp ? 'Blocking IP...' : '🔒 Commit Block Rule'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Blocked IPs List */}
+              <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-red-500 to-rose-500" />
+                
+                <div className="flex justify-between items-center mb-4">
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">🛡️ Active Firewall Ledger</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">List of blacklisted addresses enforced by the edge firewall.</p>
+                  </div>
+                  <input
+                    type="text"
+                    value={firewallSearch}
+                    onChange={(e) => setFirewallSearch(e.target.value)}
+                    placeholder="Search blocked IPs..."
+                    className="bg-black/40 border border-white/10 rounded-xl px-3 py-1.5 text-[10px] text-white focus:outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div className="bg-black/20 border border-white/5 rounded-xl overflow-hidden">
+                  <div className="max-h-[400px] overflow-y-auto">
+                    {firewallLoading ? (
+                      <div className="py-8 text-center text-xs text-slate-500 font-bold animate-pulse">Loading firewall rules...</div>
+                    ) : firewallRules.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-slate-500 italic">No IP block rules active. System open.</div>
+                    ) : (
+                      <table className="w-full text-left text-[10px] font-mono text-slate-400">
+                        <thead className="bg-white/[0.02] text-slate-450 uppercase font-black sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2">IP Address</th>
+                            <th className="px-4 py-2">Location & Network</th>
+                            <th className="px-4 py-2">Reason</th>
+                            <th className="px-4 py-2 text-center">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {firewallRules
+                            .filter(r => r.ip_address.toLowerCase().includes(firewallSearch.toLowerCase()) || (r.reason && r.reason.toLowerCase().includes(firewallSearch.toLowerCase())))
+                            .map((rule) => (
+                              <tr key={rule.id} className="hover:bg-white/[0.01] transition-colors">
+                                <td className="px-4 py-3 text-white font-bold">
+                                  <div className="flex flex-col">
+                                    <span>{rule.ip_address}</span>
+                                    {rule.is_vpn && (
+                                      <span className="text-[8px] bg-red-500/10 text-red-400 border border-red-500/20 px-1 py-0.5 rounded w-fit mt-1">⚠️ VPN/Proxy</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-col text-[9px]">
+                                    <span className="text-slate-300">{rule.city || 'Unknown'}, {rule.country || 'Unknown'}</span>
+                                    <span className="text-slate-500 text-[8px]">{rule.isp || 'Unknown ISP'}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-slate-355">
+                                  <div className="flex flex-col max-w-[200px] truncate">
+                                    <span>{rule.reason || 'No reason provided'}</span>
+                                    <span className="text-[8px] text-slate-600 mt-0.5">By: {rule.blocked_by || 'system'}</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <button
+                                    onClick={() => handleUnblockIP(rule.ip_address)}
+                                    className="bg-emerald-500/10 hover:bg-emerald-500/25 border border-emerald-500/20 text-emerald-400 px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider cursor-pointer"
+                                  >
+                                    🔓 Unblock
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'mail' && (
+          <div className="space-y-8 animate-fade-in font-sans">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Compose Panel */}
+              <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500" />
+                <h3 className="text-sm font-black text-white uppercase tracking-wider mb-2">✉️ Enterprise Mail Dispatcher</h3>
+                <p className="text-[10px] text-slate-500 mb-4">Send premium custom HTML emails using the authenticated HRTA Portal domain.</p>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Recipients (one per line, comma, or semicolon)</label>
+                    <textarea
+                      value={mailRecipients}
+                      onChange={(e) => setMailRecipients(e.target.value)}
+                      placeholder="recipient1@domain.com&#10;recipient2@domain.com"
+                      rows="3"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Subject</label>
+                    <input
+                      type="text"
+                      value={mailSubject}
+                      onChange={(e) => setMailSubject(e.target.value)}
+                      placeholder="Enter subject..."
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Email Body (HTML/Text)</label>
+                    <textarea
+                      value={mailBody}
+                      onChange={(e) => setMailBody(e.target.value)}
+                      placeholder="Write your email body here... supports HTML"
+                      rows="8"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-sans"
+                    />
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+                    <div>
+                      <input
+                        type="file"
+                        multiple
+                        ref={mailAttachInputRef}
+                        onChange={handleMailAttachment}
+                        className="hidden"
+                      />
+                      <button
+                        onClick={() => mailAttachInputRef.current?.click()}
+                        className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                      >
+                        📎 Upload Attachments
+                      </button>
+                      {mailAttachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {mailAttachments.map((a, i) => (
+                            <span key={i} className="text-[8px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-1 rounded">
+                              {a.filename} ({Math.round(a.size/1024)} KB)
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={handleSendMail}
+                      disabled={sendingMail}
+                      className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                    >
+                      {sendingMail ? 'Sending Dispatch...' : '🚀 Send Dispatch'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Logs / Stats Panel */}
+              <div className="bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden flex flex-col justify-between">
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500" />
+                <div>
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider mb-2">📊 Dispatch History</h3>
+                  <p className="text-[10px] text-slate-500">Recent email campaigns and delivery status records.</p>
+                  
+                  <div className="space-y-4 mt-6">
+                    <button
+                      onClick={loadMailLogs}
+                      className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider cursor-pointer transition-all"
+                    >
+                      🔄 Refresh Mail Logs
+                    </button>
+
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                      {mailLogs.length === 0 ? (
+                        <p className="text-[10px] text-slate-500 italic text-center py-4">No mail logs loaded.</p>
+                      ) : (
+                        mailLogs.map((log) => (
+                          <div key={log.id} className="bg-black/20 border border-white/5 rounded-xl p-3 space-y-1.5">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[9px] font-bold text-white max-w-[120px] truncate">{log.subject}</span>
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded border uppercase ${
+                                log.status === 'sent' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'
+                              }`}>{log.status}</span>
+                            </div>
+                            <p className="text-[8px] text-slate-500 truncate">{log.body_preview}</p>
+                            <div className="flex justify-between text-[8px] text-slate-600 font-mono">
+                              <span>To: {log.recipients?.length || 0} users</span>
+                              <span>{new Date(log.created_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="border-t border-white/5 pt-4 mt-6">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-slate-500">MAIL CONNECTOR:</span>
+                    <span className="text-violet-400 font-bold">RESEND CLOUD</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -4056,6 +4518,92 @@ const AdminDashboard = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 4. PERSONAL ASSIGN EXAM MODAL */}
+      {showAssignExamModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-fade-in">
+          <div className="bg-[#0b0c10] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-indigo-500" />
+            <div className="p-6 border-b border-white/5 flex justify-between items-center bg-black/20">
+              <h3 className="font-bold text-sm uppercase tracking-wider text-white">⚙️ Personal Exam Assignment</h3>
+              <button 
+                onClick={() => { setShowAssignExamModal(false); setAssignExamStudent(null); }}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="text-xs text-slate-400">Assigning personally to: <span className="text-white font-extrabold">{assignExamStudent?.full_name}</span> ({assignExamStudent?.application_id})</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Select Exam *</label>
+                <select
+                  value={assignExamId}
+                  onChange={(e) => setAssignExamId(e.target.value)}
+                  className="w-full bg-[#0b0c10] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="">-- Choose Exam Blueprint --</option>
+                  {exams.map(e => (
+                    <option key={e.id} value={e.id}>{e.title} ({e.subject})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 font-sans">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Custom Start Window (Optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={assignExamCustomStart}
+                    onChange={(e) => setAssignExamCustomStart(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Custom End Window (Optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={assignExamCustomEnd}
+                    onChange={(e) => setAssignExamCustomEnd(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Assignment Note / Instructions</label>
+                <textarea
+                  value={assignExamNote}
+                  onChange={(e) => setAssignExamNote(e.target.value)}
+                  placeholder="e.g. Special accommodations allowed or reference number"
+                  rows="3"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-purple-500 resize-none font-sans"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-white/5 flex gap-3">
+                <button
+                  onClick={() => { setShowAssignExamModal(false); setAssignExamStudent(null); }}
+                  className="flex-1 bg-white/5 hover:bg-white/10 text-slate-300 py-2 rounded-xl text-xs font-bold uppercase transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignExam}
+                  disabled={assigningExam}
+                  className="flex-1 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white py-2 rounded-xl text-xs font-black uppercase transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {assigningExam ? 'Saving assignment...' : '✓ Assign Exam'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
