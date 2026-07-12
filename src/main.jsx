@@ -1,4 +1,5 @@
 import React from 'react'
+window.__buildVersion = '2.0.1';
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
