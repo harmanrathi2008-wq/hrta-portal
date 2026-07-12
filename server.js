@@ -2628,35 +2628,7 @@ app.post('/api/submit-exam', submitExamLimiter, verifyUserJWT, async (req, res) 
   }
 });
 
-// ============ SERVE STATIC FILES ============
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.send("User-agent: *\nDisallow: /");
-});
 
-if (existsSync(join(__dirname, 'dist'))) {
-  app.use(express.static(join(__dirname, 'dist'), {
-    setHeaders: (res, path) => {
-      if (path.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      } else {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      }
-    }
-  }))
-  app.get('*', (req, res) => {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.sendFile(join(__dirname, 'dist', 'index.html'))
-  })
-} else {
-  app.get('*', (req, res) => {
-    res.json({ message: "HRTA API Server is running" })
-  })
-}
 
 // Clean global error handler middleware (does not leak internals to clients)
 app.use((err, req, res, next) => {
@@ -3858,6 +3830,36 @@ app.post('/api/admin/intrusion-alerts/resolve', verifyAdminJWT, async (req, res)
     res.status(500).json({ error: 'Failed to resolve alert.' });
   }
 });
+
+// ============ SERVE STATIC FILES ============
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send("User-agent: *\nDisallow: /");
+});
+
+if (existsSync(join(__dirname, 'dist'))) {
+  app.use(express.static(join(__dirname, 'dist'), {
+    setHeaders: (res, path) => {
+      if (path.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }))
+  app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.sendFile(join(__dirname, 'dist', 'index.html'))
+  })
+} else {
+  app.get('*', (req, res) => {
+    res.json({ message: "HRTA API Server is running" })
+  })
+}
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
