@@ -3792,6 +3792,7 @@ app.post('/api/admin/students/:id/assign-exam', verifyAdminJWT, async (req, res)
   const { exam_id, custom_start, custom_end, note } = req.body;
   if (!exam_id) return res.status(400).json({ error: 'exam_id is required.' });
   try {
+    // 1. Try advanced upsert with all tracking columns
     const { data, error } = await supabaseAdmin
       .from('personal_assignments')
       .upsert({
@@ -3805,11 +3806,34 @@ app.post('/api/admin/students/:id/assign-exam', verifyAdminJWT, async (req, res)
         updated_at: new Date().toISOString()
       }, { onConflict: 'student_id,exam_id' })
       .select()
-      .single();
-    if (error) throw error;
+      .maybeSingle();
+
+    if (error) {
+      // If schema cache mismatch (missing columns in database), perform self-healing fallback
+      if (error.message && (error.message.includes('column') || error.message.includes('schema cache'))) {
+        console.warn("personal_assignments table is missing advanced columns. Falling back to minimal insert...");
+        const { data: fbData, error: fbError } = await supabaseAdmin
+          .from('personal_assignments')
+          .upsert({
+            student_id: studentId,
+            exam_id,
+            status: 'active',
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'student_id,exam_id' })
+          .select()
+          .maybeSingle();
+        
+        if (fbError) throw fbError;
+        await logSecurityEvent('exam_assigned', `Admin assigned exam ${exam_id} to student ${studentId} (Fallback)`, req.user.id, req);
+        return res.json({ ok: true, assignment: fbData, warning: "Advanced columns (custom dates/notes) are not defined in the database table." });
+      }
+      throw error;
+    }
+
     await logSecurityEvent('exam_assigned', `Admin assigned exam ${exam_id} to student ${studentId}`, req.user.id, req);
     res.json({ ok: true, assignment: data });
   } catch (err) {
+    console.error("Assign exam API error:", err);
     res.status(500).json({ error: 'Failed to assign exam: ' + err.message });
   }
 });
