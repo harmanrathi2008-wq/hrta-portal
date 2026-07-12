@@ -378,6 +378,7 @@ const MainLogin = () => {
       sessionStorage.setItem('userId', data.userId);
       if (data.userEmail) sessionStorage.setItem('userEmail', data.userEmail);
       if (data.loginLogId) sessionStorage.setItem('loginLogId', data.loginLogId);
+      if (data.sessionToken) sessionStorage.setItem('studentSessionToken', data.sessionToken);
       sessionStorage.setItem('loginTime', new Date().toISOString());
 
       // Native Supabase Sign-in Sync

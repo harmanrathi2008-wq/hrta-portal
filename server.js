@@ -1453,6 +1453,24 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
     });
   }
 
+  // Generate and register custom student session token
+  const mockToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(mockToken).digest('hex');
+
+  try {
+    await supabaseAdmin
+      .from('session_activity')
+      .insert({
+        user_id: stored.userId,
+        refresh_token_hash: tokenHash,
+        ip_address: ip,
+        user_agent: req.headers['user-agent'] || 'Unknown',
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
+      });
+  } catch (e) {
+    console.warn("Could not insert session activity during OTP verification:", e.message);
+  }
+
   // Return properties the React app needs
   res.json({ 
     message: 'Login successful', 
@@ -1461,6 +1479,7 @@ app.post('/api/verify-otp', authLimiter, validateVerifyOtp, async (req, res) => 
     userEmail: stored.userEmail,
     loginLogId: logId,
     dbPassword: dbPassword,
+    sessionToken: mockToken,
     mfaSetupRequired: false
   })
 })
