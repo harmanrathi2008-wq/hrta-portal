@@ -2608,7 +2608,7 @@ const AdminDashboard = () => {
                             <span className="text-[10px] text-slate-600 font-mono italic">WebRTC stream inactive</span>
                             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                               <button
-                                onClick={() => handleMonitorStudent(session)}
+                                onClick={() => startMonitoring(session)}
                                 className="bg-cyan-500 hover:bg-cyan-400 text-slate-950 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
                               >
                                 Connect Stream

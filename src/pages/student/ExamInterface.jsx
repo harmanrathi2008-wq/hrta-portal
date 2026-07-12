@@ -174,7 +174,7 @@ export default function ExamInterface() {
     try {
       const userId = sessionStorage.getItem("userId");
       if (userId) {
-        const token = sessionStorage.getItem('studentSessionToken') || '';
+        const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
         await fetch(`${API_BASE_URL}/api/student/exams/${examId}/lock`, {
           method: 'POST',
           headers: {
@@ -204,7 +204,7 @@ export default function ExamInterface() {
       const timerKey = `exam_start_time_${examId}`;
       const startTime = sessionStorage.getItem(timerKey) || Date.now().toString();
 
-      const token = sessionStorage.getItem('studentSessionToken') || '';
+      const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
       const res = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/save-draft`, {
         method: 'POST',
         headers: {
@@ -311,7 +311,12 @@ export default function ExamInterface() {
           return;
         }
 
-        const token = sessionStorage.getItem('studentSessionToken') || '';
+        // Self-healing fallback: if studentSessionToken is missing, attempt to recover from Supabase session
+        let token = sessionStorage.getItem("studentSessionToken") || '';
+        if (!token) {
+          const { data: { session } } = await supabase.auth.getSession();
+          token = session?.access_token || '';
+        }
         const [studentRes, examRes, questionsRes] = await Promise.all([
           fetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -870,6 +875,53 @@ export default function ExamInterface() {
     };
   }, [examId, exam?.id]);
 
+  // Backup polling for proctor lock status (self-healing if realtime is disabled)
+  useEffect(() => {
+    if (!isProctorLocked) return;
+    const userId = sessionStorage.getItem("userId");
+    if (!userId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('proctor_locks')
+          .select('id, status')
+          .eq('student_id', userId)
+          .eq('exam_id', examId)
+          .maybeSingle();
+
+        if (error) {
+          console.warn("Backup lock polling error:", error.message);
+          return;
+        }
+
+        // If the record was deleted or approved, unlock the student
+        if (!data || data.status === 'approved') {
+          console.log("Backup poll detected unlock. Restoring exam state...");
+          setIsProctorLocked(false);
+          setLockReason("");
+          setUnlockRequestSent(false);
+          tabSwitchCountRef.current = 0;
+          maxWarningsRef.current = 3;
+          
+          if (data) {
+            // Clean up DB row if it exists
+            await supabase.from("proctor_locks").delete().eq("id", data.id);
+          }
+        } else if (data.status === 'rejected') {
+          console.log("Backup poll detected rejection. Blocking candidate...");
+          setIsRejected(true);
+          setIsProctorLocked(false);
+          executeBlockSubmission();
+        }
+      } catch (err) {
+        console.warn("Backup lock polling exception:", err);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [isProctorLocked, examId]);
+
   // Listen to browser lifecycle termination (Unexpected Tab Close)
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -1056,7 +1108,7 @@ export default function ExamInterface() {
     const syncDraft = async () => {
       setSyncing(true);
       try {
-        const token = sessionStorage.getItem('studentSessionToken') || '';
+        const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
         const res = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/save-draft`, {
           method: 'POST',
           headers: {
@@ -1441,7 +1493,7 @@ export default function ExamInterface() {
       }
 
       // Call secure server-side scoring API
-      const token = sessionStorage.getItem('studentSessionToken') || '';
+      const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
 
       const response = await fetch(`${API_BASE_URL}/api/submit-exam`, {
         method: 'POST',
@@ -2372,7 +2424,7 @@ export default function ExamInterface() {
                       try {
                         const userId = sessionStorage.getItem("userId");
                         if (userId) {
-                          const token = sessionStorage.getItem('studentSessionToken') || '';
+                          const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
                           await fetch(`${API_BASE_URL}/api/student/exams/${examId}/lock`, {
                             method: 'POST',
                             headers: {
