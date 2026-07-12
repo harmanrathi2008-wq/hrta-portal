@@ -7,10 +7,19 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-  process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
-);
+let supabaseAdminInstance = null;
+function getSupabaseAdmin() {
+  if (!supabaseAdminInstance) {
+    const url = process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    if (!url) {
+      console.warn('[Firewall] VITE_SUPABASE_URL is missing. Deferred initialization.');
+      return null;
+    }
+    supabaseAdminInstance = createClient(url, key);
+  }
+  return supabaseAdminInstance;
+}
 
 // In-memory cache of blocked IPs
 let blockedIPs = new Set();
@@ -19,7 +28,9 @@ const CACHE_TTL_MS = 60 * 1000; // Refresh every 60 seconds
 
 async function refreshBlocklist() {
   try {
-    const { data } = await supabaseAdmin
+    const client = getSupabaseAdmin();
+    if (!client) return;
+    const { data } = await client
       .from('firewall_rules')
       .select('ip_address, is_blocked')
       .eq('is_blocked', true);

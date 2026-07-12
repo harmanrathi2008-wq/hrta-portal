@@ -1351,9 +1351,21 @@ const AdminDashboard = () => {
       if (res.ok) {
         toast.success(`✅ Email sent to ${data.sent} recipients!`);
         setMailRecipients(''); setMailSubject(''); setMailBody(''); setMailAttachments([]);
+        loadMailLogs();
       } else { toast.error(data.error || 'Send failed.'); }
     } catch (e) { toast.error('Network error.'); }
     finally { setSendingMail(false); }
+  };
+
+  const loadMailLogs = async () => {
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${API_BASE_URL}/api/admin/mail/logs`, { headers: { Authorization: headers.Authorization } });
+      if (res.ok) {
+        const data = await res.json();
+        setMailLogs(Array.isArray(data) ? data : []);
+      }
+    } catch (e) { console.error('Failed to load mail logs:', e); }
   };
 
   // ===================== ASSIGN EXAM HANDLER =====================
@@ -1521,6 +1533,7 @@ const AdminDashboard = () => {
     loadSupportTickets();
     loadSecurityData();
     loadFirewallRules();
+    loadMailLogs();
 
     // Poll security data every 30 seconds for real-time threat feed
     const pollSecInterval = setInterval(() => {

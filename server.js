@@ -3782,6 +3782,19 @@ app.post('/api/admin/mail/upload-attachment', verifyAdminJWT, async (req, res) =
   }
 });
 
+app.get('/api/admin/mail/logs', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('mail_logs')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch mail logs.' });
+  }
+});
+
 // ============ NEW: Assign Exam to Student (Personal Assignment) ============
 app.post('/api/admin/students/:id/assign-exam', verifyAdminJWT, async (req, res) => {
   const { id: studentId } = req.params;
