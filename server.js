@@ -5,10 +5,13 @@ import { createClient } from '@supabase/supabase-js'
 import { v2 as cloudinary } from 'cloudinary'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import path from 'path'
 import nodemailer from 'nodemailer'
 import axios from 'axios'
 import { existsSync } from 'fs'
+import fs from 'fs'
 import { exec } from 'child_process'
+import os from 'os'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
 import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
@@ -364,28 +367,28 @@ function decryptStudent(student) {
   try {
     return {
       ...student,
-      date_of_birth: decryptData(student.date_of_birth, 'student'),
-      email: decryptData(student.email, 'student'),
-      phone: student.phone ? decryptData(student.phone, 'student') : '',
-      address: student.address ? decryptData(student.address, 'student') : '',
-      parent_pin: student.parent_pin ? decryptData(student.parent_pin, 'student') : ''
+      date_of_birth: student.date_of_birth ? decryptData(student.date_of_birth, 'student') : '',
+      email: student.email ? decryptData(student.email, 'student') : '',
+      phone: student.phone ? decryptData(student.phone, 'student') : ''
     };
   } catch (err) {
-    console.error("Error decrypting student record:", err.message);
-    return student; // Return unmodified as fallback
+    console.error('Error decrypting student record:', err.message);
+    return student;
   }
 }
 
 function encryptStudent(student) {
   if (!student) return null;
-  return {
+  const result = {
     ...student,
-    date_of_birth: encryptData(student.date_of_birth, 'student'),
-    email: encryptData(student.email, 'student'),
-    phone: student.phone ? encryptData(student.phone, 'student') : '',
-    address: student.address ? encryptData(student.address, 'student') : '',
-    parent_pin: student.parent_pin ? encryptData(student.parent_pin, 'student') : ''
+    date_of_birth: student.date_of_birth ? encryptData(student.date_of_birth, 'student') : '',
+    email: student.email ? encryptData(student.email, 'student') : '',
+    phone: student.phone ? encryptData(student.phone, 'student') : ''
   };
+  // Only include address/parent_pin if they were provided (not in current schema)
+  delete result.address;
+  delete result.parent_pin;
+  return result;
 }
 
 // Domain emails
@@ -3333,10 +3336,16 @@ app.get('/api/admin/key-status', verifyAdminJWT, async (req, res) => {
 
 app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req, res) => {
   try {
-    const currentVersion = parseInt(activeVersion.replace('v', '')) || 1;
-    const newVersion = `v${currentVersion + 1}`;
-    
-    // Generate new secure seeds dynamically
+    // Read current version from file since activeVersion is scoped to cryptoService.js
+    const rotationStatePath = path.resolve('scratch/key_rotation.json');
+    let currentVersionNum = 1;
+    try {
+      if (fs.existsSync(rotationStatePath)) {
+        const state = JSON.parse(fs.readFileSync(rotationStatePath, 'utf8'));
+        currentVersionNum = parseInt((state.activeVersion || 'v1').replace('v', '')) || 1;
+      }
+    } catch (e) {}
+    const newVersion = `v${currentVersionNum + 1}`;
     const randomSeed = () => crypto.randomBytes(32).toString('hex');
     const newKeys = {
       student: randomSeed(),
@@ -3345,50 +3354,57 @@ app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req,
       video: randomSeed(),
       session: randomSeed()
     };
-    
     rotateEncryptionKeys(newVersion, newKeys);
-    await logSecurityEvent('key_rotation', `Superadmin rotated database encryption keys to version ${newVersion}`, req.user.id, req);
-    
+    await logSecurityEvent('key_rotation', `Superadmin rotated encryption keys to version ${newVersion}`, req.user.id, req);
     res.json({ ok: true, activeVersion: newVersion });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to rotate keys.' });
+    res.status(500).json({ error: 'Failed to rotate keys: ' + err.message });
   }
 });
 
 // Security SOC & Deep System Scanner API Router Proxy
 app.post('/api/admin/security/run-dependency-scan', verifyAdminJWT, async (req, res) => {
-  // Execute npm audit & outdated package checks as child process
-  exec('npm audit --json', (err1, stdout1) => {
-    let auditResult = { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } };
-    try {
-      if (stdout1) {
-        const parsed = JSON.parse(stdout1);
-        if (parsed.metadata && parsed.metadata.vulnerabilities) {
-          auditResult.vulnerabilities = parsed.metadata.vulnerabilities;
-        }
-      }
-    } catch (e) {}
-
-    exec('npm outdated --json', (err2, stdout2) => {
-      let outdatedResult = [];
+  try {
+    // Use npm audit programmatically
+    exec('npm audit --json 2>/dev/null || echo "{}"', { timeout: 30000 }, (err, stdout, stderr) => {
+      let auditResult = { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0, info: 0 } };
       try {
-        if (stdout2) {
-          const parsed = JSON.parse(stdout2);
-          outdatedResult = Object.entries(parsed).map(([pkg, val]) => ({
-            name: pkg,
-            current: val.current,
-            wanted: val.wanted,
-            latest: val.latest
-          }));
+        const raw = (stdout || '{}').trim();
+        // Find the first valid JSON object in output
+        const jsonStart = raw.indexOf('{');
+        if (jsonStart !== -1) {
+          const parsed = JSON.parse(raw.substring(jsonStart));
+          if (parsed.metadata && parsed.metadata.vulnerabilities) {
+            auditResult.vulnerabilities = parsed.metadata.vulnerabilities;
+          }
         }
-      } catch (e) {}
+      } catch (parseErr) {
+        console.warn('npm audit parse error:', parseErr.message);
+      }
 
-      res.json({
-        vulnerabilities: auditResult.vulnerabilities,
-        outdatedPackages: outdatedResult
+      exec('npm outdated --json 2>/dev/null || echo "{}"', { timeout: 15000 }, (err2, stdout2) => {
+        let outdatedResult = [];
+        try {
+          const raw2 = (stdout2 || '{}').trim();
+          const jsonStart2 = raw2.indexOf('{');
+          if (jsonStart2 !== -1) {
+            const parsed2 = JSON.parse(raw2.substring(jsonStart2));
+            outdatedResult = Object.entries(parsed2).map(([pkg, val]) => ({
+              name: pkg, current: val.current, wanted: val.wanted, latest: val.latest
+            }));
+          }
+        } catch (e) {}
+
+        res.json({
+          vulnerabilities: auditResult.vulnerabilities,
+          outdatedPackages: outdatedResult,
+          scannedAt: new Date().toISOString()
+        });
       });
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: 'Scan failed: ' + err.message, vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } });
+  }
 });
 
 app.get('/api/admin/security/db-audit', verifyAdminJWT, async (req, res) => {
@@ -3504,6 +3520,320 @@ app.post('/api/csp-report', express.json({ type: ['json', 'application/csp-repor
 });
 
 // ============ END ADVANCED SECURITY ENDPOINTS & PROXIES ============
+
+// ============ NEW: Real-time Server Telemetry ============
+const apiResponseTimes = [];
+// Track response times middleware (add this to existing app.use chain)
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    apiResponseTimes.push(ms);
+    if (apiResponseTimes.length > 100) apiResponseTimes.shift();
+  });
+  next();
+});
+
+app.get('/api/admin/telemetry', verifyAdminJWT, async (req, res) => {
+  try {
+    const memUsage = process.memoryUsage();
+    const cpus = os.cpus();
+    
+    // Calculate CPU usage from idle/total
+    let totalIdle = 0, totalTick = 0;
+    cpus.forEach(cpu => {
+      for (const type in cpu.times) { totalTick += cpu.times[type]; }
+      totalIdle += cpu.times.idle;
+    });
+    const cpuUsage = Math.round((1 - totalIdle / totalTick) * 100);
+
+    // RAM in MB
+    const ramUsedMB = Math.round(memUsage.rss / 1024 / 1024);
+    const ramTotalMB = Math.round(os.totalmem() / 1024 / 1024);
+
+    // Average API latency
+    const avgLatency = apiResponseTimes.length > 0
+      ? Math.round(apiResponseTimes.reduce((a, b) => a + b, 0) / apiResponseTimes.length)
+      : 0;
+
+    // DB connection count from Supabase (approximate)
+    let dbConnections = 0;
+    try {
+      const { count } = await supabaseAdmin.from('session_activity').select('*', { count: 'exact', head: true });
+      dbConnections = count || 0;
+    } catch (e) {}
+
+    res.json({
+      cpu: Math.min(cpuUsage, 99),
+      ram: { used: ramUsedMB, total: ramTotalMB },
+      avgLatencyMs: avgLatency,
+      dbConnections,
+      uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch telemetry.' });
+  }
+});
+
+// ============ NEW: Generate Admin Test Token ============
+app.post('/api/admin/generate-test-token', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data: { session } } = await supabase.auth.getUser(req.headers.authorization?.split(' ')[1]);
+    const payload = {
+      adminId: req.user.id,
+      adminEmail: req.user.email,
+      role: 'super_admin',
+      issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      tokenId: crypto.randomBytes(16).toString('hex')
+    };
+    const token = Buffer.from(JSON.stringify(payload)).toString('base64');
+    const signature = crypto.createHmac('sha256', process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026')
+      .update(token)
+      .digest('hex');
+    
+    await logSecurityEvent('admin_token_generated', `Admin generated test token`, req.user.id, req);
+    res.json({ token: `${token}.${signature}`, payload, expiresIn: '24h' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate token: ' + err.message });
+  }
+});
+
+// ============ NEW: Firewall Rules API ============
+app.get('/api/admin/firewall/rules', verifyAdminJWT, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('firewall_rules')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch firewall rules.' });
+  }
+});
+
+app.post('/api/admin/firewall/block', verifyAdminJWT, async (req, res) => {
+  const { ip_address, reason } = req.body;
+  if (!ip_address) return res.status(400).json({ error: 'ip_address is required' });
+  try {
+    // Detect VPN/proxy via ip-api.com (free, no key needed)
+    let geoInfo = { country: 'Unknown', city: 'Unknown', isp: 'Unknown', is_vpn: false };
+    try {
+      const geoRes = await axios.get(`http://ip-api.com/json/${ip_address}?fields=status,country,city,isp,proxy,hosting`, { timeout: 5000 });
+      if (geoRes.data?.status === 'success') {
+        geoInfo = {
+          country: geoRes.data.country || 'Unknown',
+          city: geoRes.data.city || 'Unknown',
+          isp: geoRes.data.isp || 'Unknown',
+          is_vpn: geoRes.data.proxy || geoRes.data.hosting || false
+        };
+      }
+    } catch (geoErr) { console.warn('Geo lookup failed:', geoErr.message); }
+
+    const { data, error } = await supabaseAdmin
+      .from('firewall_rules')
+      .upsert({
+        ip_address,
+        reason: reason || 'Blocked by administrator',
+        is_blocked: true,
+        is_vpn: geoInfo.is_vpn,
+        country: geoInfo.country,
+        city: geoInfo.city,
+        isp: geoInfo.isp,
+        blocked_by: req.user.email,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'ip_address' })
+      .select()
+      .single();
+
+    if (error) throw error;
+    await logSecurityEvent('ip_blocked', `Admin blocked IP ${ip_address}: ${reason}`, req.user.id, req);
+    res.json({ ok: true, rule: data });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to block IP: ' + err.message });
+  }
+});
+
+app.post('/api/admin/firewall/unblock', verifyAdminJWT, async (req, res) => {
+  const { ip_address } = req.body;
+  if (!ip_address) return res.status(400).json({ error: 'ip_address is required' });
+  try {
+    const { error } = await supabaseAdmin
+      .from('firewall_rules')
+      .update({ is_blocked: false, updated_at: new Date().toISOString() })
+      .eq('ip_address', ip_address);
+    if (error) throw error;
+    await logSecurityEvent('ip_unblocked', `Admin unblocked IP ${ip_address}`, req.user.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unblock IP.' });
+  }
+});
+
+// ============ NEW: Mail System Compose ============
+app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
+  try {
+    const { recipients, subject, body, attachments } = req.body;
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'At least one recipient is required.' });
+    }
+    if (!subject || !body) {
+      return res.status(400).json({ error: 'Subject and body are required.' });
+    }
+    if (recipients.length > 1000) {
+      return res.status(400).json({ error: 'Maximum 1000 recipients per send.' });
+    }
+
+    const fromEmail = process.env.MAIL_FROM_ADDRESS || 'response@harmanrathiportal.dpdns.org';
+    const client = resendScorecardClient || resend;
+    if (!client) return res.status(500).json({ error: 'Email service not configured.' });
+
+    // Build attachment list for Resend
+    const resendAttachments = (attachments || []).map(a => ({
+      filename: a.filename,
+      content: a.content // base64 encoded
+    }));
+
+    // Send in batches of 50 (Resend limit)
+    const batchSize = 50;
+    let sent = 0, failed = 0, errors = [];
+    for (let i = 0; i < recipients.length; i += batchSize) {
+      const batch = recipients.slice(i, i + batchSize);
+      try {
+        await client.emails.send({
+          from: `HRTA Portal <${fromEmail}>`,
+          to: batch,
+          subject,
+          html: body,
+          attachments: resendAttachments.length > 0 ? resendAttachments : undefined
+        });
+        sent += batch.length;
+      } catch (batchErr) {
+        failed += batch.length;
+        errors.push(batchErr.message);
+      }
+    }
+
+    // Log to mail_logs table
+    try {
+      await supabaseAdmin.from('mail_logs').insert({
+        sent_by: req.user.email,
+        recipients,
+        subject,
+        body_preview: body.replace(/<[^>]+>/g, '').substring(0, 200),
+        attachment_count: (attachments || []).length,
+        status: failed === 0 ? 'sent' : 'partial',
+        error_message: errors.length > 0 ? errors.join('; ') : null
+      });
+    } catch (logErr) { console.warn('Failed to log mail:', logErr.message); }
+
+    await logSecurityEvent('bulk_mail_sent', `Admin sent bulk email to ${sent} recipients: ${subject}`, req.user.id, req);
+    res.json({ ok: true, sent, failed, errors });
+  } catch (err) {
+    res.status(500).json({ error: 'Mail send failed: ' + err.message });
+  }
+});
+
+app.post('/api/admin/mail/upload-attachment', verifyAdminJWT, async (req, res) => {
+  try {
+    const { file, filename, mimetype } = req.body;
+    if (!file) return res.status(400).json({ error: 'No file data provided.' });
+
+    // Upload to Cloudinary
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'auto',
+          folder: 'hrta_mail_attachments',
+          public_id: `attachment_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+          secure: true
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      const buffer = Buffer.from(file, 'base64');
+      uploadStream.end(buffer);
+    });
+
+    res.json({
+      url: result.secure_url,
+      publicId: result.public_id,
+      filename: filename || result.original_filename,
+      size: result.bytes,
+      format: result.format
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Upload failed: ' + err.message });
+  }
+});
+
+// ============ NEW: Assign Exam to Student (Personal Assignment) ============
+app.post('/api/admin/students/:id/assign-exam', verifyAdminJWT, async (req, res) => {
+  const { id: studentId } = req.params;
+  const { exam_id, custom_start, custom_end, note } = req.body;
+  if (!exam_id) return res.status(400).json({ error: 'exam_id is required.' });
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('personal_assignments')
+      .upsert({
+        student_id: studentId,
+        exam_id,
+        assigned_by: req.user.email,
+        custom_start: custom_start || null,
+        custom_end: custom_end || null,
+        note: note || null,
+        status: 'active',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'student_id,exam_id' })
+      .select()
+      .single();
+    if (error) throw error;
+    await logSecurityEvent('exam_assigned', `Admin assigned exam ${exam_id} to student ${studentId}`, req.user.id, req);
+    res.json({ ok: true, assignment: data });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to assign exam: ' + err.message });
+  }
+});
+
+app.get('/api/admin/students/:id/assignments', verifyAdminJWT, async (req, res) => {
+  const { id: studentId } = req.params;
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('personal_assignments')
+      .select('*, exams(id, title, subject, duration_minutes)')
+      .eq('student_id', studentId)
+      .eq('status', 'active');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch assignments.' });
+  }
+});
+
+// Resolve/close intrusion alert
+app.post('/api/admin/intrusion-alerts/resolve', verifyAdminJWT, async (req, res) => {
+  const { alertId } = req.body;
+  if (!alertId) return res.status(400).json({ error: 'alertId required' });
+  try {
+    const { error } = await supabaseAdmin
+      .from('intrusion_alerts')
+      .update({
+        is_resolved: true,
+        resolved_by: req.user.email,
+        resolved_at: new Date().toISOString()
+      })
+      .eq('id', alertId);
+    if (error) throw error;
+    await logSecurityEvent('alert_resolved', `Admin resolved intrusion alert ${alertId}`, req.user.id, req);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to resolve alert.' });
+  }
+});
 
 // ============ START SERVER ============
 app.listen(PORT, () => {
