@@ -13,6 +13,7 @@ import fs from 'fs'
 import { exec } from 'child_process'
 import os from 'os'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
+import { firewallMiddleware, invalidateFirewallCache } from './middleware/firewall.js'
 import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
 import crypto from 'crypto'
@@ -49,6 +50,9 @@ app.set('trust proxy', 1);
 
 // Global security headers via Helmet
 app.use(configureSecurityHeaders);
+
+// Edge Firewall verification for blacklisted IPs
+app.use(firewallMiddleware);
 
 // Restrict CORS origins securely (allowing localhost, Cloudflare Pages, and custom domain)
 app.use(cors({
@@ -3649,6 +3653,7 @@ app.post('/api/admin/firewall/block', verifyAdminJWT, async (req, res) => {
       .single();
 
     if (error) throw error;
+    await invalidateFirewallCache();
     await logSecurityEvent('ip_blocked', `Admin blocked IP ${ip_address}: ${reason}`, req.user.id, req);
     res.json({ ok: true, rule: data });
   } catch (err) {
@@ -3665,6 +3670,7 @@ app.post('/api/admin/firewall/unblock', verifyAdminJWT, async (req, res) => {
       .update({ is_blocked: false, updated_at: new Date().toISOString() })
       .eq('ip_address', ip_address);
     if (error) throw error;
+    await invalidateFirewallCache();
     await logSecurityEvent('ip_unblocked', `Admin unblocked IP ${ip_address}`, req.user.id, req);
     res.json({ ok: true });
   } catch (err) {
