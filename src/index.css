@@ -22,3 +22,8 @@
   border: 1px solid #dee2e6;
   padding: 10px;
 }
+
+/* cache-buster-css-v2 */
+html {
+  scroll-behavior: smooth;
+}

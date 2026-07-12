@@ -3,7 +3,15 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'remove-crossorigin-stylesheet',
+      transformIndexHtml(html) {
+        return html.replace(/<link rel="stylesheet" crossorigin/g, '<link rel="stylesheet"');
+      }
+    }
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
