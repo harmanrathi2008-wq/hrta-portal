@@ -28,10 +28,12 @@ export default function Login() {
           setLoading(false)
           return
         }
-        body = { email: adminEmail }
         response = await fetch('/api/send-admin-otp', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+          },
           body: JSON.stringify(body)
         })
       } else if (mode === 'superadmin') {
@@ -40,10 +42,12 @@ export default function Login() {
           setLoading(false)
           return
         }
-        body = { email: superAdminEmail, secretKey: superAdminSecret }
         response = await fetch('/api/send-superadmin-otp', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+          },
           body: JSON.stringify(body)
         })
       } else {
@@ -52,10 +56,12 @@ export default function Login() {
           setLoading(false)
           return
         }
-        body = { applicationId, dateOfBirth }
         response = await fetch('/api/send-student-otp', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+          },
           body: JSON.stringify(body)
         })
       }
@@ -95,7 +101,10 @@ export default function Login() {
     try {
       const response = await fetch('/api/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+        },
         body: JSON.stringify({ email, otp })
       })
 

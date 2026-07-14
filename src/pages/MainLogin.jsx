@@ -311,7 +311,10 @@ const MainLogin = () => {
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const sendRes = await fetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+        },
         body: JSON.stringify(payload),
       });
 
@@ -339,7 +342,10 @@ const MainLogin = () => {
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/verify-otp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+        },
         body: JSON.stringify({ 
           identifier: identifier, 
           otp: otp.trim(),
@@ -419,7 +425,10 @@ const MainLogin = () => {
       const apiBaseUrl = import.meta.env.VITE_API_URL || 'https://hrta-portal.onrender.com';
       const response = await fetch(`${apiBaseUrl}/api/verify-mfa`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
+        },
         body: JSON.stringify({
           tempToken: mfaTempToken,
           code: mfaCode.trim()
@@ -478,7 +487,8 @@ const MainLogin = () => {
       const response = await fetch(`${apiBaseUrl}/api/setup-mfa`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': 'HRTA_SECURE_CLIENT_CSRF_VAL_2026'
         },
         body: JSON.stringify({
           tempToken: mfaTempToken,

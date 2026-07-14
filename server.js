@@ -348,6 +348,7 @@ function verifyCSRF(req, res, next) {
     '/api/send-superadmin-otp',
     '/api/verify-otp',
     '/api/verify-mfa',
+    '/api/setup-mfa',
     '/api/verify-recaptcha',
     '/api/health'
   ];

@@ -33,6 +33,7 @@ window.fetch = async function (resource, options) {
       '/api/send-superadmin-otp',
       '/api/verify-otp',
       '/api/verify-mfa',
+      '/api/setup-mfa',
       '/api/verify-recaptcha',
       '/api/health'
     ].some(p => url.includes(p));
