@@ -4033,9 +4033,61 @@ if (existsSync(join(__dirname, 'dist'))) {
   })
 }
 
+// Genesis audit log seeder for empty signed_audit_logs tables
+async function seedGenesisAuditLog() {
+  try {
+    const { data: logs, error: checkErr } = await supabaseAdmin
+      .from('signed_audit_logs')
+      .select('id')
+      .limit(1);
+
+    if (checkErr) {
+      console.warn("Could not check signed_audit_logs status:", checkErr.message);
+      return;
+    }
+
+    if (!logs || logs.length === 0) {
+      console.log("Empty signed_audit_logs table detected. Seeding genesis log entry...");
+      
+      const logContent = {
+        event_type: 'genesis',
+        description: 'HRTA Cryptographic Audit Log Chain Genesis Block',
+        user_id: null,
+        ip_address: '127.0.0.1',
+        user_agent: 'System'
+      };
+
+      const signature = signLogEntry(logContent, '');
+
+      const { error: insertErr } = await supabaseAdmin
+        .from('signed_audit_logs')
+        .insert({
+          event_type: 'genesis',
+          description: 'HRTA Cryptographic Audit Log Chain Genesis Block',
+          user_id: null,
+          ip_address: '127.0.0.1',
+          user_agent: 'System',
+          previous_signature: '',
+          signature: signature
+        });
+
+      if (insertErr) {
+        console.error("Failed to insert genesis audit log:", insertErr.message);
+      } else {
+        console.log("Genesis audit log successfully seeded.");
+      }
+    }
+  } catch (err) {
+    console.warn("Genesis audit log seeding skipped:", err.message);
+  }
+}
+
 // ============ START SERVER ============
 app.listen(PORT, () => {
   console.log(`========================================`)
   console.log(`🚀 Server running on port ${PORT}`)
   console.log(`========================================`)
+  
+  // Seed genesis audit log entry if table is empty
+  seedGenesisAuditLog();
 })
