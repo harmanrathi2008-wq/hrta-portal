@@ -1,20 +1,20 @@
 import rateLimit from 'express-rate-limit';
 
-// General rate limiter for all standard API routes (100 requests per 15 minutes per IP)
+// General rate limiter for all standard API routes (60 requests per 1 minute per IP)
 export const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' },
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 60,
+  message: { error: 'Too many requests from this IP, please try again after 1 minute.' },
   standardHeaders: true, // Return standard rate limit info headers
   legacyHeaders: false, // Disable X-RateLimit-* headers
   skip: (req) => req.path && req.path.startsWith('/api/admin/'),
 });
 
 // Stricter limiter for sensitive auth endpoints (Login, Signup, OTP generation)
-// Limits requests to 7 attempts per 1 minute per IP to prevent OTP spam and brute-force
+// Limits requests to 5 attempts per 1 minute per IP to completely block brute-force attempts
 export const authLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 7,
+  max: 5,
   message: { error: 'Too many login or OTP attempts. Please try again in 1 minute.' },
   standardHeaders: true,
   legacyHeaders: false,
