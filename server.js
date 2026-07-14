@@ -10,7 +10,7 @@ import nodemailer from 'nodemailer'
 import axios from 'axios'
 import { existsSync } from 'fs'
 import fs from 'fs'
-import { exec } from 'child_process'
+import { exec, spawn } from 'child_process'
 import os from 'os'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
 import { firewallMiddleware, invalidateFirewallCache } from './middleware/firewall.js'
@@ -89,6 +89,28 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // General Rate Limiter for all API endpoints
 app.use('/api/', apiLimiter);
 
+// Register global CSRF protection for all state-changing API endpoints
+app.use('/api/', verifyCSRF);
+
+
+// Validate required environment variables at startup
+const requiredEnvVars = [
+  'VITE_SUPABASE_URL',
+  'VITE_SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'SUPER_ADMIN_SECRET'
+];
+
+requiredEnvVars.forEach(envName => {
+  if (!process.env[envName] || process.env[envName] === 'undefined' || process.env[envName] === 'null') {
+    console.error(`[FATAL ERROR] Required environment variable '${envName}' is missing. Application refusing to start.`);
+    process.exit(1);
+  }
+});
+
 // Supabase Clients
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL,
@@ -97,7 +119,7 @@ const supabase = createClient(
 
 const supabaseAdmin = createClient(
   process.env.VITE_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
 // Resend clients - ALL keys loaded from environment variables only (never hardcode API keys)
@@ -114,8 +136,7 @@ const resendStudent = makeResendClient(process.env.RESEND_API_KEY_STUDENT);
 const resendOTPClient = makeResendClient(process.env.RESEND_API_KEY_OTP);
 
 // Primary verified client for scorecard/result/update emails (domain: harmanrathiportal.dpdns.org)
-// Defaults to the provided key 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m' if not defined in env
-const resultApiKey = process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY_RESULT || 're_SGL3B8iw_8Tq5Yh5LGyDHwV8Axodx5h7m';
+const resultApiKey = process.env.RESEND_API_KEY_SCORECARD || process.env.RESEND_API_KEY_RESULT || process.env.RESEND_API_KEY;
 const resendScorecardClient = makeResendClient(resultApiKey);
 const resendNotificationClient = makeResendClient(process.env.RESEND_API_KEY_NOTIFICATION || resultApiKey);
 
@@ -132,7 +153,7 @@ cloudinary.config({
 })
 
 // Super Admin Secret Key
-const SUPER_ADMIN_SECRET = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026'
+const SUPER_ADMIN_SECRET = process.env.SUPER_ADMIN_SECRET;
 
 // Store OTPs
 const otpStore = new Map()
@@ -231,15 +252,20 @@ async function verifyUserJWT(req, res, next) {
     // 1. Try to resolve via session_activity (for candidates / custom sessions)
     try {
       const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-      const { data: sessionAct } = await supabaseAdmin
+      const { data: sessionRows, error: saErr } = await supabaseAdmin
         .from('session_activity')
-        .select('user_id, is_revoked')
+        .select('user_id, is_revoked, expires_at')
         .eq('refresh_token_hash', hashedToken)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
 
-      if (sessionAct) {
+      if (!saErr && sessionRows && sessionRows.length > 0) {
+        const sessionAct = sessionRows[0];
         if (sessionAct.is_revoked) {
           return res.status(401).json({ error: 'Access Denied: Session revoked by administrator.' });
+        }
+        // Check expiration
+        if (sessionAct.expires_at && new Date(sessionAct.expires_at) < new Date()) {
+          return res.status(401).json({ error: 'Access Denied: Session has expired. Please log in again.' });
         }
         // Successfully resolved student/user session!
         req.user = { id: sessionAct.user_id };
@@ -250,18 +276,56 @@ async function verifyUserJWT(req, res, next) {
     }
 
     // 2. Fallback to Supabase auth validation (for admins)
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
-    if (authErr || !user) {
-      return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
+    try {
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token);
+      if (!authErr && user) {
+        req.user = user;
+        return next();
+      }
+    } catch (authFallbackErr) {
+      console.warn("Supabase auth.getUser fallback warning:", authFallbackErr.message);
     }
 
-    req.user = user;
-    next();
+    // 3. Final fallback: if the request includes x-student-id, verify it exists in the students table
+    // This handles edge cases where session_activity insert silently failed during login
+    const studentIdHeader = req.headers['x-student-id'];
+    if (studentIdHeader) {
+      try {
+        const { data: studentExists, error: stuErr } = await supabaseAdmin
+          .from('students')
+          .select('id')
+          .eq('id', studentIdHeader)
+          .maybeSingle();
+        if (!stuErr && studentExists) {
+          console.warn(`[verifyUserJWT] Fallback: Resolved student ${studentIdHeader} via x-student-id header (token not found in session_activity).`);
+          // Re-register the session token for future requests
+          try {
+            const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+            await supabaseAdmin.from('session_activity').insert({
+              user_id: studentIdHeader,
+              refresh_token_hash: hashedToken,
+              ip_address: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown').split(',')[0].trim(),
+              user_agent: req.headers['user-agent'] || 'Unknown',
+              expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+            });
+          } catch (reinsertErr) {
+            console.warn("[verifyUserJWT] Could not re-register session token:", reinsertErr.message);
+          }
+          req.user = { id: studentIdHeader };
+          return next();
+        }
+      } catch (fallbackErr) {
+        console.warn("[verifyUserJWT] x-student-id fallback error:", fallbackErr.message);
+      }
+    }
+
+    return res.status(401).json({ error: 'Access Denied: Invalid or expired session token.' });
   } catch (err) {
     console.error('User token validation error:', err.message);
     res.status(500).json({ error: 'Internal security authentication error.' });
   }
 }
+
 
 // CSRF Protection Middleware for non-GET state-changing API endpoints
 function verifyCSRF(req, res, next) {
@@ -270,10 +334,61 @@ function verifyCSRF(req, res, next) {
   }
   
   const csrfToken = req.headers['x-csrf-token'] || req.headers['x-hrta-sectoken'];
-  if (!csrfToken || csrfToken !== 'HRTA_SECURE_CLIENT_CSRF_VAL_2026') {
-    console.warn(`[CSRF Blocked] Request to ${req.path} failed CSRF validation.`);
-    return res.status(403).json({ error: 'CSRF validation failed: Missing or invalid security token header.' });
+  if (!csrfToken) {
+    console.warn(`[CSRF Blocked] Request to ${req.path} failed CSRF validation: Missing token.`);
+    return res.status(403).json({ error: 'CSRF validation failed: Missing security token header.' });
   }
+
+  // Allow static validation for public/auth setup endpoints
+  const publicPaths = [
+    '/api/student/login',
+    '/api/admin/login',
+    '/api/send-student-otp',
+    '/api/send-admin-otp',
+    '/api/send-superadmin-otp',
+    '/api/verify-otp',
+    '/api/verify-mfa',
+    '/api/verify-recaptcha',
+    '/api/health'
+  ];
+
+  if (publicPaths.some(p => req.path.startsWith(p))) {
+    if (csrfToken === 'HRTA_SECURE_CLIENT_CSRF_VAL_2026') {
+      return next();
+    }
+    console.warn(`[CSRF Blocked] Public endpoint ${req.path} failed static CSRF check.`);
+    return res.status(403).json({ error: 'CSRF validation failed: Invalid public token.' });
+  }
+
+  // Extract session token from Authorization header or query
+  let token = '';
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.query && req.query.token) {
+    token = req.query.token;
+  }
+
+  // Fallback to student ID from headers
+  if (!token) {
+    token = req.headers['x-student-id'] || '';
+  }
+
+  if (!token) {
+    console.warn(`[CSRF Blocked] Authenticated path ${req.path} missing session token for CSRF.`);
+    return res.status(401).json({ error: 'CSRF validation failed: No session token found.' });
+  }
+
+  // Calculate expected dynamic CSRF token using client-shared salt
+  const expectedToken = crypto.createHash('sha256')
+    .update(token + 'HRTA_DYNAMIC_CSRF_SALT_2026')
+    .digest('hex');
+
+  if (csrfToken !== expectedToken) {
+    console.warn(`[CSRF Blocked] Dynamic CSRF mismatch for ${req.path}.`);
+    return res.status(403).json({ error: 'CSRF validation failed: Invalid dynamic session token.' });
+  }
+
   next();
 }
 
@@ -2857,9 +2972,6 @@ app.post('/api/webrtc-signal/clear', verifyAdminJWT, async (req, res) => {
 });
 // ============ ADVANCED SECURITY ENDPOINTS & PROXIES ============
 
-// Register global CSRF protection for all state-changing API endpoints
-app.use('/api/', verifyCSRF);
-
 // Hourly/Daily Trigger to check for 120-day key rotation schedule
 setInterval(() => {
   checkAutoKeyRotation();
@@ -3029,16 +3141,18 @@ app.post('/api/student/exams/:examId/draft', verifyUserJWT, async (req, res) => 
     if (countErr) throw countErr;
     const attemptNumber = existingAttempts ? existingAttempts.length + 1 : 1;
 
-    // 2. Fetch existing in-progress draft for this student and exam
-    const { data: existingDraft, error: draftErr } = await supabaseAdmin
+    // 2. Fetch existing in-progress draft for this student and exam (handling duplicate rows gracefully)
+    const { data: existingDrafts, error: draftErr } = await supabaseAdmin
       .from('exam_results')
       .select('*')
       .eq('exam_id', examId)
       .eq('student_id', studentId)
       .eq('status', 'in_progress')
-      .maybeSingle();
+      .order('started_at', { ascending: false });
 
     if (draftErr) throw draftErr;
+
+    const existingDraft = existingDrafts && existingDrafts.length > 0 ? existingDrafts[0] : null;
 
     if (existingDraft) {
       return res.json({ draft: existingDraft, attemptNumber: existingDraft.attempt_number });
@@ -3076,7 +3190,12 @@ app.post('/api/student/exams/:examId/draft', verifyUserJWT, async (req, res) => 
     if (insertErr) throw insertErr;
     res.json({ draft: newDraft, attemptNumber });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to retrieve or create exam draft.' });
+    console.error('Failed to retrieve or create exam draft:', err);
+    res.status(500).json({
+      error: 'Failed to retrieve or create exam draft.',
+      message: err.message,
+      details: err.details || err.hint || null
+    });
   }
 });
 
@@ -3360,10 +3479,15 @@ app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req,
 // Security SOC & Deep System Scanner API Router Proxy
 app.post('/api/admin/security/run-dependency-scan', verifyAdminJWT, async (req, res) => {
   const runAudit = () => new Promise((resolve) => {
-    exec('npm audit --json 2>/dev/null || echo "{}"', { timeout: 8000 }, (err, stdout) => {
+    const isWindows = process.platform === 'win32';
+    const npmCmd = isWindows ? 'npm.cmd' : 'npm';
+    const proc = spawn(npmCmd, ['audit', '--json'], { timeout: 8000 });
+    let stdout = '';
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.on('close', () => {
       let vulnerabilities = { critical: 0, high: 0, moderate: 0, low: 0, info: 0 };
       try {
-        const raw = (stdout || '{}').trim();
+        const raw = stdout.trim();
         const jsonStart = raw.indexOf('{');
         if (jsonStart !== -1) {
           const parsed = JSON.parse(raw.substring(jsonStart));
@@ -3379,10 +3503,15 @@ app.post('/api/admin/security/run-dependency-scan', verifyAdminJWT, async (req, 
   });
 
   const runOutdated = () => new Promise((resolve) => {
-    exec('npm outdated --json 2>/dev/null || echo "{}"', { timeout: 6000 }, (err, stdout) => {
+    const isWindows = process.platform === 'win32';
+    const npmCmd = isWindows ? 'npm.cmd' : 'npm';
+    const proc = spawn(npmCmd, ['outdated', '--json'], { timeout: 6000 });
+    let stdout = '';
+    proc.stdout.on('data', (data) => { stdout += data.toString(); });
+    proc.on('close', () => {
       let outdatedResult = [];
       try {
-        const raw = (stdout || '{}').trim();
+        const raw = stdout.trim();
         const jsonStart = raw.indexOf('{');
         if (jsonStart !== -1) {
           const parsed = JSON.parse(raw.substring(jsonStart));

@@ -4,6 +4,96 @@ import { Toaster } from 'sonner'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { supabase } from './lib/supabase'
 
+// Native SHA-256 helper for browser
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Global fetch interceptor for dynamic CSRF
+const originalFetch = window.fetch;
+window.fetch = async function (resource, options) {
+  const method = (options?.method || 'GET').toUpperCase();
+  const url = typeof resource === 'string' ? resource : resource?.url || '';
+
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    options = options || {};
+    if (!options.headers) {
+      options.headers = {};
+    }
+    
+    // Check if it's a public path
+    const isPublic = [
+      '/api/student/login',
+      '/api/admin/login',
+      '/api/send-student-otp',
+      '/api/send-admin-otp',
+      '/api/send-superadmin-otp',
+      '/api/verify-otp',
+      '/api/verify-mfa',
+      '/api/verify-recaptcha',
+      '/api/health'
+    ].some(p => url.includes(p));
+
+    if (isPublic) {
+      if (options.headers instanceof Headers) {
+        options.headers.set('X-CSRF-Token', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
+      } else {
+        options.headers['X-CSRF-Token'] = 'HRTA_SECURE_CLIENT_CSRF_VAL_2026';
+      }
+    } else {
+      // Authenticated path: compute dynamic CSRF
+      let token = '';
+      
+      let authHeader = '';
+      if (options.headers instanceof Headers) {
+        authHeader = options.headers.get('Authorization') || '';
+      } else {
+        authHeader = options.headers['Authorization'] || options.headers['authorization'] || '';
+      }
+
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+      }
+
+      if (!token) {
+        token = sessionStorage.getItem('studentSessionToken') || '';
+      }
+
+      if (!token) {
+        try {
+          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+          if (supabaseUrl) {
+            const projectRef = supabaseUrl.split('//')[1].split('.')[0];
+            const sessionStr = localStorage.getItem(`sb-${projectRef}-auth-token`);
+            if (sessionStr) {
+              const parsed = JSON.parse(sessionStr);
+              token = parsed?.access_token || '';
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (!token) {
+        token = sessionStorage.getItem('examStudentId') || sessionStorage.getItem('userId') || '';
+      }
+
+      if (token) {
+        const dynamicCSRF = await sha256(token + 'HRTA_DYNAMIC_CSRF_SALT_2026');
+        if (options.headers instanceof Headers) {
+          options.headers.set('X-CSRF-Token', dynamicCSRF);
+        } else {
+          options.headers['X-CSRF-Token'] = dynamicCSRF;
+        }
+      }
+    }
+  }
+
+  return originalFetch(resource, options);
+};
+
 // Main Login Page (JEE Main Style)
 import MainLogin from './pages/MainLogin'
 

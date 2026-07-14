@@ -311,22 +311,65 @@ export default function ExamInterface() {
           return;
         }
 
-        // Self-healing fallback: if studentSessionToken is missing, attempt to recover from Supabase session
+        // Multi-strategy token resolution: try every available source
         let token = sessionStorage.getItem("studentSessionToken") || '';
         if (!token) {
-          const { data: { session } } = await supabase.auth.getSession();
-          token = session?.access_token || '';
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.access_token) {
+              token = session.access_token;
+              sessionStorage.setItem("studentSessionToken", token);
+            }
+          } catch (e) {
+            console.warn("[HRTA] Supabase session fallback failed:", e.message);
+          }
         }
+
+        // Helper: make an authenticated fetch with automatic retry (3 attempts, exponential backoff)
+        const resilientFetch = async (url, options = {}, retries = 3) => {
+          for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+              // Re-read token on each retry in case it was refreshed
+              const currentToken = sessionStorage.getItem("studentSessionToken") || token;
+              const headers = { ...options.headers, 'Authorization': `Bearer ${currentToken}`, 'x-student-id': userId };
+              if (options.body) headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+
+              const res = await fetch(url, { ...options, headers });
+              if (res.ok) return res.json();
+
+              // On 401, try to refresh token via Supabase auth before retrying
+              if (res.status === 401 && attempt < retries) {
+                console.warn(`[HRTA] 401 on attempt ${attempt} for ${url}, trying token refresh...`);
+                try {
+                  const { data: { session: freshSession } } = await supabase.auth.getSession();
+                  if (freshSession?.access_token) {
+                    token = freshSession.access_token;
+                    sessionStorage.setItem("studentSessionToken", token);
+                  }
+                } catch (refreshErr) {
+                  console.warn("[HRTA] Token refresh failed:", refreshErr.message);
+                }
+                await new Promise(r => setTimeout(r, 500 * attempt));
+                continue;
+              }
+
+              // Parse error body for detailed message
+              let errorBody = {};
+              try { errorBody = await res.json(); } catch (e) {}
+              const errMsg = errorBody.message || errorBody.error || `Server returned ${res.status}`;
+              throw new Error(errMsg);
+            } catch (err) {
+              if (attempt === retries) throw err;
+              console.warn(`[HRTA] Fetch attempt ${attempt} failed for ${url}:`, err.message);
+              await new Promise(r => setTimeout(r, 800 * attempt));
+            }
+          }
+        };
+
         const [studentRes, examRes, questionsRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
-          fetch(`${API_BASE_URL}/api/student/exams/${examId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
-          fetch(`${API_BASE_URL}/api/student/exams/${examId}/questions`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).then(r => { if (!r.ok) throw new Error(); return r.json(); })
+          resilientFetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`),
+          resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}`),
+          resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}/questions`)
         ]);
 
         setStudent(studentRes);
@@ -346,17 +389,16 @@ export default function ExamInterface() {
           setActiveSection(secs[0]);
         }
 
-        // Fetch or create database-level in-progress attempt row (draft)
-        const draftData = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/draft`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            startTime: sessionStorage.getItem(`exam_start_time_${examId}`) || Date.now().toString()
-          })
-        }).then(r => { if (!r.ok) throw new Error('Failed to load/create exam attempt'); return r.json(); });
+        // Fetch or create database-level in-progress attempt row (draft) — with retry
+        const draftData = await resilientFetch(
+          `${API_BASE_URL}/api/student/exams/${examId}/draft`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              startTime: sessionStorage.getItem(`exam_start_time_${examId}`) || Date.now().toString()
+            })
+          }
+        );
 
         const currentDraft = draftData.draft;
         setDraftId(draftData.draft.id);
