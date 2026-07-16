@@ -399,11 +399,19 @@ export default function ExamInterface() {
           }
         };
 
-        const [studentRes, examRes, questionsRes] = await Promise.all([
+        let studentRes = null;
+        let examRes = null;
+        let questionsRes = [];
+
+        const fetchedData = await Promise.all([
           resilientFetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`),
           resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}`),
           resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}/questions`)
         ]);
+
+        studentRes = fetchedData[0];
+        examRes = fetchedData[1];
+        questionsRes = fetchedData[2];
 
         setStudent(studentRes);
         setExam(examRes);
