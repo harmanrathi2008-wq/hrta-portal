@@ -325,9 +325,17 @@ export default function ExamInterface() {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      let userId = null;
+      let role = null;
+      let token = '';
+      let studentRes = null;
+      let examRes = null;
+      let questionsRes = [];
+      let fetchedData = null;
+
       try {
-        const userId = sessionStorage.getItem("userId");
-        const role = sessionStorage.getItem("role");
+        userId = sessionStorage.getItem("userId");
+        role = sessionStorage.getItem("role");
 
         if (!userId || role !== "student") {
           navigate("/");
@@ -335,7 +343,7 @@ export default function ExamInterface() {
         }
 
         // Multi-strategy token resolution: try every available source
-        let token = sessionStorage.getItem("studentSessionToken") || '';
+        token = sessionStorage.getItem("studentSessionToken") || '';
         if (!token) {
           try {
             const { data: { session } } = await supabase.auth.getSession();
@@ -399,11 +407,7 @@ export default function ExamInterface() {
           }
         };
 
-        let studentRes = null;
-        let examRes = null;
-        let questionsRes = [];
-
-        const fetchedData = await Promise.all([
+        fetchedData = await Promise.all([
           resilientFetch(`${API_BASE_URL}/api/student/profile?studentId=${userId}`),
           resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}`),
           resilientFetch(`${API_BASE_URL}/api/student/exams/${examId}/questions`)
