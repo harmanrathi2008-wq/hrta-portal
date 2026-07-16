@@ -352,7 +352,8 @@ export default function ExamInterface() {
 
         // Helper: make an authenticated fetch with automatic retry (3 attempts, exponential backoff)
         const resilientFetch = async (url, options = {}, retries = 3) => {
-          for (let attempt = 1; attempt <= retries; attempt++) {
+          let attempt = 1;
+          for (; attempt <= retries; attempt++) {
             try {
               // Re-read token on each retry in case it was refreshed
               const currentToken = sessionStorage.getItem("studentSessionToken") || token;
