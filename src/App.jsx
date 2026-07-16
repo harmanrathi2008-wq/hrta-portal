@@ -20,9 +20,11 @@ window.fetch = async function (resource, options) {
 
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
     options = options || {};
-    if (!options.headers) {
-      options.headers = {};
-    }
+    
+    // Normalize headers to a standard Headers object
+    const headers = options.headers instanceof Headers 
+      ? options.headers 
+      : new Headers(options.headers || {});
     
     // Check if it's a public path
     const isPublic = [
@@ -39,22 +41,12 @@ window.fetch = async function (resource, options) {
     ].some(p => url.includes(p));
 
     if (isPublic) {
-      if (options.headers instanceof Headers) {
-        options.headers.set('X-CSRF-Token', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
-      } else {
-        options.headers['X-CSRF-Token'] = 'HRTA_SECURE_CLIENT_CSRF_VAL_2026';
-      }
+      headers.set('X-CSRF-Token', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
     } else {
       // Authenticated path: compute dynamic CSRF
       let token = '';
       
-      let authHeader = '';
-      if (options.headers instanceof Headers) {
-        authHeader = options.headers.get('Authorization') || '';
-      } else {
-        authHeader = options.headers['Authorization'] || options.headers['authorization'] || '';
-      }
-
+      const authHeader = headers.get('Authorization') || '';
       if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.split(' ')[1];
       }
@@ -83,13 +75,11 @@ window.fetch = async function (resource, options) {
 
       if (token) {
         const dynamicCSRF = await sha256(token + 'HRTA_DYNAMIC_CSRF_SALT_2026');
-        if (options.headers instanceof Headers) {
-          options.headers.set('X-CSRF-Token', dynamicCSRF);
-        } else {
-          options.headers['X-CSRF-Token'] = dynamicCSRF;
-        }
+        headers.set('X-CSRF-Token', dynamicCSRF);
       }
     }
+    
+    options.headers = headers;
   }
 
   return originalFetch(resource, options);
@@ -131,6 +121,7 @@ import InfoHelpCenter from './pages/InfoHelpCenter'
 // Components
 import ProtectedRoute from './components/ProtectedRoute'
 import PageNotFound from './pages/PageNotFound'
+import ErrorBoundary from './components/ErrorBoundary'
 
 const queryClient = new QueryClient()
 
@@ -212,9 +203,9 @@ function App() {
           <Route path="/info" element={<InfoHelpCenter />} />
 
           {/* Exam Routes (No Layout) */}
-          <Route path="/student/exam/:examId/login" element={<ExamLogin />} />
-          <Route path="/student/exam/:examId/instructions" element={<ExamInstructions />} />
-          <Route path="/student/exam/:examId/start" element={<ExamInterface />} />
+          <Route path="/student/exam/:examId/login" element={<ErrorBoundary><ExamLogin /></ErrorBoundary>} />
+          <Route path="/student/exam/:examId/instructions" element={<ErrorBoundary><ExamInstructions /></ErrorBoundary>} />
+          <Route path="/student/exam/:examId/start" element={<ErrorBoundary><ExamInterface /></ErrorBoundary>} />
 
           {/* Fallback */}
           <Route path="*" element={<PageNotFound />} />

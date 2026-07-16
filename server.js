@@ -71,6 +71,7 @@ app.use(cors({
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-HRTA-SecToken', 'X-Session-ID', 'X-Student-ID', 'X-StepUp-Secret', 'X-StepUp-Otp'],
   credentials: true
 }));
 
@@ -334,8 +335,12 @@ function verifyCSRF(req, res, next) {
   }
   
   const csrfToken = req.headers['x-csrf-token'] || req.headers['x-hrta-sectoken'];
+  
+  // Normalize originalUrl to strip query parameters
+  const cleanPath = req.originalUrl.split('?')[0];
+
   if (!csrfToken) {
-    console.warn(`[CSRF Blocked] Request to ${req.path} failed CSRF validation: Missing token.`);
+    console.warn(`[CSRF Blocked] Request to ${cleanPath} failed CSRF validation: Missing token.`);
     return res.status(403).json({ error: 'CSRF validation failed: Missing security token header.' });
   }
 
@@ -353,11 +358,11 @@ function verifyCSRF(req, res, next) {
     '/api/health'
   ];
 
-  if (publicPaths.some(p => req.path.startsWith(p))) {
+  if (publicPaths.some(p => cleanPath.startsWith(p))) {
     if (csrfToken === 'HRTA_SECURE_CLIENT_CSRF_VAL_2026') {
       return next();
     }
-    console.warn(`[CSRF Blocked] Public endpoint ${req.path} failed static CSRF check.`);
+    console.warn(`[CSRF Blocked] Public endpoint ${cleanPath} failed static CSRF check.`);
     return res.status(403).json({ error: 'CSRF validation failed: Invalid public token.' });
   }
 
@@ -376,7 +381,7 @@ function verifyCSRF(req, res, next) {
   }
 
   if (!token) {
-    console.warn(`[CSRF Blocked] Authenticated path ${req.path} missing session token for CSRF.`);
+    console.warn(`[CSRF Blocked] Authenticated path ${cleanPath} missing session token for CSRF.`);
     return res.status(401).json({ error: 'CSRF validation failed: No session token found.' });
   }
 
@@ -386,7 +391,7 @@ function verifyCSRF(req, res, next) {
     .digest('hex');
 
   if (csrfToken !== expectedToken) {
-    console.warn(`[CSRF Blocked] Dynamic CSRF mismatch for ${req.path}.`);
+    console.warn(`[CSRF Blocked] Dynamic CSRF mismatch for ${cleanPath}.`);
     return res.status(403).json({ error: 'CSRF validation failed: Invalid dynamic session token.' });
   }
 
