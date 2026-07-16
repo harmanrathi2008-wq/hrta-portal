@@ -73,13 +73,33 @@ export default function ExamInterface() {
   const [isRejected, setIsRejected] = useState(false);
 
   const sessionTokenRef = React.useRef(sessionStorage.getItem('studentSessionToken') || '');
+  const csrfTokenRef = React.useRef('');
+
+  const updateCsrfToken = async (tokenVal) => {
+    if (!tokenVal) return;
+    try {
+      const msgBuffer = new TextEncoder().encode(tokenVal + 'HRTA_DYNAMIC_CSRF_SALT_2026');
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      csrfTokenRef.current = hashHex;
+      console.log("[HRTA] CSRF token pre-computed successfully.");
+    } catch (e) {
+      console.error("[HRTA] Failed to compute CSRF token:", e);
+    }
+  };
+
   React.useEffect(() => {
     const localToken = sessionStorage.getItem('studentSessionToken');
     if (localToken) {
       sessionTokenRef.current = localToken;
+      updateCsrfToken(localToken);
     } else {
       supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) sessionTokenRef.current = session.access_token || '';
+        if (session && session.access_token) {
+          sessionTokenRef.current = session.access_token;
+          updateCsrfToken(session.access_token);
+        }
       });
     }
   }, []);
@@ -129,7 +149,8 @@ export default function ExamInterface() {
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${sessionTokenRef.current}`,
-      'X-Session-ID': loginLogId
+      'X-Session-ID': loginLogId,
+      'X-CSRF-Token': csrfTokenRef.current
     };
   }
 
@@ -326,6 +347,8 @@ export default function ExamInterface() {
             console.warn("[HRTA] Supabase session fallback failed:", e.message);
           }
         }
+        sessionTokenRef.current = token;
+        await updateCsrfToken(token);
 
         // Helper: make an authenticated fetch with automatic retry (3 attempts, exponential backoff)
         const resilientFetch = async (url, options = {}, retries = 3) => {
@@ -333,7 +356,12 @@ export default function ExamInterface() {
             try {
               // Re-read token on each retry in case it was refreshed
               const currentToken = sessionStorage.getItem("studentSessionToken") || token;
-              const headers = { ...options.headers, 'Authorization': `Bearer ${currentToken}`, 'x-student-id': userId };
+              const headers = { 
+                ...options.headers, 
+                'Authorization': `Bearer ${currentToken}`, 
+                'x-student-id': userId,
+                'X-CSRF-Token': csrfTokenRef.current
+              };
               if (options.body) headers['Content-Type'] = headers['Content-Type'] || 'application/json';
 
               const res = await fetch(url, { ...options, headers });
@@ -347,6 +375,8 @@ export default function ExamInterface() {
                   if (freshSession?.access_token) {
                     token = freshSession.access_token;
                     sessionStorage.setItem("studentSessionToken", token);
+                    sessionTokenRef.current = token;
+                    await updateCsrfToken(token);
                   }
                 } catch (refreshErr) {
                   console.warn("[HRTA] Token refresh failed:", refreshErr.message);
