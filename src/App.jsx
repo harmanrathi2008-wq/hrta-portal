@@ -21,11 +21,40 @@ window.fetch = async function (resource, options) {
   if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
     options = options || {};
     
-    // Normalize headers to a standard Headers object
-    const headers = options.headers instanceof Headers 
-      ? options.headers 
-      : new Headers(options.headers || {});
-    
+    // Ensure options.headers is a plain object for compatibility with Capacitor and Supabase
+    if (!options.headers) {
+      options.headers = {};
+    } else if (options.headers instanceof Headers) {
+      const plain = {};
+      options.headers.forEach((v, k) => {
+        plain[k] = v;
+      });
+      options.headers = plain;
+    } else if (Array.isArray(options.headers)) {
+      const plain = {};
+      options.headers.forEach(([k, v]) => {
+        plain[k] = v;
+      });
+      options.headers = plain;
+    }
+
+    // Helper functions to get/set headers case-insensitively on a plain object
+    const getHeader = (name) => {
+      const keys = Object.keys(options.headers);
+      const found = keys.find(k => k.toLowerCase() === name.toLowerCase());
+      return found ? options.headers[found] : undefined;
+    };
+
+    const setHeader = (name, value) => {
+      const keys = Object.keys(options.headers);
+      const found = keys.find(k => k.toLowerCase() === name.toLowerCase());
+      if (found) {
+        options.headers[found] = value;
+      } else {
+        options.headers[name] = value;
+      }
+    };
+
     // Check if it's a public path
     const isPublic = [
       '/api/student/login',
@@ -41,12 +70,13 @@ window.fetch = async function (resource, options) {
     ].some(p => url.includes(p));
 
     if (isPublic) {
-      headers.set('X-CSRF-Token', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
+      setHeader('X-CSRF-Token', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
+      setHeader('X-HRTA-SecToken', 'HRTA_SECURE_CLIENT_CSRF_VAL_2026');
     } else {
       // Authenticated path: compute dynamic CSRF
       let token = '';
       
-      const authHeader = headers.get('Authorization') || '';
+      const authHeader = getHeader('Authorization') || '';
       if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.split(' ')[1];
       }
@@ -75,11 +105,10 @@ window.fetch = async function (resource, options) {
 
       if (token) {
         const dynamicCSRF = await sha256(token + 'HRTA_DYNAMIC_CSRF_SALT_2026');
-        headers.set('X-CSRF-Token', dynamicCSRF);
+        setHeader('X-CSRF-Token', dynamicCSRF);
+        setHeader('X-HRTA-SecToken', dynamicCSRF);
       }
     }
-    
-    options.headers = headers;
   }
 
   return originalFetch(resource, options);

@@ -340,7 +340,7 @@ function verifyCSRF(req, res, next) {
   const cleanPath = req.originalUrl.split('?')[0];
 
   if (!csrfToken) {
-    console.warn(`[CSRF Blocked] Request to ${cleanPath} failed CSRF validation: Missing token.`);
+    console.warn(`[CSRF Blocked] Request to ${cleanPath} failed CSRF validation: Missing token. Headers received:`, JSON.stringify(req.headers));
     return res.status(403).json({ error: 'CSRF validation failed: Missing security token header.' });
   }
 
