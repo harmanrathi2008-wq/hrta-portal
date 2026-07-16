@@ -15,6 +15,9 @@ const helmetMiddleware = helmet({
       imgSrc: [
         "'self'", 
         "https://res.cloudinary.com",
+        "https://*.cloudinary.com",
+        "http://res.cloudinary.com",
+        "http://*.cloudinary.com",
         "data:", 
         "blob:"
       ],
@@ -29,7 +32,8 @@ const helmetMiddleware = helmet({
         "https://www.google.com/recaptcha/",
         "https://www.gstatic.com/recaptcha/",
         "https://recaptchaenterprise.googleapis.com/",
-        "https://api.cloudinary.com"
+        "https://api.cloudinary.com",
+        "https://*.cloudinary.com"
       ],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       frameSrc: ["'self'", "https://www.google.com/recaptcha/", "https://recaptcha.google.com/"],

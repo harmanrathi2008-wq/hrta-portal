@@ -232,6 +232,7 @@ const AdminDashboard = () => {
   const ownKeyPairRef = useRef(null);
   const sharedKeyRef = useRef(null);
   const pollIntervalRef = useRef(null);
+  const lastStudentPubkeyRef = useRef(null);
 
   // Stop monitoring and close WebRTC peer connection
   const stopMonitoring = async () => {
@@ -279,6 +280,8 @@ const AdminDashboard = () => {
       clearInterval(connectIntervalRef.current);
       connectIntervalRef.current = null;
     }
+
+    lastStudentPubkeyRef.current = null;
 
     // Call backend to clear the signaling session
     if (monitoringStudent) {
@@ -372,6 +375,7 @@ const AdminDashboard = () => {
         console.log("[HRTA Proctor] E2E shared key derived initially on admin.");
         const peerKey = await importPeerPublicKey(regData.studentPubkey);
         sharedKeyRef.current = await deriveSharedKey(keyPair.privateKey, peerKey);
+        lastStudentPubkeyRef.current = regData.studentPubkey;
       }
     } catch (regErr) {
       console.warn("[HRTA Proctor] Failed to register admin public key initially. Polling will retry.", regErr);
@@ -461,6 +465,7 @@ const AdminDashboard = () => {
             console.log("[HRTA Proctor] E2E shared key derived on admin from poll.");
             const peerKey = await importPeerPublicKey(regData.studentPubkey);
             sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
+            lastStudentPubkeyRef.current = regData.studentPubkey;
           } else {
             return; // wait for student public key
           }
@@ -483,6 +488,25 @@ const AdminDashboard = () => {
           }
         });
         const pollData = await pollResp.json();
+
+        // Self-healing: Check if student public key changed (indicates student reloaded page or resumed)
+        if (pollData.studentPubkey && pollData.studentPubkey !== lastStudentPubkeyRef.current) {
+          console.log("[HRTA Proctor] 🔄 Student public key changed (student reload/reconnect). Resetting WebRTC...");
+          lastStudentPubkeyRef.current = pollData.studentPubkey;
+          
+          if (peerConnectionRef.current) {
+            try { peerConnectionRef.current.close(); } catch (e) {}
+            peerConnectionRef.current = null;
+          }
+          
+          try {
+            const peerKey = await importPeerPublicKey(pollData.studentPubkey);
+            sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
+          } catch (e) {
+            console.error("[HRTA Proctor] Failed to derive new shared key:", e);
+            sharedKeyRef.current = null;
+          }
+        }
 
         // Process SDP Offer
         if (pollData.offer && peerConnectionRef.current) {

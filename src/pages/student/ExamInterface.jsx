@@ -106,6 +106,8 @@ export default function ExamInterface() {
   const [zoomScale, setZoomScale] = useState(1);
   const [zoomLastDist, setZoomLastDist] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [attemptNumber, setAttemptNumber] = useState(1);
+  const lastAdminPubkeyRef = React.useRef(null);
 
   // Connection & Auto-save states
   const [draftId, setDraftId] = useState(null);
@@ -401,7 +403,8 @@ export default function ExamInterface() {
         );
 
         const currentDraft = draftData.draft;
-        setDraftId(draftData.draft.id);
+        setDraftId(currentDraft ? currentDraft.id : null);
+        setAttemptNumber(draftData.attemptNumber || (currentDraft ? currentDraft.attempt_number : 1));
 
         // Log audit event: Start Exam
         try {
@@ -431,17 +434,32 @@ export default function ExamInterface() {
         const localResponsesStr = localStorage.getItem(cacheKeyResponses);
         let loadedResponses = {};
         if (localResponsesStr) {
-          loadedResponses = JSON.parse(localResponsesStr);
+          try {
+            loadedResponses = JSON.parse(localResponsesStr) || {};
+          } catch (e) {
+            loadedResponses = {};
+          }
         } else if (currentDraft && currentDraft.answers) {
-          loadedResponses = currentDraft.answers;
-          localStorage.setItem(cacheKeyResponses, JSON.stringify(currentDraft.answers));
+          loadedResponses = currentDraft.answers || {};
+          localStorage.setItem(cacheKeyResponses, JSON.stringify(loadedResponses));
         }
+
+        // Ensure loadedResponses is a valid object
+        if (!loadedResponses || typeof loadedResponses !== 'object') {
+          loadedResponses = {};
+        }
+
         setResponses(loadedResponses);
         setCommittedResponses(loadedResponses);
 
         const localStatusStr = localStorage.getItem(cacheKeyStatus);
+        let loadedStatus = {};
         if (localStatusStr) {
-          setStatus(JSON.parse(localStatusStr));
+          try {
+            loadedStatus = JSON.parse(localStatusStr) || {};
+          } catch (e) {
+            loadedStatus = {};
+          }
         } else {
           const initialStatus = {};
           questionsRes.forEach((q) => {
@@ -451,9 +469,15 @@ export default function ExamInterface() {
           if (questionsRes.length > 0 && initialStatus[questionsRes[0].id] === "notVisited") {
             initialStatus[questionsRes[0].id] = "notAnswered";
           }
-          setStatus(initialStatus);
+          loadedStatus = initialStatus;
           localStorage.setItem(cacheKeyStatus, JSON.stringify(initialStatus));
         }
+
+        // Ensure loadedStatus is a valid object
+        if (!loadedStatus || typeof loadedStatus !== 'object') {
+          loadedStatus = {};
+        }
+        setStatus(loadedStatus);
 
       } catch (err) {
         console.error("Error loading exam data:", err);
@@ -777,6 +801,7 @@ export default function ExamInterface() {
                 console.log("[HRTA Proctor] E2E shared key derived from poll.");
                 const peerKey = await importPeerPublicKey(pData.adminPubkey);
                 sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
+                lastAdminPubkeyRef.current = pData.adminPubkey;
               } else {
                 return; // wait for admin public key
               }
@@ -787,6 +812,33 @@ export default function ExamInterface() {
               headers: getHeaders()
             });
             const pollData = await pollResp.json();
+
+            // Self-healing: Check if admin public key changed (admin refreshed or new admin session)
+            if (pollData.adminPubkey && pollData.adminPubkey !== lastAdminPubkeyRef.current) {
+              console.log("[HRTA Proctor] 🔄 Admin public key changed (admin reload/reconnect). Resetting WebRTC...");
+              lastAdminPubkeyRef.current = pollData.adminPubkey;
+              
+              if (peerConnectionRef.current) {
+                try { peerConnectionRef.current.close(); } catch (e) {}
+                peerConnectionRef.current = null;
+              }
+              
+              // Derive new shared key
+              try {
+                const peerKey = await importPeerPublicKey(pollData.adminPubkey);
+                sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
+              } catch (e) {
+                console.error("[HRTA Proctor] Failed to derive new shared key:", e);
+                sharedKeyRef.current = null;
+              }
+            }
+
+            // Self-healing: if connection is failed or disconnected, clear it to trigger a new offer
+            if (peerConnectionRef.current && (peerConnectionRef.current.connectionState === "failed" || peerConnectionRef.current.connectionState === "disconnected")) {
+              console.log("[HRTA Proctor] ⚠️ WebRTC Connection failed/disconnected. Clearing peer connection to retry...");
+              try { peerConnectionRef.current.close(); } catch (e) {}
+              peerConnectionRef.current = null;
+            }
 
             // Admin requested connection
             if (pollData.adminConnected && !peerConnectionRef.current && !isConnectingRef.current) {
@@ -1998,32 +2050,45 @@ export default function ExamInterface() {
             </div>
 
             {/* Attached Graphic Image - Full original quality, no compression */}
-            {current.image_url && current.image_url !== "null" && current.image_url.trim() !== "" && !imageError && (
-              <div className="my-6 text-center border p-2 bg-gray-50 mx-auto shadow-sm rounded overflow-auto">
-                <div
-                  className="relative inline-block cursor-zoom-in group"
-                  onClick={() => { setZoomedImage(current.image_url); setZoomScale(1); }}
-                  title="Click to zoom"
-                >
-                  <img
-                    src={current.image_url}
-                    alt="Question Graphic"
-                    className="max-w-full h-auto mx-auto rounded block"
-                    style={{ display: 'block', imageRendering: 'auto' }}
-                    onError={() => setImageError(true)}
-                  />
-                  {/* Zoom hint overlay */}
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 rounded flex items-center justify-center">
-                    <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black bg-opacity-60 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                      </svg>
-                      Click to Zoom
-                    </span>
-                  </div>
+            {current.image_url && current.image_url !== "null" && current.image_url.trim() !== "" && (
+              imageError ? (
+                <div className="my-6 text-center border p-4 bg-red-50 border-red-200 mx-auto shadow-sm rounded max-w-md">
+                  <p className="text-red-700 font-bold mb-2">⚠️ Failed to load question graphic (CSP or Connection issue)</p>
+                  <button 
+                    type="button"
+                    onClick={() => { setImageError(false); }} 
+                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded shadow-sm cursor-pointer"
+                  >
+                    Retry Loading Image
+                  </button>
                 </div>
-                <p className="text-[10px] text-gray-400 font-semibold mt-1">🔍 Click image to zoom in | Pinch or scroll to zoom in lightbox</p>
-              </div>
+              ) : (
+                <div className="my-6 text-center border p-2 bg-gray-50 mx-auto shadow-sm rounded overflow-auto">
+                  <div
+                    className="relative inline-block cursor-zoom-in group"
+                    onClick={() => { setZoomedImage(current.image_url); setZoomScale(1); }}
+                    title="Click to zoom"
+                  >
+                    <img
+                      src={current.image_url}
+                      alt="Question Graphic"
+                      className="max-w-full h-auto mx-auto rounded block"
+                      style={{ display: 'block', imageRendering: 'auto' }}
+                      onError={() => setImageError(true)}
+                    />
+                    {/* Zoom hint overlay */}
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 rounded flex items-center justify-center">
+                      <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black bg-opacity-60 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                        </svg>
+                        Click to Zoom
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-semibold mt-1">🔍 Click image to zoom in | Pinch or scroll to zoom in lightbox</p>
+                </div>
+              )
             )}
 
             {/* Image Zoom Lightbox Modal - supports pinch zoom + mouse wheel zoom */}

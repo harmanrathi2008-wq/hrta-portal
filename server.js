@@ -334,17 +334,10 @@ function verifyCSRF(req, res, next) {
     return next();
   }
   
-  const csrfToken = req.headers['x-csrf-token'] || req.headers['x-hrta-sectoken'];
-  
   // Normalize originalUrl to strip query parameters
   const cleanPath = req.originalUrl.split('?')[0];
 
-  if (!csrfToken) {
-    console.warn(`[CSRF Blocked] Request to ${cleanPath} failed CSRF validation: Missing token. Headers received:`, JSON.stringify(req.headers));
-    return res.status(403).json({ error: 'CSRF validation failed: Missing security token header.' });
-  }
-
-  // Allow static validation for public/auth setup endpoints
+  // Allow static validation / bypass for public/auth setup endpoints
   const publicPaths = [
     '/api/student/login',
     '/api/admin/login',
@@ -359,11 +352,16 @@ function verifyCSRF(req, res, next) {
   ];
 
   if (publicPaths.some(p => cleanPath.startsWith(p))) {
-    if (csrfToken === 'HRTA_SECURE_CLIENT_CSRF_VAL_2026') {
-      return next();
-    }
-    console.warn(`[CSRF Blocked] Public endpoint ${cleanPath} failed static CSRF check.`);
-    return res.status(403).json({ error: 'CSRF validation failed: Invalid public token.' });
+    // Public paths don't have authenticated session state, so they are safe from CSRF.
+    // Bypassing verification prevents any pre-flight or webview compatibility issues on login.
+    return next();
+  }
+
+  const csrfToken = req.headers['x-csrf-token'] || req.headers['x-hrta-sectoken'];
+
+  if (!csrfToken) {
+    console.warn(`[CSRF Blocked] Request to ${cleanPath} failed CSRF validation: Missing token. Headers received:`, JSON.stringify(req.headers));
+    return res.status(403).json({ error: 'CSRF validation failed: Missing security token header.' });
   }
 
   // Extract session token from Authorization header or query
@@ -2896,11 +2894,11 @@ app.get('/api/webrtc-signal/poll-student', verifyUserJWT, async (req, res) => {
     const studentId = req.user?.id;
     if (!studentId) return res.status(401).json({ error: 'Unauthorized' });
     const session = webrtcSignals.get(studentId);
-    if (!session) return res.json({ answer: null, adminCandidates: [], adminConnected: false });
+    if (!session) return res.json({ answer: null, adminCandidates: [], adminConnected: false, adminPubkey: null });
     const candidates = [...session.adminCandidates];
     session.adminCandidates = []; // drain consumed candidates
     session.updatedAt = Date.now();
-    res.json({ answer: session.answer, adminCandidates: candidates, adminConnected: session.adminConnected });
+    res.json({ answer: session.answer, adminCandidates: candidates, adminConnected: session.adminConnected, adminPubkey: session.adminPubkey || null });
   } catch (e) {
     res.status(500).json({ error: 'Internal error' });
   }
@@ -2927,11 +2925,11 @@ app.get('/api/webrtc-signal/poll-admin', verifyAdminJWT, async (req, res) => {
     const { studentId } = req.query;
     if (!studentId) return res.status(400).json({ error: 'studentId required' });
     const session = webrtcSignals.get(studentId);
-    if (!session) return res.json({ offer: null, studentCandidates: [] });
+    if (!session) return res.json({ offer: null, studentCandidates: [], studentPubkey: null });
     const candidates = [...session.studentCandidates];
     session.studentCandidates = []; // drain consumed candidates
     session.updatedAt = Date.now();
-    res.json({ offer: session.offer, studentCandidates: candidates });
+    res.json({ offer: session.offer, studentCandidates: candidates, studentPubkey: session.studentPubkey || null });
   } catch (e) {
     res.status(500).json({ error: 'Internal error' });
   }
