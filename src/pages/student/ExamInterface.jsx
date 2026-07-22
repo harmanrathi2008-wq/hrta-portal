@@ -490,26 +490,30 @@ export default function ExamInterface() {
         const cacheKeyResponses = `exam_responses_${examId}_${userId}`;
         const cacheKeyStatus = `exam_status_${examId}_${userId}`;
 
-        const localResponsesStr = localStorage.getItem(cacheKeyResponses);
-        let loadedResponses = {};
+        let localResp = {};
         if (localResponsesStr) {
-          try {
-            loadedResponses = JSON.parse(localResponsesStr) || {};
-          } catch (e) {
-            loadedResponses = {};
-          }
-        } else if (currentDraft && currentDraft.answers) {
-          loadedResponses = currentDraft.answers || {};
-          localStorage.setItem(cacheKeyResponses, JSON.stringify(loadedResponses));
+          try { localResp = JSON.parse(localResponsesStr) || {}; } catch (e) {}
         }
+        let sessionResp = {};
+        const sessionResponsesStr = sessionStorage.getItem(cacheKeyResponses);
+        if (sessionResponsesStr) {
+          try { sessionResp = JSON.parse(sessionResponsesStr) || {}; } catch (e) {}
+        }
+        let dbResp = currentDraft?.answers || {};
 
-        // Ensure loadedResponses is a valid object
+        let loadedResponses = { ...dbResp, ...sessionResp, ...localResp };
         if (!loadedResponses || typeof loadedResponses !== 'object') {
           loadedResponses = {};
         }
 
+        if (currentDraft && currentDraft.question_statuses) {
+          setTimeSpent(prev => ({ ...currentDraft.question_statuses, ...prev }));
+        }
+
         setResponses(loadedResponses);
         setCommittedResponses(loadedResponses);
+        localStorage.setItem(cacheKeyResponses, JSON.stringify(loadedResponses));
+        sessionStorage.setItem(cacheKeyResponses, JSON.stringify(loadedResponses));
 
         const localStatusStr = localStorage.getItem(cacheKeyStatus);
         let loadedStatus = {};
@@ -530,6 +534,7 @@ export default function ExamInterface() {
           }
           loadedStatus = initialStatus;
           localStorage.setItem(cacheKeyStatus, JSON.stringify(initialStatus));
+          sessionStorage.setItem(cacheKeyStatus, JSON.stringify(initialStatus));
         }
 
         // Ensure loadedStatus is a valid object
@@ -1312,20 +1317,50 @@ export default function ExamInterface() {
     };
   }, []);
 
-  // Save changes to localStorage immediately on mutations
+  // Save changes to local caches (localStorage & sessionStorage) immediately on any response mutation
   useEffect(() => {
     if (examId && student?.id) {
-      localStorage.setItem(`exam_responses_${examId}_${student.id}`, JSON.stringify(committedResponses));
+      const merged = { ...committedResponses, ...responses };
+      const cacheKeyResponses = `exam_responses_${examId}_${student.id}`;
+      localStorage.setItem(cacheKeyResponses, JSON.stringify(merged));
+      sessionStorage.setItem(cacheKeyResponses, JSON.stringify(merged));
     }
-  }, [committedResponses, examId, student]);
+  }, [responses, committedResponses, examId, student]);
 
   useEffect(() => {
     if (examId && student?.id) {
-      localStorage.setItem(`exam_status_${examId}_${student.id}`, JSON.stringify(status));
+      const cacheKeyStatus = `exam_status_${examId}_${student.id}`;
+      localStorage.setItem(cacheKeyStatus, JSON.stringify(status));
+      sessionStorage.setItem(cacheKeyStatus, JSON.stringify(status));
     }
   }, [status, examId, student]);
 
-  // Sync state to Supabase draft in background when online (debounced)
+  // Emergency beforeunload sync listener: Guarantees responses & timeSpent are saved to DB on refresh/exit
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (examId && draftId && studentRef.current?.id) {
+        const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
+        const mergedAnswers = { ...committedResponses, ...responses };
+        const payload = JSON.stringify({
+          draftId: draftId,
+          answers: mergedAnswers,
+          question_statuses: timeSpent,
+          currentIndex: currentIdx,
+          timeLeft: timeLeft
+        });
+        
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: 'application/json' });
+          navigator.sendBeacon(`${API_BASE_URL}/api/student/exams/${examId}/save-draft?token=${token}`, blob);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [examId, draftId, responses, committedResponses, timeSpent, currentIdx, timeLeft]);
+
+  // Sync state to Supabase draft in background every 1 second when online (1-second debounce)
   useEffect(() => {
     if (!draftId || !isOnline) return;
 
@@ -1333,6 +1368,7 @@ export default function ExamInterface() {
       setSyncing(true);
       try {
         const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
+        const mergedAnswers = { ...committedResponses, ...responses };
         const res = await fetch(`${API_BASE_URL}/api/student/exams/${examId}/save-draft`, {
           method: 'POST',
           headers: {
@@ -1341,7 +1377,8 @@ export default function ExamInterface() {
           },
           body: JSON.stringify({
             draftId: draftId,
-            answers: committedResponses,
+            answers: mergedAnswers,
+            question_statuses: timeSpent,
             currentIndex: currentIdx,
             timeLeft: timeLeft
           })
@@ -1359,10 +1396,10 @@ export default function ExamInterface() {
 
     const delayDebounceFn = setTimeout(() => {
       syncDraft();
-    }, 2000); // 2 second debounce
+    }, 1000); // 1-second background auto-save
 
     return () => clearTimeout(delayDebounceFn);
-  }, [committedResponses, draftId, isOnline, currentIdx, timeLeft]);
+  }, [responses, committedResponses, timeSpent, draftId, isOnline, currentIdx, timeLeft]);
 
   // Active Question Time Tracker
   useEffect(() => {
@@ -1491,15 +1528,7 @@ export default function ExamInterface() {
 
   // Reverts unsaved answers to the last committed response
   const revertUnsavedChanges = (qId) => {
-    setResponses((prev) => {
-      const committedVal = committedResponses[qId];
-      if (committedVal === undefined || committedVal === null || committedVal === "") {
-        const { [qId]: _, ...rest } = prev;
-        return rest;
-      } else {
-        return { ...prev, [qId]: committedVal };
-      }
-    });
+    setCommittedResponses((prev) => ({ ...prev, ...responses }));
   };
 
   // Navigates to a specific question safely
@@ -1795,6 +1824,35 @@ export default function ExamInterface() {
     executeSubmission(true);
   };
 
+  const handleAnswerSelection = (qId, val, forceStatus = null) => {
+    const newResponses = { ...responses, [qId]: val };
+    setResponses(newResponses);
+    setCommittedResponses(newResponses);
+
+    const hasValue = val !== undefined && val !== null && val !== "" && (!Array.isArray(val) || val.length > 0);
+    const currentStatus = status[qId];
+    let newStatus = forceStatus;
+    if (!newStatus) {
+      if (currentStatus === "markedForReview" || currentStatus === "answeredAndMarkedForReview") {
+        newStatus = hasValue ? "answeredAndMarkedForReview" : "markedForReview";
+      } else {
+        newStatus = hasValue ? "answered" : "notAnswered";
+      }
+    }
+    
+    setStatus((prev) => ({ ...prev, [qId]: newStatus }));
+
+    const studentIdVal = studentRef.current?.id || sessionStorage.getItem("userId");
+    if (studentIdVal) {
+      const cacheKeyResponses = `exam_responses_${examId}_${studentIdVal}`;
+      const cacheKeyStatus = `exam_status_${examId}_${studentIdVal}`;
+      localStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
+      sessionStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
+      localStorage.setItem(cacheKeyStatus, JSON.stringify({ ...status, [qId]: newStatus }));
+      sessionStorage.setItem(cacheKeyStatus, JSON.stringify({ ...status, [qId]: newStatus }));
+    }
+  };
+
   const renderOptions = () => {
     const qType = current.question_type || current.type;
 
@@ -1810,7 +1868,7 @@ export default function ExamInterface() {
             className="border-2 border-gray-300 p-2.5 w-64 text-sm font-semibold rounded shadow-inner focus:outline-none focus:border-[#1f497d]"
             placeholder="Type numerical value"
             value={responses[current.id] || ""}
-            onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+            onChange={(e) => handleAnswerSelection(current.id, e.target.value)}
           />
         </div>
       );
@@ -1828,7 +1886,7 @@ export default function ExamInterface() {
                 type="radio"
                 name={`q-${current.id}`}
                 checked={areOptionsEqual(responses[current.id], opt)}
-                onChange={() => setResponses({ ...responses, [current.id]: opt })}
+                onChange={() => handleAnswerSelection(current.id, opt)}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
               />
               <span className="text-gray-800">{parsed.text}</span>
@@ -1878,7 +1936,7 @@ export default function ExamInterface() {
                   }
                   const alreadySelected = arr.some(a => areOptionsEqual(a, opt));
                   arr = alreadySelected ? arr.filter((o) => !areOptionsEqual(o, opt)) : [...arr, opt];
-                  setResponses({ ...responses, [current.id]: arr });
+                  handleAnswerSelection(current.id, arr);
                 }}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
               />
@@ -1919,7 +1977,7 @@ export default function ExamInterface() {
         className="border p-2.5 w-full text-sm font-semibold rounded shadow-inner"
         placeholder="Type answer here"
         value={responses[current.id] || ""}
-        onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
+        onChange={(e) => handleAnswerSelection(current.id, e.target.value)}
       />
     );
   };

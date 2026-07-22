@@ -3392,15 +3392,31 @@ app.post('/api/student/exams/:examId/draft', verifyUserJWT, async (req, res) => 
 app.post('/api/student/exams/:examId/save-draft', verifyUserJWT, async (req, res) => {
   const { examId } = req.params;
   const studentId = req.user.id;
-  const { draftId, answers, status, currentIndex, timeLeft } = req.body;
+  const { draftId, answers, status, currentIndex, timeLeft, question_statuses } = req.body;
   try {
+    let mergedAnswers = answers || {};
+    if (draftId) {
+      const { data: existingDraft } = await supabaseAdmin
+        .from('exam_results')
+        .select('answers, question_statuses')
+        .eq('id', draftId)
+        .single();
+      if (existingDraft && existingDraft.answers) {
+        mergedAnswers = { ...existingDraft.answers, ...(answers || {}) };
+      }
+    }
+
     const payload = {
-      answers: answers || {},
+      answers: mergedAnswers,
       status: status || 'in_progress',
       current_index: currentIndex || 0,
       time_left: timeLeft || 0,
       last_activity_at: new Date().toISOString()
     };
+
+    if (question_statuses) {
+      payload.question_statuses = question_statuses;
+    }
 
     const { error } = await supabaseAdmin
       .from('exam_results')
