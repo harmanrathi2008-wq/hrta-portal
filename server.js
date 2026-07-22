@@ -595,12 +595,95 @@ function normalizeDateOfBirth(dob) {
   return clean;
 }
 
+function generateHRTAEmailTemplate({ subject = 'Official HRTA Notification', body = '', actionUrl = null, actionText = null }) {
+  let formattedContent = body || '';
+  const isStructuredHtml = /<(p|div|table|h[1-6]|ul|ol|section|header|main|article)\b/i.test(formattedContent);
+  
+  if (!isStructuredHtml && formattedContent) {
+    const paragraphs = formattedContent.split(/\n\s*\n/);
+    formattedContent = paragraphs.map(p => {
+      const cleanParagraph = p.trim().replace(/\n/g, '<br>');
+      return `<p style="margin: 0 0 16px 0; line-height: 1.75; color: #334155; font-size: 15px;">${cleanParagraph}</p>`;
+    }).join('');
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${subject}</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #1e293b; }
+    .wrapper { width: 100%; table-layout: fixed; background-color: #f1f5f9; padding: 32px 0; }
+    .main-card { max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.03); border: 1px solid #e2e8f0; }
+    .header-banner { background: linear-gradient(135deg, #0f2b48 0%, #1f497d 50%, #163861 100%); padding: 36px 40px; text-align: center; }
+    .brand-badge { display: inline-block; background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.3); border-radius: 50px; padding: 6px 18px; margin-bottom: 12px; }
+    .brand-badge-text { color: #ffffff; font-size: 15px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
+    .brand-title { color: #ffffff; font-size: 22px; font-weight: 800; letter-spacing: 1px; margin: 0; text-transform: uppercase; }
+    .brand-subtitle { color: #94a3b8; font-size: 11px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; margin-top: 4px; }
+    .content-body { padding: 40px; font-size: 15px; line-height: 1.75; color: #334155; }
+    .email-subject-heading { font-size: 20px; font-weight: 800; color: #0f172a; margin-top: 0; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
+    .cta-button { display: inline-block; background: linear-gradient(135deg, #1f497d 0%, #11325a 100%); color: #ffffff !important; text-decoration: none; font-weight: 700; font-size: 14px; padding: 14px 32px; border-radius: 8px; margin: 20px 0; box-shadow: 0 4px 12px rgba(31, 73, 125, 0.25); }
+    .footer-section { background-color: #0f172a; padding: 30px 40px; text-align: center; color: #94a3b8; font-size: 12px; line-height: 1.6; }
+    .footer-divider { border: 0; height: 1px; background-color: #1e293b; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="main-card">
+      <div class="header-banner">
+        <div class="brand-badge">
+          <span class="brand-badge-text">⚡ HRTA PORTAL</span>
+        </div>
+        <h1 class="brand-title">HARMAN RATHI TESTING AGENCY</h1>
+        <div class="brand-subtitle">National Examination & Assessment Authority</div>
+      </div>
+      
+      <div class="content-body">
+        ${subject ? `<h2 class="email-subject-heading">${subject}</h2>` : ''}
+        
+        <div class="message-content">
+          ${formattedContent}
+        </div>
+
+        ${actionUrl && actionText ? `
+          <div style="text-align: center; margin-top: 28px;">
+            <a href="${actionUrl}" target="_blank" class="cta-button">${actionText}</a>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="footer-section">
+        <p style="margin: 0; font-weight: 700; color: #cbd5e1; font-size: 13px;">HRTA Central Controller of Examinations</p>
+        <p style="margin: 4px 0 0 0;">Official Communication Dispatch • Harman Rathi Testing Agency</p>
+        
+        <hr class="footer-divider">
+        
+        <p style="margin: 0; font-size: 11px; color: #64748b;">
+          This is an official system dispatch. If you have any queries regarding this message, please contact support at <a href="mailto:support@harmanrathiportal.dpdns.org" style="color: #38bdf8; text-decoration: none;">support@harmanrathiportal.dpdns.org</a>.
+        </p>
+        <p style="margin: 8px 0 0 0; font-size: 11px; color: #475569;">
+          © 2026 HRTA Testing Authority. All rights reserved. • Confidential & Privileged Communication
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 // Robust, self-healing email dispatch helper
 // preferSmtp=true: tries SMTP relay first, falls back to Resend API
 // preferSmtp=false (default): tries Resend first, SMTP as fallback (OTPs)
 async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type = 'student', isOtp = false, preferSmtp = false, fromEmailOverride = null }) {
   const fromDomain = fromEmailOverride || (isOtp ? OTP_FROM_EMAIL : FROM_EMAIL);
   const fromAddress = `${fromName} <${fromDomain}>`;
+
+  // Auto-wrap unformatted text/HTML into official HRTA brand email template
+  const finalHtml = (html && (html.includes('<!DOCTYPE') || html.includes('<html')))
+    ? html
+    : generateHRTAEmailTemplate({ subject, body: html || text });
 
 
   // ── SMTP Relay helper (shared by both paths) ─────────────────────────────
@@ -620,7 +703,7 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
         await transporter.sendMail({
           from: mailFrom,
           replyTo: fromDomain,
-          to, subject, html,
+          to, subject, html: finalHtml,
           ...(text ? { text } : {})
         });
         currentTransporterIndex = (idx + 1) % transporters.length;
@@ -664,7 +747,7 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
           : fromAddress;
 
         const response = await client.emails.send({
-          from: activeFromAddress, to, subject, html,
+          from: activeFromAddress, to, subject, html: finalHtml,
           ...(text ? { text } : {})
         });
         if (response.error) throw new Error(response.error.message || `Resend ${name} returned error`);
@@ -4033,6 +4116,8 @@ app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
       content: a.content // base64 encoded
     }));
 
+    const formattedHtml = generateHRTAEmailTemplate({ subject, body });
+
     // Send in batches of 50 (Resend limit)
     const batchSize = 50;
     let sent = 0, failed = 0, errors = [];
@@ -4043,7 +4128,7 @@ app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
           from: `HRTA Portal <${fromEmail}>`,
           to: batch,
           subject,
-          html: body,
+          html: formattedHtml,
           attachments: resendAttachments.length > 0 ? resendAttachments : undefined
         });
         sent += batch.length;

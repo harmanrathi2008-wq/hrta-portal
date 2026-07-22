@@ -110,7 +110,59 @@ const AdminDashboard = () => {
   const [mailAttachments, setMailAttachments] = useState([]);
   const [sendingMail, setSendingMail] = useState(false);
   const [mailLogs, setMailLogs] = useState([]);
+  const [showMailPreview, setShowMailPreview] = useState(false);
   const mailAttachInputRef = React.useRef(null);
+
+  const loadMailTemplate = (type) => {
+    if (type === 'announcement') {
+      setMailSubject('[HRTA Announcement] Important Examination Updates & Schedule Notification');
+      setMailBody(`Dear Candidate,
+
+We are writing to inform you about important upcoming examination updates on the Harman Rathi Testing Agency (HRTA) Portal.
+
+Key Instructions:
+1. Please ensure your device, camera, and network connection are verified before the exam window starts.
+2. Log into your HRTA Student Dashboard 15 minutes prior to the scheduled exam start time.
+3. Keep your admit card details and official photo ID ready for verification.
+
+For any assistance or support, please visit the HRTA Help Desk on your student dashboard.
+
+Best regards,
+Central Controller of Examinations
+Harman Rathi Testing Agency`);
+    } else if (type === 'result') {
+      setMailSubject('[HRTA Scorecard] Official Examination Results & Performance Summary Published');
+      setMailBody(`Dear Candidate,
+
+Your official examination scorecard has been evaluated and published on the HRTA Testing Portal.
+
+You can now view your comprehensive scorecard, question-wise analytics, and AI risk evaluation metrics by logging into your student dashboard.
+
+Steps to access your scorecard:
+1. Visit the HRTA Portal and log into your Student Account.
+2. Navigate to "My Exams" -> "Completed Exams".
+3. Click "View Official Scorecard".
+
+Congratulations on completing your assessment!
+
+Best regards,
+Evaluation & Assessment Cell
+Harman Rathi Testing Agency`);
+    } else if (type === 'security') {
+      setMailSubject('[HRTA Security Alert] Account Verification & Security Status Notice');
+      setMailBody(`Dear User,
+
+This is an automated security notice regarding your account activity on the Harman Rathi Testing Agency (HRTA) Portal.
+
+If you recently requested password reset or logged in from a new browser/device, no action is required. If you did not initiate this activity, please immediately reach out to our security desk at support@harmanrathiportal.dpdns.org.
+
+Stay vigilant and protect your credentials.
+
+Best regards,
+Cybersecurity & Infrastructure Wing
+Harman Rathi Testing Agency`);
+    }
+  };
 
   // Firewall states
   const [firewallRules, setFirewallRules] = useState([]);
@@ -3060,76 +3112,146 @@ const AdminDashboard = () => {
               {/* Compose Panel */}
               <div className="lg:col-span-2 bg-[#0b0c10]/40 border border-white/5 rounded-2xl p-6 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-violet-500 to-indigo-500" />
-                <h3 className="text-sm font-black text-white uppercase tracking-wider mb-2">✉️ Enterprise Mail Dispatcher</h3>
-                <p className="text-[10px] text-slate-500 mb-4">Send premium custom HTML emails using the authenticated HRTA Portal domain.</p>
+                
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">✉️ Enterprise Mail Dispatcher</h3>
+                    <p className="text-[10px] text-slate-500">Send premium branded HTML emails using the authenticated HRTA Portal domain.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMailPreview(!showMailPreview)}
+                    className="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+                  >
+                    {showMailPreview ? '✏️ Edit Message' : '👁️ Preview Branded Email'}
+                  </button>
+                </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Recipients (one per line, comma, or semicolon)</label>
-                    <textarea
-                      value={mailRecipients}
-                      onChange={(e) => setMailRecipients(e.target.value)}
-                      placeholder="recipient1@domain.com&#10;recipient2@domain.com"
-                      rows="3"
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Subject</label>
-                    <input
-                      type="text"
-                      value={mailSubject}
-                      onChange={(e) => setMailSubject(e.target.value)}
-                      placeholder="Enter subject..."
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Email Body (HTML/Text)</label>
-                    <textarea
-                      value={mailBody}
-                      onChange={(e) => setMailBody(e.target.value)}
-                      placeholder="Write your email body here... supports HTML"
-                      rows="8"
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-sans"
-                    />
-                  </div>
+                {/* Quick Presets */}
+                <div className="mb-4 bg-white/5 border border-white/10 p-2.5 rounded-xl flex flex-wrap items-center gap-2">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider mr-1">Quick Presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => loadMailTemplate('announcement')}
+                    className="text-[9px] bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors"
+                  >
+                    📢 Announcement
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loadMailTemplate('result')}
+                    className="text-[9px] bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors"
+                  >
+                    🏆 Result Published
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => loadMailTemplate('security')}
+                    className="text-[9px] bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors"
+                  >
+                    🔒 Security Alert
+                  </button>
+                </div>
 
-                  <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
-                    <div>
-                      <input
-                        type="file"
-                        multiple
-                        ref={mailAttachInputRef}
-                        onChange={handleMailAttachment}
-                        className="hidden"
-                      />
-                      <button
-                        onClick={() => mailAttachInputRef.current?.click()}
-                        className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer"
-                      >
-                        📎 Upload Attachments
-                      </button>
-                      {mailAttachments.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {mailAttachments.map((a, i) => (
-                            <span key={i} className="text-[8px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-1 rounded">
-                              {a.filename} ({Math.round(a.size/1024)} KB)
-                            </span>
-                          ))}
+                {showMailPreview ? (
+                  <div className="space-y-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 text-xs font-sans overflow-hidden">
+                      <div className="bg-[#f1f5f9] p-4 rounded-lg text-slate-800">
+                        {/* Branded Header Preview */}
+                        <div className="bg-gradient-to-r from-[#0f2b48] via-[#1f497d] to-[#163861] p-6 rounded-t-lg text-center text-white">
+                          <div className="inline-block bg-white/15 border border-white/30 rounded-full px-4 py-1 mb-2 text-xs font-black tracking-widest uppercase">
+                            ⚡ HRTA PORTAL
+                          </div>
+                          <h2 className="text-lg font-extrabold uppercase tracking-wide m-0">HARMAN RATHI TESTING AGENCY</h2>
+                          <div className="text-[10px] text-slate-300 uppercase tracking-widest mt-1">National Examination & Assessment Authority</div>
                         </div>
-                      )}
+                        {/* Content Body Preview */}
+                        <div className="bg-white p-6 rounded-b-lg border-x border-b border-slate-200 shadow-sm">
+                          <h3 className="text-base font-bold text-slate-900 mb-4 pb-2 border-b border-slate-200">
+                            {mailSubject || 'Subject Line Preview'}
+                          </h3>
+                          <div className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap">
+                            {mailBody || 'Email content preview will be displayed here...'}
+                          </div>
+                          {/* Footer Preview */}
+                          <div className="mt-8 pt-4 border-t border-slate-200 text-center text-[10px] text-slate-500">
+                            <p className="font-bold text-slate-700 m-0">HRTA Central Controller of Examinations</p>
+                            <p className="m-0 text-[9px]">Official Communication Dispatch • Harman Rathi Testing Agency</p>
+                            <p className="mt-2 text-[9px] text-slate-400">© 2026 HRTA Testing Authority. All rights reserved.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Recipients (one per line, comma, or semicolon)</label>
+                      <textarea
+                        value={mailRecipients}
+                        onChange={(e) => setMailRecipients(e.target.value)}
+                        placeholder="recipient1@domain.com&#10;recipient2@domain.com"
+                        rows="3"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Subject</label>
+                      <input
+                        type="text"
+                        value={mailSubject}
+                        onChange={(e) => setMailSubject(e.target.value)}
+                        placeholder="Enter subject..."
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Email Body (HTML/Text)</label>
+                      <textarea
+                        value={mailBody}
+                        onChange={(e) => setMailBody(e.target.value)}
+                        placeholder="Write your email body here... supports plain text or HTML formatting"
+                        rows="8"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-violet-500 transition-colors font-sans"
+                      />
                     </div>
 
-                    <button
-                      onClick={handleSendMail}
-                      disabled={sendingMail}
-                      className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg disabled:opacity-50"
-                    >
-                      {sendingMail ? 'Sending Dispatch...' : '🚀 Send Dispatch'}
-                    </button>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center">
+                      <div>
+                        <input
+                          type="file"
+                          multiple
+                          ref={mailAttachInputRef}
+                          onChange={handleMailAttachment}
+                          className="hidden"
+                        />
+                        <button
+                          onClick={() => mailAttachInputRef.current?.click()}
+                          className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                        >
+                          📎 Upload Attachments
+                        </button>
+                        {mailAttachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {mailAttachments.map((a, i) => (
+                              <span key={i} className="text-[8px] bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-1 rounded">
+                                {a.filename} ({Math.round(a.size/1024)} KB)
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={handleSendMail}
+                        disabled={sendingMail}
+                        className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                      >
+                        {sendingMail ? 'Sending Dispatch...' : '🚀 Send Dispatch'}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Logs / Stats Panel */}
