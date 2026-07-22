@@ -1825,31 +1825,39 @@ export default function ExamInterface() {
   };
 
   const handleAnswerSelection = (qId, val, forceStatus = null) => {
-    const newResponses = { ...responses, [qId]: val };
-    setResponses(newResponses);
-    setCommittedResponses(newResponses);
+    try {
+      const newResponses = { ...(responses || {}), [qId]: val };
+      setResponses(newResponses);
+      setCommittedResponses(newResponses);
 
-    const hasValue = val !== undefined && val !== null && val !== "" && (!Array.isArray(val) || val.length > 0);
-    const currentStatus = status[qId];
-    let newStatus = forceStatus;
-    if (!newStatus) {
-      if (currentStatus === "markedForReview" || currentStatus === "answeredAndMarkedForReview") {
-        newStatus = hasValue ? "answeredAndMarkedForReview" : "markedForReview";
-      } else {
-        newStatus = hasValue ? "answered" : "notAnswered";
+      const hasValue = val !== undefined && val !== null && val !== "" && (!Array.isArray(val) || val.length > 0);
+      const currentStatus = status?.[qId];
+      let newStatus = forceStatus;
+      if (!newStatus) {
+        if (currentStatus === "markedForReview" || currentStatus === "answeredAndMarkedForReview") {
+          newStatus = hasValue ? "answeredAndMarkedForReview" : "markedForReview";
+        } else {
+          newStatus = hasValue ? "answered" : "notAnswered";
+        }
       }
-    }
-    
-    setStatus((prev) => ({ ...prev, [qId]: newStatus }));
-
-    const studentIdVal = studentRef.current?.id || sessionStorage.getItem("userId");
-    if (studentIdVal) {
-      const cacheKeyResponses = `exam_responses_${examId}_${studentIdVal}`;
-      const cacheKeyStatus = `exam_status_${examId}_${studentIdVal}`;
-      localStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
-      sessionStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
-      localStorage.setItem(cacheKeyStatus, JSON.stringify({ ...status, [qId]: newStatus }));
-      sessionStorage.setItem(cacheKeyStatus, JSON.stringify({ ...status, [qId]: newStatus }));
+      
+      setStatus((prev) => {
+        const updatedStatus = { ...(prev || {}), [qId]: newStatus };
+        const studentIdVal = studentRef.current?.id || sessionStorage.getItem("userId");
+        if (studentIdVal && examId) {
+          const cacheKeyResponses = `exam_responses_${examId}_${studentIdVal}`;
+          const cacheKeyStatus = `exam_status_${examId}_${studentIdVal}`;
+          try {
+            localStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
+            sessionStorage.setItem(cacheKeyResponses, JSON.stringify(newResponses));
+            localStorage.setItem(cacheKeyStatus, JSON.stringify(updatedStatus));
+            sessionStorage.setItem(cacheKeyStatus, JSON.stringify(updatedStatus));
+          } catch (e) {}
+        }
+        return updatedStatus;
+      });
+    } catch (err) {
+      console.warn("Error in handleAnswerSelection:", err);
     }
   };
 
