@@ -560,6 +560,63 @@ const AdminScorecard = () => {
           </div>
         </div>
 
+        {/* AI Risk Engine & Question-wise Time Analytics Section */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8 print:hidden">
+          <div className="bg-slate-900 border border-slate-800 text-white p-5 rounded-xl shadow-md flex flex-col justify-between">
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold uppercase text-slate-400">AI Risk Score</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
+                  (submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 25 
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                    : (submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 50 
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' 
+                    : (submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 75
+                    ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                    : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                }`}>
+                  {(submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 25 
+                    ? 'Low Risk' 
+                    : (submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 50 
+                    ? 'Medium Risk' 
+                    : (submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0) <= 75
+                    ? 'High Risk'
+                    : 'Critical Risk'}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-black">{submission?.marks_adjustments?.ai_risk_score || submission?.ai_risk_score || 0}</span>
+                <span className="text-slate-400 font-bold text-sm">/ 100</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-3 border-t border-slate-800 pt-2 font-medium leading-relaxed">
+              Superadmin Invigilator Audit: Calculated from telemetry logs, track health, tab switches, and keypress security triggers.
+            </p>
+          </div>
+
+          <div className="md:col-span-2 bg-slate-900 border border-slate-800 text-white p-5 rounded-xl shadow-md">
+            <h4 className="text-xs font-bold uppercase text-slate-400 mb-3 flex items-center gap-2">
+              ⏱️ Question-wise Time Analytics (Seconds)
+            </h4>
+            <div className="h-44 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={
+                  questions.map((q, qIdx) => ({
+                    name: `Q${qIdx + 1}`,
+                    "Time (s)": parseInt(submission?.question_statuses?.[q.id]) || 0
+                  }))
+                } margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="name" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                  <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', color: '#fff', borderRadius: '6px', fontSize: '11px' }} />
+                  <Bar dataKey="Time (s)" fill="#3b82f6" radius={[3, 3, 0, 0]} maxBarSize={28} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
         {/* Candidate Response Sheet & Marks Audit (TRANS-PARENCY SECTION) */}
         <div className="mt-8 border-t border-gray-300 pt-6">
           <div className="bg-[#1f497d] text-white font-bold px-4 py-2 text-center uppercase tracking-wider mb-4 rounded-t text-xs">

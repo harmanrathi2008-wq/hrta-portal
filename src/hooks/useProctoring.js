@@ -60,9 +60,9 @@ export function useProctoring({
     }
   }
 
-  // Trigger exam lock
+  // Trigger exam warning log (decoupled non-blocking)
   async function triggerExamLock(reason) {
-    setIsProctorLocked(true);
+    // Under decoupled architecture, this NEVER blocks/locks the exam automatically.
     setLockReason(reason);
     logViolation('PROCTORING_VIOLATION_LOCK', { reason });
 
@@ -87,12 +87,12 @@ export function useProctoring({
           body: JSON.stringify({
             draftId: draftId || null,
             reason: reason,
-            status: "locked"
+            status: "warning_triggered"
           })
         });
       }
     } catch (dbErr) {
-      console.warn("Failed to record proctor lock to DB:", dbErr);
+      console.warn("Failed to record proctor warning status to DB:", dbErr);
     }
   }
 

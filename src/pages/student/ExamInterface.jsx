@@ -154,45 +154,61 @@ export default function ExamInterface() {
     };
   }
 
+  const violationQueueRef = React.useRef([]);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [warningModalReason, setWarningModalReason] = useState("");
+
   async function logViolation(action, details = {}) {
+    const userId = sessionStorage.getItem("userId");
+    const timestamp = new Date().toISOString();
+    
+    // Add to client-side buffer queue
+    violationQueueRef.current.push({
+      user_id: userId || 'Unknown',
+      user_role: 'student',
+      display_name: studentRef.current?.full_name || 'Student',
+      action,
+      details: {
+        exam_id: examId,
+        exam_title: exam?.title,
+        timestamp,
+        ...details
+      }
+    });
+
+    console.log(`[Queue] Added violation: ${action}`, details);
+  }
+
+  async function flushViolationQueue() {
+    if (violationQueueRef.current.length === 0) return;
+    const batch = [...violationQueueRef.current];
+    violationQueueRef.current = []; // Clear local queue buffer
+
     try {
-      const userId = sessionStorage.getItem("userId");
-      await fetch(`${API_BASE_URL}/api/audit-log`, {
+      const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
+      const res = await fetch(`${API_BASE_URL}/api/audit-log/batch`, {
         method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          userId: userId || 'Unknown',
-          userRole: 'student',
-          displayName: studentRef.current?.full_name || 'Student',
-          action,
-          details: {
-            exam_id: examId,
-            exam_title: exam?.title,
-            ...details
-          }
-        })
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ events: batch })
       });
+      if (!res.ok) throw new Error("Batch insert response not OK");
     } catch (e) {
-      console.warn("Failed to log violation to audit-log:", e);
+      console.warn("Failed to flush violation queue, restoring events to queue:", e);
+      // Restore queued events to buffer for retry
+      violationQueueRef.current = [...batch, ...violationQueueRef.current];
     }
   }
 
   async function triggerExamLock(reason) {
-    setIsProctorLocked(true);
+    // Under decoupled architecture, this NEVER blocks/locks the exam automatically.
+    // Instead, it logs the violation and displays a warning popup.
     setLockReason(reason);
+    setWarningModalReason(reason);
+    setShowWarningModal(true);
     logViolation('PROCTORING_VIOLATION_LOCK', { reason });
-
-    if (proctorChannelRef.current) {
-      proctorChannelRef.current.send({
-        type: "broadcast",
-        event: "signal",
-        payload: { 
-          type: "PROCTORING_VIOLATION", 
-          sender: "student", 
-          data: { reason } 
-        }
-      }).catch(err => console.warn("Failed to send PROCTORING_VIOLATION signal:", err));
-    }
 
     try {
       const userId = sessionStorage.getItem("userId");
@@ -207,12 +223,12 @@ export default function ExamInterface() {
           body: JSON.stringify({
             draftId: draftId || null,
             reason: reason,
-            status: "locked"
+            status: "warning_triggered"
           })
         });
       }
     } catch (dbErr) {
-      console.warn("Failed to record proctor lock to DB:", dbErr);
+      console.warn("Failed to record proctor warning status to DB:", dbErr);
     }
   }
 
@@ -706,34 +722,103 @@ export default function ExamInterface() {
 
         setupTrackListeners(stream);
 
-        // Security Polling Loop (Muted Sensors, Black Screens, Frozen Virtual Cameras)
+        // Security & Health Background Scheduler (Runs every 2 seconds)
         let consecutiveBlackFrames = 0;
         let prevFramesSent = null;
         let consecutiveFrozenChecks = 0;
+        let ticks = 0;
+        let cameraRetryLoading = false;
 
         pollingInterval = setInterval(async () => {
-          if (isSubmittedRef.current || cameraAccessLostRef.current || isProctorLocked || isRejected) {
+          if (isSubmittedRef.current) {
             return;
+          }
+
+          ticks++;
+
+          // 1. Flush client-side violation queue
+          if (violationQueueRef.current.length > 0) {
+            await flushViolationQueue();
+          }
+
+          // 2. Heartbeat check & ping to backend every 5 seconds (every ~2-3 ticks)
+          if (ticks % 2 === 0) {
+            try {
+              const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
+              await fetch(`${API_BASE_URL}/api/exam-heartbeat`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ examId, status: navigator.onLine ? 'online' : 'offline' })
+              });
+            } catch (heartbeatErr) {
+              console.warn("[Scheduler] Heartbeat ping failed:", heartbeatErr.message);
+            }
           }
 
           const activeStream = localStreamRef.current || stream;
-          if (!activeStream) return;
 
-          // 1. Property checks (Hardware/OS mute sliders, console hacks)
-          const tracks = activeStream.getTracks();
-          if (tracks.length === 0) {
+          // 3. Connection Health checking for tracks
+          let streamHealthy = true;
+          if (activeStream) {
+            const tracks = activeStream.getTracks();
+            if (tracks.length === 0) {
+              streamHealthy = false;
+            } else {
+              for (const track of tracks) {
+                if (track.readyState !== 'live' || !track.enabled || track.muted) {
+                  streamHealthy = false;
+                  break;
+                }
+              }
+            }
+          } else {
+            streamHealthy = false;
+          }
+
+          // Flag access lost if tracks are unhealthy
+          if (!streamHealthy && !cameraAccessLostRef.current) {
             setCameraAccessLost(true);
             cameraAccessLostRef.current = true;
-            logViolation('DEVICE_LOST', { reason: 'No media tracks found' });
+            logViolation('DEVICE_LOST', { reason: 'Media tracks failed connection health check' });
+          }
+
+          // Self-Healing background reconnect if media tracks are lost
+          if (cameraAccessLostRef.current && !cameraRetryLoading) {
+            cameraRetryLoading = true;
+            console.log("[Connection Health] Media tracks unhealthy. Triggering automatic background reconnect...");
+            navigator.mediaDevices.getUserMedia({
+              video: { width: 640, height: 480, frameRate: 15 },
+              audio: { echoCancellation: true, noiseSuppression: true }
+            }).then(newStream => {
+              localStreamRef.current = newStream;
+              offscreenVideo.srcObject = newStream;
+              offscreenVideo.play().catch(e => console.warn("Offscreen video play failed:", e));
+              setCameraAccessLost(false);
+              cameraAccessLostRef.current = false;
+              logViolation('DEVICE_RESTORED', { reason: 'Automatic background track reconnect succeeded' });
+            }).catch(err => {
+              console.warn("[Connection Health] Background camera reconnect attempt failed:", err.message);
+            }).finally(() => {
+              cameraRetryLoading = false;
+            });
+          }
+
+          // Skip sensor checking if camera access is currently lost or proctor locked
+          if (cameraAccessLostRef.current || isProctorLocked || isRejected || !activeStream) {
             return;
           }
 
+          // 4. Property checks (Hardware/OS mute sliders, console hacks)
+          const tracks = activeStream.getTracks();
           for (const track of tracks) {
             if (track.readyState !== 'live' || !track.enabled || track.muted) {
               setCameraAccessLost(true);
               cameraAccessLostRef.current = true;
               logViolation('DEVICE_LOST', { 
-                reason: `Track ${track.kind} inactive`, 
+                reason: `Track ${track.kind} inactive during periodic check`, 
                 readyState: track.readyState, 
                 enabled: track.enabled, 
                 muted: track.muted 
@@ -742,7 +827,7 @@ export default function ExamInterface() {
             }
           }
 
-          // 2. Pixel/Brightness analysis (Anti-Black Screen / Covered Lens Shutter)
+          // 5. Pixel/Brightness analysis (Anti-Black Screen / Covered Lens Shutter)
           const videoTrack = activeStream.getVideoTracks()[0];
           if (videoTrack && offscreenVideo.readyState >= 2) {
             try {
@@ -773,7 +858,7 @@ export default function ExamInterface() {
             }
           }
 
-          // 3. Frozen Frame analysis (Anti-Still Photo / Virtual Camera Bypass loops)
+          // 6. Frozen Frame analysis (Anti-Still Photo / Virtual Camera Bypass loops)
           if (peerConnectionRef.current && peerConnectionRef.current.connectionState === "connected") {
             try {
               const statsReport = await peerConnectionRef.current.getStats();
@@ -805,7 +890,7 @@ export default function ExamInterface() {
             consecutiveFrozenChecks = 0;
           }
 
-        }, 3000);
+        }, 2000);
 
         // Generate own ECDH key pair for E2E signaling encryption
         const keyPair = await generateECDHKeyPair();
@@ -956,10 +1041,10 @@ export default function ExamInterface() {
                     .eq("id", newLockData.id)
                     .then(() => console.log("Cleaned up lock record."));
                 } else if (newLockData.status === 'rejected') {
-                  console.log("DB Lock rejected. Failing candidate...");
+                  console.log("DB Lock rejected. Flagging candidate...");
                   setIsRejected(true);
                   setIsProctorLocked(false);
-                  executeBlockSubmission();
+                  logViolation('PROCTORING_REJECTED_ALERT', { note: 'Attempt flagged as rejected by admin' });
                 }
               }
             }
@@ -1046,10 +1131,10 @@ export default function ExamInterface() {
             await supabase.from("proctor_locks").delete().eq("id", data.id);
           }
         } else if (data.status === 'rejected') {
-          console.log("Backup poll detected rejection. Blocking candidate...");
+          console.log("Backup poll detected rejection. Flagging candidate...");
           setIsRejected(true);
           setIsProctorLocked(false);
-          executeBlockSubmission();
+          logViolation('PROCTORING_REJECTED_ALERT', { note: 'Backup poll detected rejected status' });
         }
       } catch (err) {
         console.warn("Backup lock polling exception:", err);
@@ -1724,7 +1809,6 @@ export default function ExamInterface() {
             placeholder="Type numerical value"
             value={responses[current.id] || ""}
             onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
-            disabled={cameraAccessLost}
           />
         </div>
       );
@@ -1744,7 +1828,6 @@ export default function ExamInterface() {
                 checked={areOptionsEqual(responses[current.id], opt)}
                 onChange={() => setResponses({ ...responses, [current.id]: opt })}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer"
-                disabled={cameraAccessLost}
               />
               <span className="text-gray-800">{parsed.text}</span>
             </div>
@@ -1753,7 +1836,6 @@ export default function ExamInterface() {
                 <div 
                   className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
                   onClick={(e) => {
-                    if (cameraAccessLost) return;
                     e.preventDefault();
                     e.stopPropagation();
                     setZoomedImage(parsed.image_url);
@@ -1797,7 +1879,6 @@ export default function ExamInterface() {
                   setResponses({ ...responses, [current.id]: arr });
                 }}
                 className="w-4 md:w-4.5 h-4 md:h-4.5 text-[#1f497d] cursor-pointer rounded"
-                disabled={cameraAccessLost}
               />
               <span className="text-gray-800">{parsed.text}</span>
             </div>
@@ -1806,7 +1887,6 @@ export default function ExamInterface() {
                 <div 
                   className="relative inline-block cursor-zoom-in group border rounded bg-white p-1 shadow-sm overflow-hidden"
                   onClick={(e) => {
-                    if (cameraAccessLost) return;
                     e.preventDefault();
                     e.stopPropagation();
                     setZoomedImage(parsed.image_url);
@@ -1838,7 +1918,6 @@ export default function ExamInterface() {
         placeholder="Type answer here"
         value={responses[current.id] || ""}
         onChange={(e) => setResponses({ ...responses, [current.id]: e.target.value })}
-        disabled={cameraAccessLost}
       />
     );
   };
@@ -2244,7 +2323,6 @@ export default function ExamInterface() {
                     });
                     setSubmitModalOpen(true);
                   }}
-                  disabled={cameraAccessLost}
                   className="bg-green-600 hover:bg-green-700 text-white px-4 md:px-6 py-2 text-[10px] md:text-xs font-black rounded shadow-md uppercase transition-all animate-pulse cursor-pointer tracking-wide flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="hidden sm:inline">Save & Submit Exam</span>
@@ -2253,7 +2331,6 @@ export default function ExamInterface() {
               ) : (
                 <button
                   onClick={handleSaveNext}
-                  disabled={cameraAccessLost}
                   className="bg-[#28a745] hover:bg-[#218838] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Save & Next
@@ -2261,14 +2338,12 @@ export default function ExamInterface() {
               )}
               <button
                 onClick={handleClear}
-                disabled={cameraAccessLost}
                 className="bg-white hover:bg-gray-50 border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Clear
               </button>
               <button
                 onClick={handleSaveMarkReview}
-                disabled={cameraAccessLost}
                 className="bg-[#f0ad4e] hover:bg-[#ec971f] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Save & Mark For Review</span>
@@ -2276,7 +2351,6 @@ export default function ExamInterface() {
               </button>
               <button
                 onClick={handleMarkReviewNext}
-                disabled={cameraAccessLost}
                 className="bg-[#0275d8] hover:bg-[#025aa5] text-white px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors cursor-pointer flex-1 sm:flex-none text-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Mark For Review & Next</span>
@@ -2289,14 +2363,14 @@ export default function ExamInterface() {
               <div className="flex gap-1.5 md:gap-2 flex-1 sm:flex-none">
                 <button
                   onClick={handleBack}
-                  disabled={currentIdx === 0 || cameraAccessLost}
+                  disabled={currentIdx === 0}
                   className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   &lt;&lt; Back
                 </button>
                 <button
                   onClick={handleNext}
-                  disabled={currentIdx === questions.length - 1 || cameraAccessLost}
+                  disabled={currentIdx === questions.length - 1}
                   className="bg-white border border-gray-400 text-gray-700 px-4 md:px-5 py-2 text-[10px] md:text-xs font-bold rounded shadow-sm uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 sm:flex-none text-center"
                 >
                   Next &gt;&gt;
@@ -2305,7 +2379,6 @@ export default function ExamInterface() {
               
               <button
                 onClick={() => setSubmitModalOpen(true)}
-                disabled={cameraAccessLost}
                 className="bg-[#5cb85c] hover:bg-[#4cae4c] text-white px-4 md:px-8 py-2 md:py-2.5 text-[10px] md:text-xs font-black rounded shadow transition-all uppercase cursor-pointer tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="hidden sm:inline">Submit Exam</span>
@@ -2406,12 +2479,10 @@ export default function ExamInterface() {
                   <button
                     key={q.id}
                     onClick={() => {
-                      if (cameraAccessLost) return;
                       revertUnsavedChanges(current.id);
                       handleQuestionSelect(i);
                     }}
-                    disabled={cameraAccessLost}
-                    className={`${getButtonClass(q.id, i)} disabled:opacity-50 disabled:cursor-not-allowed`}
+                    className={`${getButtonClass(q.id, i)}`}
                   >
                     {String(i + 1).padStart(2, "0")}
                     {status[q.id] === "answeredAndMarkedForReview" && (
@@ -2500,123 +2571,35 @@ export default function ExamInterface() {
         </div>
       )}
 
-      {/* 6. CAMERA LOSS LOCKOUT MODAL */}
-      {cameraAccessLost && (
-        <div className="fixed inset-0 bg-slate-950/80 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-white border-2 border-red-600 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 animate-in fade-in zoom-in-95 duration-200">
-            <div className="text-center font-sans">
-              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 text-3xl">
-                📷
-              </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Camera or Microphone Lost</h3>
-              <div className="text-sm text-slate-600 font-semibold leading-relaxed mb-6">
-                Proctoring is active for this examination. Your exam has been temporarily locked because camera or microphone access was interrupted.
-                <p className="mt-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 p-2.5 rounded-xl font-bold">
-                  ⚠️ Please check your webcam and microphone connections, ensure both are enabled in your browser settings, then click "Restore Access" to resume.
-                </p>
-              </div>
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={restoreCameraAccess}
-                  disabled={cameraRetryLoading}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {cameraRetryLoading ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Restoring Access...
-                    </>
-                  ) : (
-                    "Restore Access"
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 7. PROCTOR LOCKOUT MODAL (For tab switches, covers, freezes) */}
-      {isProctorLocked && !isRejected && (
-        <div className="fixed inset-0 bg-slate-950/90 z-[10000] flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-white border-2 border-amber-500 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 animate-in fade-in zoom-in-95 duration-200">
-            <div className="text-center font-sans">
-              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-amber-100 text-amber-600 mb-4 text-3xl">
+      {/* 6. NON-INTRUSIVE PROCTORING WARNING MODAL */}
+      {showWarningModal && (
+        <div className="fixed top-4 right-4 z-[9999] max-w-md w-full bg-white border-l-4 border-amber-500 rounded-xl shadow-2xl p-4 animate-in slide-in-from-top-4 duration-300">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-xl font-bold">
                 ⚠️
               </div>
-              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">Exam Locked</h3>
-              <div className="text-sm text-slate-650 font-bold leading-relaxed mb-6">
-                You have been flagged for a proctoring violation:
-                <p className="mt-2 text-xs bg-red-50 text-red-800 border border-red-205 p-2.5 rounded-xl font-black uppercase tracking-wide">
-                  {lockReason || "Tab Switch Detected"}
+              <div>
+                <h4 className="text-sm font-bold text-gray-900 uppercase tracking-tight">Proctoring Warning</h4>
+                <p className="text-xs text-gray-600 font-semibold mt-0.5 leading-relaxed">
+                  {warningModalReason || "Security anomaly detected. This event has been logged for invigilators."}
                 </p>
-                <p className="mt-3 text-xs text-slate-500">
-                  Please request your Superadmin to review your feed and unlock your exam interface. You cannot view questions or write answers until unlocked.
-                </p>
-              </div>
-              <div className="flex justify-center">
-                {unlockRequestSent ? (
-                  <div className="w-full bg-slate-100 text-slate-600 font-bold py-2.5 px-4 rounded-xl text-sm uppercase flex items-center justify-center gap-2">
-                    <svg className="animate-spin h-4 w-4 text-slate-600" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Waiting for Superadmin Approval...
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const userId = sessionStorage.getItem("userId");
-                        if (userId) {
-                          const token = sessionTokenRef.current || sessionStorage.getItem('studentSessionToken') || '';
-                          await fetch(`${API_BASE_URL}/api/student/exams/${examId}/lock`, {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              'Authorization': `Bearer ${token}`
-                            },
-                            body: JSON.stringify({
-                              draftId: draftId || null,
-                              reason: lockReason,
-                              status: "pending_unlock"
-                            })
-                          });
-                        }
-                      } catch (dbErr) {
-                        console.warn("Failed to update lock row to pending_unlock:", dbErr);
-                      }
-
-                      if (proctorChannelRef.current) {
-                        try {
-                          await proctorChannelRef.current.send({
-                            type: "broadcast",
-                            event: "signal",
-                            payload: {
-                              type: "UNLOCK_REQUEST",
-                              sender: "student",
-                              data: { studentName: student?.full_name, studentId: student?.id, reason: lockReason }
-                            }
-                          });
-                        } catch (err) {
-                          console.warn("Failed to broadcast unlock request:", err);
-                        }
-                      }
-                      setUnlockRequestSent(true);
-                      logViolation('PROCTORING_UNLOCK_REQUESTED', { reason: lockReason });
-                    }}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-gray-950 font-black py-2.5 px-4 rounded-xl shadow-md transition-colors text-sm uppercase tracking-wide cursor-pointer"
-                  >
-                    Request Unlock
-                  </button>
-                )}
               </div>
             </div>
+            <button
+              onClick={() => setShowWarningModal(false)}
+              className="text-gray-400 hover:text-gray-600 text-sm font-bold p-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              onClick={() => setShowWarningModal(false)}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-gray-950 font-black text-xs rounded uppercase tracking-wide cursor-pointer shadow-sm"
+            >
+              Acknowledge & Continue
+            </button>
           </div>
         </div>
       )}

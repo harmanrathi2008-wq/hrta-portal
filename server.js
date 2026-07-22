@@ -1641,6 +1641,73 @@ app.post('/api/session-heartbeat', verifyUserJWT, async (req, res) => {
   }
 })
 
+// ============ EXAM LIVENESS MONITOR & HEARTBEAT ============
+const activeExamSessions = new Map();
+
+app.post('/api/exam-heartbeat', verifyUserJWT, (req, res) => {
+  try {
+    const user = req.user;
+    const { examId, status } = req.body;
+    if (!examId) {
+      return res.status(400).json({ error: 'Exam ID is required.' });
+    }
+
+    activeExamSessions.set(user.id, {
+      lastActive: Date.now(),
+      examId,
+      email: user.email || 'Student',
+      status: status || 'online'
+    });
+
+    res.json({ success: true, status: 'online' });
+  } catch (err) {
+    console.error('Error in exam heartbeat endpoint:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/active-sessions', verifyAdminJWT, (req, res) => {
+  try {
+    const result = [];
+    activeExamSessions.forEach((value, key) => {
+      const isOnline = (Date.now() - value.lastActive) < 10000; // 10 seconds offline threshold
+      result.push({
+        studentId: key,
+        email: value.email,
+        examId: value.examId,
+        status: isOnline ? 'online' : 'offline',
+        lastActive: new Date(value.lastActive).toISOString()
+      });
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('Error in active-sessions endpoint:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Periodic reaper loop running every 10 seconds to flag offline status
+setInterval(() => {
+  const now = Date.now();
+  activeExamSessions.forEach((value, key) => {
+    if (now - value.lastActive >= 10000) {
+      if (value.status !== 'offline') {
+        value.status = 'offline';
+        console.log(`[Heartbeat] Student session ${key} went offline (no ping for 10s).`);
+        // Log to audit trail in-memory queue
+        serverAuditQueue.push({
+          userId: key,
+          userRole: 'student',
+          displayName: value.email,
+          action: 'STUDENT_OFFLINE',
+          ip: 'System',
+          details: { exam_id: value.examId, reason: 'heartbeat_timeout' }
+        });
+      }
+    }
+  });
+}, 10000);
+
 // ============ CLOUDINARY IMAGE UPLOAD ============
 app.post('/api/upload-image', heavyRequestLimiter, verifyAdminJWT, validateUploadImage, async (req, res) => {
   const { image } = req.body
@@ -1730,6 +1797,82 @@ app.post('/api/get-upload-url', verifyAdminJWT, validateGetUploadUrl, async (req
 })
 
 // ============ COMPREHENSIVE AUDIT LOGGING ============
+const serverAuditQueue = [];
+let lastKnownHash = null;
+
+async function getLatestHash() {
+  if (lastKnownHash) return lastKnownHash;
+  try {
+    const { data: lastLog } = await supabaseAdmin
+      .from('audit_logs')
+      .select('details')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastLog && lastLog.details && lastLog.details.curr_hash) {
+      lastKnownHash = lastLog.details.curr_hash;
+    }
+  } catch (hashErr) {
+    console.warn("Could not retrieve preceding audit log hash, using genesis seed:", hashErr.message);
+  }
+  return lastKnownHash || '0000000000000000000000000000000000000000000000000000000000000000';
+}
+
+// Background worker to flush queued audit logs every 2 seconds
+setInterval(async () => {
+  if (serverAuditQueue.length === 0) return;
+
+  const batch = serverAuditQueue.splice(0, serverAuditQueue.length);
+  let prevHash = await getLatestHash();
+  const dbInserts = [];
+
+  for (const item of batch) {
+    const timestamp = new Date().toISOString();
+    const logDetails = item.details || {};
+
+    const hashInput = JSON.stringify({
+      userId: item.userId || 'Unknown',
+      action: item.action,
+      ip: item.ip,
+      prevHash: prevHash,
+      timestamp: timestamp,
+      payload: logDetails
+    });
+
+    const currHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+
+    const securedDetails = {
+      ...logDetails,
+      prev_hash: prevHash,
+      curr_hash: currHash,
+      hashed_at: timestamp
+    };
+
+    dbInserts.push({
+      user_id: item.userId || 'Unknown',
+      user_role: item.userRole || 'Anonymous',
+      display_name: item.displayName || 'Anonymous',
+      action: item.action,
+      details: securedDetails,
+      ip_address: item.ip
+    });
+
+    prevHash = currHash;
+  }
+
+  lastKnownHash = prevHash;
+
+  try {
+    const { error } = await supabaseAdmin.from('audit_logs').insert(dbInserts);
+    if (error) throw error;
+    console.log(`[Worker] Batched and saved ${dbInserts.length} audit logs.`);
+  } catch (err) {
+    console.error("[Worker] Failed to batch insert audit logs:", err.message);
+    // Re-queue items at the front to retry
+    serverAuditQueue.unshift(...batch);
+  }
+}, 2000);
+
 app.post('/api/audit-log', verifyUserJWT, validateAuditLog, async (req, res) => {
   try {
     const { userId, userRole, displayName, action, details } = req.body;
@@ -1740,65 +1883,49 @@ app.post('/api/audit-log', verifyUserJWT, validateAuditLog, async (req, res) => 
     const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
     const ip = rawIp.split(',')[0].trim();
 
-    // 1. Fetch preceding audit log to retrieve the previous hash
-    let prevHash = '0000000000000000000000000000000000000000000000000000000000000000';
-    try {
-      const { data: lastLog, error: fetchErr } = await supabaseAdmin
-        .from('audit_logs')
-        .select('details')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    serverAuditQueue.push({
+      userId,
+      userRole,
+      displayName,
+      action,
+      details,
+      ip
+    });
 
-      if (!fetchErr && lastLog && lastLog.details && lastLog.details.curr_hash) {
-        prevHash = lastLog.details.curr_hash;
-      }
-    } catch (hashErr) {
-      console.warn("Could not retrieve preceding audit log hash, using genesis seed:", hashErr.message);
+    res.json({ success: true, queued: true });
+  } catch (error) {
+    console.error('Error queueing audit log:', error);
+    res.status(500).json({ error: error.message || 'Failed to queue audit log' });
+  }
+});
+
+app.post('/api/audit-log/batch', verifyUserJWT, async (req, res) => {
+  try {
+    const { events } = req.body;
+    if (!events || !Array.isArray(events)) {
+      return res.status(400).json({ error: 'Array of events is required.' });
     }
 
-    // 2. Prepare payload and hash with SHA-256 for integrity verification
-    const timestamp = new Date().toISOString();
-    const logDetails = details || {};
-    
-    const hashInput = JSON.stringify({
-      userId: userId || 'Unknown',
-      action: action,
-      ip: ip,
-      prevHash: prevHash,
-      timestamp: timestamp,
-      payload: logDetails
-    });
-    
-    const currHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+    const rawIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown';
+    const ip = rawIp.split(',')[0].trim();
 
-    // 3. Inject chain metadata into details JSONB
-    const securedDetails = {
-      ...logDetails,
-      prev_hash: prevHash,
-      curr_hash: currHash,
-      hashed_at: timestamp
-    };
-
-    // 4. Save audit log row
-    const { error } = await supabaseAdmin
-      .from('audit_logs')
-      .insert({
-        user_id: userId || 'Unknown',
-        user_role: userRole || 'Anonymous',
-        display_name: displayName || 'Anonymous',
-        action: action,
-        details: securedDetails,
-        ip_address: ip
+    events.forEach(ev => {
+      serverAuditQueue.push({
+        userId: ev.user_id,
+        userRole: ev.user_role || 'student',
+        displayName: ev.display_name,
+        action: ev.action,
+        details: ev.details,
+        ip
       });
+    });
 
-    if (error) throw error;
-    res.json({ success: true, curr_hash: currHash });
+    res.json({ success: true, queuedCount: events.length });
   } catch (error) {
-    console.error('Error writing audit log:', error);
-    res.status(500).json({ error: error.message || 'Failed to write audit log' });
+    console.error('Error queueing batch audit logs:', error);
+    res.status(500).json({ error: error.message || 'Failed to queue batch audit logs' });
   }
-})
+});
 
 // ============ SIGN CLOUDINARY DELIVERY URL ============
 app.post('/api/sign-url', verifyUserJWT, async (req, res) => {
@@ -2680,6 +2807,59 @@ app.post('/api/submit-exam', submitExamLimiter, verifyUserJWT, async (req, res) 
       .eq('exam_id', draft.exam_id);
     const attemptNumber = existingAttempts ? existingAttempts.length + 1 : 1;
 
+    // Retrieve violation audit logs and compute AI Risk Score
+    let aiRiskScore = 0;
+    try {
+      const { data: examLogs, error: logErr } = await supabaseAdmin
+        .from('audit_logs')
+        .select('action')
+        .eq('user_id', user.id);
+      
+      if (!logErr && examLogs) {
+        const filteredLogs = examLogs.filter(log => {
+          return [
+            'TAB_SWITCH_OR_FOCUS_LOST',
+            'SECURITY_KEY_INTERCEPT',
+            'SCREENSHOT_ATTEMPT',
+            'COPY_ATTEMPT',
+            'PASTE_ATTEMPT',
+            'DEVICE_LOST',
+            'DEVICE_MUTED',
+            'BLACK_SCREEN_DETECTED',
+            'FROZEN_VIDEO_FEED',
+            'STUDENT_OFFLINE'
+          ].includes(log.action);
+        });
+
+        let score = 0;
+        filteredLogs.forEach(v => {
+          const action = v.action;
+          if (action === 'TAB_SWITCH_OR_FOCUS_LOST') {
+            score += 10;
+          } else if (action === 'SECURITY_KEY_INTERCEPT' || action === 'SCREENSHOT_ATTEMPT') {
+            score += 20;
+          } else if (action === 'COPY_ATTEMPT' || action === 'PASTE_ATTEMPT') {
+            score += 5;
+          } else if (action === 'DEVICE_LOST' || action === 'DEVICE_MUTED') {
+            score += 15;
+          } else if (action === 'BLACK_SCREEN_DETECTED' || action === 'FROZEN_VIDEO_FEED') {
+            score += 25;
+          } else if (action === 'STUDENT_OFFLINE') {
+            score += 15;
+          }
+        });
+        aiRiskScore = Math.min(100, score);
+      }
+    } catch (e) {
+      console.warn("Failed to compute AI Risk Score, defaulting to 0:", e.message);
+    }
+
+    const existingAdjustments = draft.marks_adjustments || {};
+    const finalAdjustments = {
+      ...existingAdjustments,
+      ai_risk_score: aiRiskScore
+    };
+
     // 7. Atomic DB Updates (Update exam_results, complete assignments, audit log)
     const { error: updateErr } = await supabaseAdmin
       .from('exam_results')
@@ -2693,7 +2873,8 @@ app.post('/api/submit-exam', submitExamLimiter, verifyUserJWT, async (req, res) 
         wrong_count: wrongCount,
         unattempted_count: unattemptedCount,
         submitted_at: new Date().toISOString(),
-        attempt_number: attemptNumber
+        attempt_number: attemptNumber,
+        marks_adjustments: finalAdjustments
       })
       .eq('id', draftId);
 
