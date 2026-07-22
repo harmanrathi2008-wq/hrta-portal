@@ -382,7 +382,7 @@ const AdminDashboard = () => {
         console.log("[HRTA Proctor] E2E shared key derived initially on admin.");
         const peerKey = await importPeerPublicKey(regData.studentPubkey);
         sharedKeyRef.current = await deriveSharedKey(keyPair.privateKey, peerKey);
-        lastStudentPubkeyRef.current = regData.studentPubkey;
+        lastStudentPubkeyRef.current = typeof regData.studentPubkey === 'string' ? regData.studentPubkey : JSON.stringify(regData.studentPubkey);
       }
     } catch (regErr) {
       console.warn("[HRTA Proctor] Failed to register admin public key initially. Polling will retry.", regErr);
@@ -472,7 +472,7 @@ const AdminDashboard = () => {
             console.log("[HRTA Proctor] E2E shared key derived on admin from poll.");
             const peerKey = await importPeerPublicKey(regData.studentPubkey);
             sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
-            lastStudentPubkeyRef.current = regData.studentPubkey;
+            lastStudentPubkeyRef.current = typeof regData.studentPubkey === 'string' ? regData.studentPubkey : JSON.stringify(regData.studentPubkey);
           } else {
             return; // wait for student public key
           }
@@ -497,9 +497,10 @@ const AdminDashboard = () => {
         const pollData = await pollResp.json();
 
         // Self-healing: Check if student public key changed (indicates student reloaded page or resumed)
-        if (pollData.studentPubkey && pollData.studentPubkey !== lastStudentPubkeyRef.current) {
+        const currentStudentPubStr = pollData.studentPubkey ? (typeof pollData.studentPubkey === 'string' ? pollData.studentPubkey : JSON.stringify(pollData.studentPubkey)) : null;
+        if (currentStudentPubStr && currentStudentPubStr !== lastStudentPubkeyRef.current) {
           console.log("[HRTA Proctor] 🔄 Student public key changed (student reload/reconnect). Resetting WebRTC...");
-          lastStudentPubkeyRef.current = pollData.studentPubkey;
+          lastStudentPubkeyRef.current = currentStudentPubStr;
           
           if (peerConnectionRef.current) {
             try { peerConnectionRef.current.close(); } catch (e) {}
@@ -517,7 +518,7 @@ const AdminDashboard = () => {
 
         // Process SDP Offer
         if (pollData.offer && peerConnectionRef.current) {
-          if (peerConnectionRef.current.signalingState !== "stable") {
+          if (!peerConnectionRef.current.remoteDescription) {
             const decryptedOffer = await decryptPayload(pollData.offer, sharedKeyRef.current);
             console.log(`[HRTA Proctor] 📥 Decrypted SDP_OFFER received from student.`);
             setMonitorStatus("Connecting...");

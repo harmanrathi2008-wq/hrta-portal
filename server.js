@@ -337,7 +337,12 @@ function verifyCSRF(req, res, next) {
   // Normalize originalUrl to strip query parameters
   const cleanPath = req.originalUrl.split('?')[0];
 
-  // Allow static validation / bypass for public/auth setup endpoints
+  // Safe read-only HTTP methods do not change state, so CSRF check is bypassed
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    return next();
+  }
+
+  // Allow static validation / bypass for public/auth setup & real-time background signaling endpoints
   const publicPaths = [
     '/api/student/login',
     '/api/admin/login',
@@ -348,12 +353,12 @@ function verifyCSRF(req, res, next) {
     '/api/verify-mfa',
     '/api/setup-mfa',
     '/api/verify-recaptcha',
-    '/api/health'
+    '/api/health',
+    '/api/webrtc-signal/',
+    '/api/exam-heartbeat'
   ];
 
   if (publicPaths.some(p => cleanPath.startsWith(p))) {
-    // Public paths don't have authenticated session state, so they are safe from CSRF.
-    // Bypassing verification prevents any pre-flight or webview compatibility issues on login.
     return next();
   }
 

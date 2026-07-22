@@ -927,9 +927,10 @@ export default function ExamInterface() {
               const pData = await pResp.json();
               if (pData.adminPubkey) {
                 console.log("[HRTA Proctor] E2E shared key derived from poll.");
+                const pubStr = typeof pData.adminPubkey === 'string' ? pData.adminPubkey : JSON.stringify(pData.adminPubkey);
                 const peerKey = await importPeerPublicKey(pData.adminPubkey);
                 sharedKeyRef.current = await deriveSharedKey(ownKeyPairRef.current.privateKey, peerKey);
-                lastAdminPubkeyRef.current = pData.adminPubkey;
+                lastAdminPubkeyRef.current = pubStr;
               } else {
                 return; // wait for admin public key
               }
@@ -942,9 +943,10 @@ export default function ExamInterface() {
             const pollData = await pollResp.json();
 
             // Self-healing: Check if admin public key changed (admin refreshed or new admin session)
-            if (pollData.adminPubkey && pollData.adminPubkey !== lastAdminPubkeyRef.current) {
+            const currentAdminPubStr = pollData.adminPubkey ? (typeof pollData.adminPubkey === 'string' ? pollData.adminPubkey : JSON.stringify(pollData.adminPubkey)) : null;
+            if (currentAdminPubStr && currentAdminPubStr !== lastAdminPubkeyRef.current) {
               console.log("[HRTA Proctor] 🔄 Admin public key changed (admin reload/reconnect). Resetting WebRTC...");
-              lastAdminPubkeyRef.current = pollData.adminPubkey;
+              lastAdminPubkeyRef.current = currentAdminPubStr;
               
               if (peerConnectionRef.current) {
                 try { peerConnectionRef.current.close(); } catch (e) {}
