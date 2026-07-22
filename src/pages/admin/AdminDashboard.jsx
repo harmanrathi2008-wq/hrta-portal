@@ -320,13 +320,20 @@ const AdminDashboard = () => {
     setMonitoringStudent(session);
     setMonitorStatus("Initializing...");
 
+    // Retrieve authentication token at root function scope
+    let token = '';
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      token = authSession?.access_token || sessionStorage.getItem('adminSessionToken') || '';
+    } catch (e) {
+      token = sessionStorage.getItem('adminSessionToken') || '';
+    }
+
     // Log audit event: ADMIN_MONITOR_START
     try {
       const adminId = sessionStorage.getItem('userId');
       const adminRole = sessionStorage.getItem('role') || 'super_admin';
       const adminEmail = sessionStorage.getItem('userEmail') || 'Administrator';
-      const { data: { session: authSession } } = await supabase.auth.getSession();
-      const token = authSession?.access_token || '';
       const loginLogId = sessionStorage.getItem('loginLogId') || '';
 
       fetch(`${API_BASE_URL}/api/audit-log`, {
