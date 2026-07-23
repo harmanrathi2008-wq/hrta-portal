@@ -574,11 +574,12 @@ function encryptStudent(student) {
   return result;
 }
 
-// Domain emails (harmanrathitportal.nxtdev.xyz = verified domain on Resend account)
-const FROM_EMAIL = 'result@harmanrathitportal.nxtdev.xyz'
-const ADMIN_FROM_EMAIL = 'admin@harmanrathitportal.nxtdev.xyz'
-const SUPERADMIN_FROM_EMAIL = 'superadmin-direct-mail@harmanrathitportal.nxtdev.xyz'
+// Domain emails
+const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
+const ADMIN_FROM_EMAIL = 'admin@harmanrathiportal.dpdns.org'
+const SUPERADMIN_FROM_EMAIL = 'superadmin-direct-mail@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
+
 
 
 
