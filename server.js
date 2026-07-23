@@ -14,7 +14,7 @@ import { exec, spawn } from 'child_process'
 import os from 'os'
 import { configureSecurityHeaders } from './middleware/securityHeaders.js'
 import { firewallMiddleware, invalidateFirewallCache } from './middleware/firewall.js'
-import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter } from './middleware/rateLimiters.js'
+import { apiLimiter, authLimiter, heavyRequestLimiter, submitExamLimiter, wakeupLimiter } from './middleware/rateLimiters.js'
 import { validateEmailInput } from './middleware/validator.js'
 import crypto from 'crypto'
 import { body, validationResult } from 'express-validator'
@@ -62,8 +62,50 @@ app.use(firewallMiddleware);
 // Probing protection middleware (rejects scanner requests to /.env, /config, etc.)
 app.use(probingProtectionMiddleware);
 
+/**
+ * Timing-safe secret comparison for 64-character hex strings
+ */
+function timingSafeSecretCheck(provided, expected) {
+  const dummy = '0'.repeat(64);
+  const expectedSecret = (expected && expected.length === 64) ? expected : dummy;
+  const targetSecret = (typeof provided === 'string' && provided.length === 64) ? provided : dummy;
+  
+  const bufA = Buffer.from(targetSecret, 'utf8');
+  const bufB = Buffer.from(expectedSecret, 'utf8');
+  
+  const matches = crypto.timingSafeEqual(bufA, bufB);
+  const isValidLengthAndType = typeof provided === 'string' && provided.length === 64 && expected && expected.length === 64;
+  
+  return matches && isValidLengthAndType;
+}
+
+/**
+ * @openapi ignore
+ * Private internal wake-up / heartbeat endpoint for 24/7 Render web service keep-alive.
+ * Positioned after Helmet, Firewall, & Probing Protection, but before CORS, Origin Validation, & Auth.
+ */
+app.get('/internal/system/ping', wakeupLimiter, (req, res) => {
+  const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+  if (req.method !== 'GET') {
+    return res.status(403).json({ error: 'Access Denied' });
+  }
+  const providedSecret = req.headers['x-hrta-wakeup'];
+  const expectedSecret = process.env.CRON_WAKEUP_SECRET || process.env.WAKEUP_SECRET;
+  if (!timingSafeSecretCheck(providedSecret, expectedSecret)) {
+    console.warn('[Wakeup Security Alert] Authentication failed', {
+      requestId,
+      timestamp: new Date().toISOString(),
+      ip: req.realIp || req.ip
+    });
+    return res.status(403).json({ error: 'Access Denied' });
+  }
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  return res.status(204).end();
+});
+
 // Server-Side Origin & Direct Access Validation
 app.use(serverSideOriginValidation);
+
 
 // Restrict CORS origins securely (allowing localhost, Cloudflare Pages, and custom domain)
 app.use(cors({
