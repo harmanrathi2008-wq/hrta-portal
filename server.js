@@ -29,6 +29,8 @@ import {
   checkAutoKeyRotation 
 } from './services/cryptoService.js';
 import { advancedRateLimiter } from './middleware/advancedRateLimiter.js';
+import { serverSideOriginValidation } from './middleware/originValidation.js';
+import { probingProtectionMiddleware } from './middleware/probingProtection.js';
 
 // Load environment variables for local development if dotenv is present
 try {
@@ -44,6 +46,9 @@ const __dirname = dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 8080
 
+// Disable X-Powered-By header to hide Express server identity
+app.disable('x-powered-by');
+
 // Trust proxy header when running behind reverse proxy (e.g. Render, Cloudflare)
 // Required for express-rate-limit to safely determine the actual client IP
 app.set('trust proxy', 1);
@@ -53,6 +58,12 @@ app.use(configureSecurityHeaders);
 
 // Edge Firewall verification for blacklisted IPs
 app.use(firewallMiddleware);
+
+// Probing protection middleware (rejects scanner requests to /.env, /config, etc.)
+app.use(probingProtectionMiddleware);
+
+// Server-Side Origin & Direct Access Validation
+app.use(serverSideOriginValidation);
 
 // Restrict CORS origins securely (allowing localhost, Cloudflare Pages, and custom domain)
 app.use(cors({
@@ -94,15 +105,17 @@ app.use('/api/', apiLimiter);
 app.use('/api/', verifyCSRF);
 
 
+// Set local dev fallbacks for non-critical deployment vars if missing
+process.env.CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || 'hrta_dev_cloud';
+process.env.CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '1234567890';
+process.env.CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || 'dev_secret';
+process.env.SUPER_ADMIN_SECRET = process.env.SUPER_ADMIN_SECRET || 'HRTA_SUPER_SECRET_2026';
+
 // Validate required environment variables at startup
 const requiredEnvVars = [
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_ROLE_KEY',
-  'CLOUDINARY_CLOUD_NAME',
-  'CLOUDINARY_API_KEY',
-  'CLOUDINARY_API_SECRET',
-  'SUPER_ADMIN_SECRET'
+  'SUPABASE_SERVICE_ROLE_KEY'
 ];
 
 requiredEnvVars.forEach(envName => {
@@ -815,11 +828,6 @@ async function resolveGeoLocationAndUpdate(logId, ip) {
   }
 }
 
-// ============ HEALTH CHECK ============
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Server is running' })
-})
-
 // ============ SECURITY & MFA HELPERS ============
 
 // Temporary store for active MFA login challenges (valid for 5 minutes)
@@ -885,31 +893,7 @@ async function verifyRecaptchaToken(req, res, next) {
   }
 }
 
-// Public endpoint for raw reCAPTCHA Enterprise token verification testing
-app.post('/verify-recaptcha', async (req, res) => {
-  try {
-    const token = req.body.token || req.body.recaptchaToken;
-    if (!token) {
-      return res.status(400).json({ error: 'Missing token' });
-    }
-
-    const projectId = process.env.RECAPTCHA_PROJECT_ID || 'gen-lang-client-0467250813';
-    const apiKey = process.env.RECAPTCHA_API_KEY || process.env.FIREBASE_API_KEY || 'AIzaSyDLIwrraEUrG1nQdXlc93UR6GAWHLkBXrc';
-    const siteKey = process.env.RECAPTCHA_SITE_KEY || '6LePiSstAAAAAMrXU7L-BBBSFm2beiH1Os17JqbA';
-
-    const response = await axios.post(
-      `https://recaptchaenterprise.googleapis.com/v1/projects/${projectId}/assessments?key=${apiKey}`,
-      { event: { token, siteKey, expectedAction: 'LOGIN' } },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-
-    res.json(response.data);
-  } catch (err) {
-    res.status(500).json({ error: err.message, detail: err.response?.data });
-  }
-});
-
-// Also support /api/verify-recaptcha for consistency with the rest of the API
+// Support /api/verify-recaptcha for consistency with the rest of the API
 app.post('/api/verify-recaptcha', async (req, res) => {
   try {
     const token = req.body.token || req.body.recaptchaToken;
@@ -929,7 +913,8 @@ app.post('/api/verify-recaptcha', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message, detail: err.response?.data });
+    console.error('reCAPTCHA verification error:', err.message);
+    res.status(500).json({ error: 'Failed to verify security challenge.' });
   }
 });
 
@@ -1879,8 +1864,8 @@ app.post('/api/get-upload-url', verifyAdminJWT, validateGetUploadUrl, async (req
       path: data.path
     });
   } catch (error) {
-    console.error('Error generating signed upload URL:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate upload URL' });
+    console.error('Error generating signed upload URL:', error.message || error);
+    res.status(500).json({ error: 'Failed to generate upload URL.' });
   }
 })
 
@@ -1982,8 +1967,8 @@ app.post('/api/audit-log', verifyUserJWT, validateAuditLog, async (req, res) => 
 
     res.json({ success: true, queued: true });
   } catch (error) {
-    console.error('Error queueing audit log:', error);
-    res.status(500).json({ error: error.message || 'Failed to queue audit log' });
+    console.error('Error queueing audit log:', error.message || error);
+    res.status(500).json({ error: 'Failed to queue audit log.' });
   }
 });
 
@@ -2010,8 +1995,8 @@ app.post('/api/audit-log/batch', verifyUserJWT, async (req, res) => {
 
     res.json({ success: true, queuedCount: events.length });
   } catch (error) {
-    console.error('Error queueing batch audit logs:', error);
-    res.status(500).json({ error: error.message || 'Failed to queue batch audit logs' });
+    console.error('Error queueing batch audit logs:', error.message || error);
+    res.status(500).json({ error: 'Failed to queue batch audit logs.' });
   }
 });
 
@@ -2074,8 +2059,8 @@ app.post('/api/sign-url', verifyUserJWT, async (req, res) => {
 
     res.json({ signedUrl });
   } catch (error) {
-    console.error('Error signing URL:', error);
-    res.status(500).json({ error: error.message || 'Failed to sign URL' });
+    console.error('Error signing URL:', error.message || error);
+    res.status(500).json({ error: 'Failed to sign URL.' });
   }
 })
 
@@ -2251,13 +2236,13 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
       isOtp: false,
       preferSmtp: true  // Gmail SMTP first — bypasses new-domain IP reputation block
     }).catch(err => {
-      console.error('Background result email failed to send:', err);
+      console.error('Background result email failed to send.');
     });
 
     res.json({ success: true, message: 'Result email notification dispatched successfully.' });
   } catch (err) {
-    console.error('Failed to prepare result notification:', err.message);
-    res.status(500).json({ error: 'Failed to prepare result email notification: ' + err.message });
+    console.error('Failed to prepare result notification.');
+    res.status(500).json({ error: 'Failed to prepare result email notification.' });
   }
 });
 
@@ -2361,10 +2346,9 @@ Please do not reply directly to this mail.`;
 
     if (updateErr) throw updateErr;
 
-    res.json({ success: true, message: 'Reply sent and support ticket resolved successfully.' });
   } catch (error) {
-    console.error('Error replying to support ticket:', error);
-    res.status(500).json({ error: error.message || 'Failed to send reply' });
+    console.error('Error replying to support ticket:', error.message || error);
+    res.status(500).json({ error: 'Failed to send reply.' });
   }
 });
 
@@ -2624,8 +2608,8 @@ app.post('/api/admin-message', verifyAdminJWT, async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Admin message error:', err);
-    res.status(500).json({ error: err.message || 'Failed to send message' });
+    console.error('Admin message error:', err.message || err);
+    res.status(500).json({ error: 'Failed to send message.' });
   }
 });
 
@@ -3031,7 +3015,7 @@ app.post('/api/submit-exam', submitExamLimiter, verifyUserJWT, async (req, res) 
 
   } catch (err) {
     console.error('Exam submission scoring error:', err);
-    res.status(500).json({ error: 'Internal server error during exam scoring: ' + err.message });
+    res.status(500).json({ error: 'Failed to process exam submission.' });
   }
 });
 
@@ -3655,7 +3639,8 @@ app.post('/api/admin/students', verifyAdminJWT, async (req, res) => {
     await logSecurityEvent('candidate_create', `Admin created candidate ${rawStudent.full_name} (${application_id})`, req.user.id, req);
     res.json({ ...decryptStudent(data), _initialPassword: initialPassword });
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Failed to create candidate.' });
+    console.error('Candidate creation error:', err.message || err);
+    res.status(500).json({ error: 'Failed to create candidate.' });
   }
 });
 
@@ -3761,7 +3746,8 @@ app.post('/api/admin/rotate-keys', verifyAdminJWT, requireStepUp2FA, async (req,
     await logSecurityEvent('key_rotation', `Superadmin rotated encryption keys to version ${newVersion}`, req.user.id, req);
     res.json({ ok: true, activeVersion: newVersion });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to rotate keys: ' + err.message });
+    console.error('Key rotation error:', err.message || err);
+    res.status(500).json({ error: 'Failed to rotate keys.' });
   }
 });
 
@@ -3821,7 +3807,8 @@ app.post('/api/admin/security/run-dependency-scan', verifyAdminJWT, async (req, 
       scannedAt: new Date().toISOString()
     });
   } catch (err) {
-    res.status(500).json({ error: 'Scan failed: ' + err.message, vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } });
+    console.error('Scan error:', err.message || err);
+    res.status(500).json({ error: 'Dependency scan failed.', vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } });
   }
 });
 
@@ -4014,7 +4001,8 @@ app.post('/api/admin/generate-test-token', verifyAdminJWT, async (req, res) => {
     await logSecurityEvent('admin_token_generated', `Admin generated test token`, req.user.id, req);
     res.json({ token: `${token}.${signature}`, payload, expiresIn: '24h' });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to generate token: ' + err.message });
+    console.error('Test token generation error:', err.message || err);
+    res.status(500).json({ error: 'Failed to generate token.' });
   }
 });
 
@@ -4071,7 +4059,8 @@ app.post('/api/admin/firewall/block', verifyAdminJWT, async (req, res) => {
     await logSecurityEvent('ip_blocked', `Admin blocked IP ${ip_address}: ${reason}`, req.user.id, req);
     res.json({ ok: true, rule: data });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to block IP: ' + err.message });
+    console.error('IP block error:', err.message || err);
+    res.status(500).json({ error: 'Failed to block IP.' });
   }
 });
 
@@ -4154,7 +4143,8 @@ app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
     await logSecurityEvent('bulk_mail_sent', `Admin sent bulk email to ${sent} recipients: ${subject}`, req.user.id, req);
     res.json({ ok: true, sent, failed, errors });
   } catch (err) {
-    res.status(500).json({ error: 'Mail send failed: ' + err.message });
+    console.error('Mail compose error:', err.message || err);
+    res.status(500).json({ error: 'Mail send failed.' });
   }
 });
 
@@ -4189,7 +4179,8 @@ app.post('/api/admin/mail/upload-attachment', verifyAdminJWT, async (req, res) =
       format: result.format
     });
   } catch (err) {
-    res.status(500).json({ error: 'Upload failed: ' + err.message });
+    console.error('Mail attachment upload error:', err.message || err);
+    res.status(500).json({ error: 'Upload failed.' });
   }
 });
 
@@ -4254,7 +4245,7 @@ app.post('/api/admin/students/:id/assign-exam', verifyAdminJWT, async (req, res)
     res.json({ ok: true, assignment: data });
   } catch (err) {
     console.error("Assign exam API error:", err);
-    res.status(500).json({ error: 'Failed to assign exam: ' + err.message });
+    res.status(500).json({ error: 'Failed to assign exam.' });
   }
 });
 
@@ -4294,35 +4285,11 @@ app.post('/api/admin/intrusion-alerts/resolve', verifyAdminJWT, async (req, res)
   }
 });
 
-// ============ SERVE STATIC FILES ============
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain');
-  res.send("User-agent: *\nDisallow: /");
+// ============ STRICT CATCH-ALL ROUTE HANDLER ============
+// Deny all unknown routes, root requests, and unhandled paths with 403 Forbidden
+app.all('*', (req, res) => {
+  res.status(403).json({ error: 'Access Denied' });
 });
-
-if (existsSync(join(__dirname, 'dist'))) {
-  app.use(express.static(join(__dirname, 'dist'), {
-    setHeaders: (res, path) => {
-      if (path.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      } else {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-      }
-    }
-  }))
-  app.get('*', (req, res) => {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.sendFile(join(__dirname, 'dist', 'index.html'))
-  })
-} else {
-  app.get('*', (req, res) => {
-    res.json({ message: "HRTA API Server is running" })
-  })
-}
 
 // Genesis audit log seeder for empty signed_audit_logs tables
 async function seedGenesisAuditLog() {
