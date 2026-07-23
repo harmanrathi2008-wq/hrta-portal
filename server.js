@@ -2339,98 +2339,90 @@ app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
       return res.status(400).json({ error: 'Maximum 1000 recipients allowed per email dispatch.' });
     }
 
-    console.log(`[Superadmin Mail] Initiating email dispatch to ${validRecipients.length} recipient(s). Subject: "${subject}"`);
+    console.log(`[Superadmin Mail] Initiating asynchronous email dispatch to ${validRecipients.length} recipient(s). Subject: "${subject}"`);
 
-    let sentCount = 0;
-    let failedCount = 0;
-    const errors = [];
-    const logsToInsert = [];
+    // Immediately respond to client to prevent Express / browser 15-second request timeout
+    res.json({
+      success: true,
+      sent: validRecipients.length,
+      message: `Email dispatch initiated for ${validRecipients.length} recipient(s).`
+    });
 
-    // Send emails in concurrent batches of 5
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < validRecipients.length; i += BATCH_SIZE) {
-      const batch = validRecipients.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (recipient) => {
-        try {
-          const result = await sendEmail({
-            to: recipient,
-            subject: subject.trim(),
-            html: body,
-            fromName: 'HRTA Central Controller',
-            fromEmailOverride: SUPERADMIN_FROM_EMAIL,
-            preferSmtp: true
-          });
+    // Execute email dispatching asynchronously in the background
+    setImmediate(async () => {
+      let sentCount = 0;
+      let failedCount = 0;
+      const logsToInsert = [];
 
-
-          if (result && result.success) {
-            sentCount++;
-            logsToInsert.push({
-              recipient,
+      // Send emails in concurrent batches of 5
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < validRecipients.length; i += BATCH_SIZE) {
+        const batch = validRecipients.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (recipient) => {
+          try {
+            const result = await sendEmail({
+              to: recipient,
               subject: subject.trim(),
-              status: 'SENT',
-              provider: result.provider || 'resend',
-              sent_at: new Date().toISOString()
+              html: body,
+              fromName: 'HRTA Central Controller',
+              fromEmailOverride: SUPERADMIN_FROM_EMAIL,
+              preferSmtp: false // Resend HTTPS API over port 443 — ultra fast, zero port 2525 timeouts
             });
-          } else {
+
+            if (result && result.success) {
+              sentCount++;
+              logsToInsert.push({
+                recipient,
+                subject: subject.trim(),
+                status: 'SENT',
+                provider: result.provider || 'resend',
+                sent_at: new Date().toISOString()
+              });
+            } else {
+              failedCount++;
+              logsToInsert.push({
+                recipient,
+                subject: subject.trim(),
+                status: 'FAILED',
+                provider: 'none',
+                error_details: result?.error?.message || 'Dispatch failed',
+                sent_at: new Date().toISOString()
+              });
+            }
+          } catch (err) {
             failedCount++;
-            errors.push({ recipient, error: result?.error?.message || 'Dispatch failed' });
+            console.error(`[Superadmin Mail Error] Failed to send email to ${recipient}:`, err.message);
             logsToInsert.push({
               recipient,
               subject: subject.trim(),
               status: 'FAILED',
               provider: 'none',
-              error_details: result?.error?.message || 'Dispatch failed',
+              error_details: err.message,
               sent_at: new Date().toISOString()
             });
           }
-        } catch (err) {
-          failedCount++;
-          console.error(`[Superadmin Mail Error] Failed to send email to ${recipient}:`, err.message);
-          errors.push({ recipient, error: err.message });
-          logsToInsert.push({
-            recipient,
-            subject: subject.trim(),
-            status: 'FAILED',
-            provider: 'none',
-            error_details: err.message,
-            sent_at: new Date().toISOString()
-          });
-        }
-      }));
-    }
-
-    // Persist logs in DB if table exists
-    if (supabaseAdmin && logsToInsert.length > 0) {
-      try {
-        await supabaseAdmin.from('mail_logs').insert(logsToInsert);
-      } catch (dbErr) {
-        console.log('[Superadmin Mail] Log insert skipped:', dbErr.message);
+        }));
       }
-    }
 
-    console.log(`[Superadmin Mail Finished] Sent: ${sentCount}/${validRecipients.length}, Failed: ${failedCount}`);
+      // Persist logs in DB if table exists
+      if (supabaseAdmin && logsToInsert.length > 0) {
+        try {
+          await supabaseAdmin.from('mail_logs').insert(logsToInsert);
+        } catch (dbErr) {
+          console.log('[Superadmin Mail] Log insert skipped:', dbErr.message);
+        }
+      }
 
-    if (sentCount === 0 && validRecipients.length > 0) {
-      return res.status(500).json({
-        error: `Failed to send email to any recipient. Error: ${errors[0]?.error || 'Unknown error'}`,
-        sent: 0,
-        failed: failedCount,
-        errors
-      });
-    }
-
-    return res.json({
-      success: true,
-      sent: sentCount,
-      failed: failedCount,
-      total: validRecipients.length,
-      errors: errors.length > 0 ? errors : undefined
+      console.log(`[Superadmin Mail Background Finished] Sent: ${sentCount}/${validRecipients.length}, Failed: ${failedCount}`);
     });
   } catch (err) {
     console.error('[Superadmin Mail Fatal Error]:', err);
-    return res.status(500).json({ error: err.message || 'Internal server error while processing mail dispatch.' });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: err.message || 'Internal server error while processing mail dispatch.' });
+    }
   }
 });
+
 
 // 2. Fetch Mail Logs
 app.get('/api/admin/mail/logs', verifyAdminJWT, async (req, res) => {
