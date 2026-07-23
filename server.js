@@ -579,7 +579,9 @@ function encryptStudent(student) {
 // harmanrathiportal.dpdns.org = verified for result/scorecard/update emails (verified domain)
 const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
 const ADMIN_FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
+const SUPERADMIN_FROM_EMAIL = 'superadmin-direct-mail@harmanrathiportal.dpdns.org'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
+
 
 // Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
 const transporters = [];
@@ -2355,8 +2357,10 @@ app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
             subject: subject.trim(),
             html: body,
             fromName: 'HRTA Central Controller',
-            preferSmtp: false
+            fromEmailOverride: SUPERADMIN_FROM_EMAIL,
+            preferSmtp: true
           });
+
 
           if (result && result.success) {
             sentCount++;
