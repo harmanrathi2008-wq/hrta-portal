@@ -574,13 +574,12 @@ function encryptStudent(student) {
   return result;
 }
 
-// Domain emails
-// harmanrathitportal.nxtdev.xyz = verified for OTP login emails (established reputation)
-// harmanrathiportal.dpdns.org = verified for result/scorecard/update emails (verified domain)
-const FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
-const ADMIN_FROM_EMAIL = 'result@harmanrathiportal.dpdns.org'
-const SUPERADMIN_FROM_EMAIL = 'superadmin-direct-mail@harmanrathiportal.dpdns.org'
+// Domain emails (harmanrathitportal.nxtdev.xyz = verified domain on Resend account)
+const FROM_EMAIL = 'result@harmanrathitportal.nxtdev.xyz'
+const ADMIN_FROM_EMAIL = 'admin@harmanrathitportal.nxtdev.xyz'
+const SUPERADMIN_FROM_EMAIL = 'superadmin-direct-mail@harmanrathitportal.nxtdev.xyz'
 const OTP_FROM_EMAIL = 'otp@harmanrathitportal.nxtdev.xyz'
+
 
 
 // Nodemailer SMTP Relay Setup (via Resend SMTP on port 2525 — bypasses Render port blocks)
@@ -839,10 +838,30 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
         console.warn(`[Resend] ${label} with custom address (${fromAddress}) failed: ${err.message}`);
         lastResendError = err;
 
-        // 2. Fallback: If custom domain is not authorized on this key, attempt with onboarding@resend.dev
+        // 2. Fallback 1: Retry using verified nxtdev.xyz domain
         try {
-          console.log(`[Resend Fallback] Retrying via ${label} using onboarding@resend.dev...`);
-          const fallbackRes = await client.emails.send({
+          const verifiedNxtFrom = `${fromName} <superadmin-direct-mail@harmanrathitportal.nxtdev.xyz>`;
+          console.log(`[Resend Fallback 1] Retrying via ${label} using ${verifiedNxtFrom}...`);
+          const fallbackRes1 = await client.emails.send({
+            from: verifiedNxtFrom,
+            to,
+            subject,
+            html: finalHtml,
+            ...(text ? { text } : {})
+          });
+
+          if (!fallbackRes1.error) {
+            console.log(`[Resend Fallback 1] Sent successfully via ${label} (${verifiedNxtFrom}) to ${to}`);
+            return { success: true, provider: `resend_${label}_nxtdev`, data: fallbackRes1 };
+          }
+        } catch (fallbackErr1) {
+          console.warn(`[Resend Fallback 1] ${label} with nxtdev.xyz failed: ${fallbackErr1.message}`);
+        }
+
+        // 3. Fallback 2: Retry using onboarding@resend.dev
+        try {
+          console.log(`[Resend Fallback 2] Retrying via ${label} using onboarding@resend.dev...`);
+          const fallbackRes2 = await client.emails.send({
             from: `${fromName} <onboarding@resend.dev>`,
             to,
             subject,
@@ -850,16 +869,17 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
             ...(text ? { text } : {})
           });
 
-          if (!fallbackRes.error) {
-            console.log(`[Resend Fallback] Sent successfully via ${label} (onboarding@resend.dev) to ${to}`);
-            return { success: true, provider: `resend_${label}_fallback`, data: fallbackRes };
+          if (!fallbackRes2.error) {
+            console.log(`[Resend Fallback 2] Sent successfully via ${label} (onboarding@resend.dev) to ${to}`);
+            return { success: true, provider: `resend_${label}_fallback`, data: fallbackRes2 };
           }
-        } catch (fallbackErr) {
-          console.warn(`[Resend Fallback] ${label} with onboarding@resend.dev failed: ${fallbackErr.message}`);
-          lastResendError = fallbackErr;
+        } catch (fallbackErr2) {
+          console.warn(`[Resend Fallback 2] ${label} with onboarding@resend.dev failed: ${fallbackErr2.message}`);
+          lastResendError = fallbackErr2;
         }
       }
     }
+
 
     return { success: false, error: lastResendError };
   };
