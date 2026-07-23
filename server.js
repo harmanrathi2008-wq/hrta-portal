@@ -776,65 +776,94 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
 
   // ── Resend helper ─────────────────────────────────────────────────────────
   const tryResend = async () => {
-    const clientsToTry = [];
-    if (isOtp) {
-      // OTP emails: use OTP client (nxtdev.xyz domain - verified and reaches Gmail)
-      if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
-    } else {
-      // Result/scorecard emails:
-      // 1. Try scorecard/notification/fallback clients FIRST (uses otp.harmanrathiportal.dpdns.org)
-      // 2. Fall back to OTP client (nxtdev.xyz domain) if others fail
-      if (resendScorecardClient) clientsToTry.push({ name: 'resendScorecardClient', client: resendScorecardClient });
-      if (resendNotificationClient) clientsToTry.push({ name: 'resendNotificationClient', client: resendNotificationClient });
-      if (resendNewFallbackClient) clientsToTry.push({ name: 'resendNewFallbackClient', client: resendNewFallbackClient });
-      if (resendOTPClient) clientsToTry.push({ name: 'resendOTPClient', client: resendOTPClient });
+    // Collect and prioritize all active Resend API keys from Render environment variables
+    const rawKeys = isOtp
+      ? [
+          process.env.RESEND_API_KEY_OTP,
+          process.env.RESEND_API_KEY_SCORECARD,
+          process.env.RESEND_API_KEY_NOTIFICATION,
+          process.env.RESEND_API_KEY,
+          process.env.VITE_RESEND_API_KEY,
+          process.env.RESEND_API_KEY_STUDENT,
+          process.env.RESEND_API_KEY_ADMIN,
+          process.env.RESEND_API_KEY_RESULT
+        ]
+      : [
+          process.env.RESEND_API_KEY_SCORECARD,
+          process.env.RESEND_API_KEY_NOTIFICATION,
+          process.env.RESEND_API_KEY,
+          process.env.VITE_RESEND_API_KEY,
+          process.env.RESEND_API_KEY_OTP,
+          process.env.RESEND_API_KEY_STUDENT,
+          process.env.RESEND_API_KEY_ADMIN,
+          process.env.RESEND_API_KEY_RESULT
+        ];
+
+    const activeKeys = [...new Set(
+      rawKeys
+        .map(k => (k || '').trim())
+        .filter(k => k && k !== 'undefined' && k !== 'null' && k.startsWith('re_'))
+    )];
+
+
+    if (activeKeys.length === 0) {
+      console.warn('[Resend Error] No valid Resend API keys found in process.env!');
+      return { success: false, error: new Error('No valid Resend API keys configured in Render environment variables.') };
     }
-    if (resendStudent) clientsToTry.push({ name: 'resendStudent', client: resendStudent });
-    if (resend) clientsToTry.push({ name: 'resendMain', client: resend });
-    if (resendAdmin) clientsToTry.push({ name: 'resendAdmin', client: resendAdmin });
 
     let lastResendError = null;
-    for (const { name, client } of clientsToTry) {
-      try {
-        console.log(`[Resend] Attempting to send to ${to} using client: ${name}...`);
-        
-        // Dynamically select from address: OTP client requires nxtdev.xyz, others use custom dpdns.org
-        const activeFromAddress = name === 'resendOTPClient'
-          ? `${fromName} <${OTP_FROM_EMAIL}>`
-          : fromAddress;
 
+    for (let idx = 0; idx < activeKeys.length; idx++) {
+      const apiKey = activeKeys[idx];
+      const client = new Resend(apiKey);
+      const label = `key_${idx + 1}_(${apiKey.slice(0, 7)}...)`;
+
+      // 1. Attempt sending with requested fromAddress
+      try {
+        console.log(`[Resend] Attempting to send to ${to} via ${label} with from: ${fromAddress}...`);
         const response = await client.emails.send({
-          from: activeFromAddress, to, subject, html: finalHtml,
+          from: fromAddress,
+          to,
+          subject,
+          html: finalHtml,
           ...(text ? { text } : {})
         });
-        if (response.error) throw new Error(response.error.message || `Resend ${name} returned error`);
-        console.log(`[Resend] Sent successfully via ${name} (${activeFromAddress}) to ${to}`);
-        return { success: true, provider: `resend_${name}`, data: response };
-      } catch (err) {
-        console.warn(`[Resend] Client ${name} (${activeFromAddress}) failed: ${err.message}`);
-        
-        // Automatic fallback: If custom domain is not authorized on Resend, retry using onboarding@resend.dev
-        if (err.message && (err.message.includes('not authorized') || err.message.includes('domain') || err.message.includes('validation_error'))) {
-          try {
-            console.log(`[Resend Fallback] Retrying via ${name} using onboarding@resend.dev...`);
-            const fallbackResponse = await client.emails.send({
-              from: `${fromName} <onboarding@resend.dev>`, to, subject, html: finalHtml,
-              ...(text ? { text } : {})
-            });
-            if (!fallbackResponse.error) {
-              console.log(`[Resend Fallback] Sent successfully via ${name} (onboarding@resend.dev) to ${to}`);
-              return { success: true, provider: `resend_${name}_fallback`, data: fallbackResponse };
-            }
-          } catch (fallbackErr) {
-            console.warn(`[Resend Fallback] onboarding@resend.dev attempt failed: ${fallbackErr.message}`);
-          }
+
+        if (response.error) {
+          throw new Error(response.error.message || `Resend ${label} returned error`);
         }
-        
+
+        console.log(`[Resend] Sent successfully via ${label} (${fromAddress}) to ${to}`);
+        return { success: true, provider: `resend_${label}`, data: response };
+      } catch (err) {
+        console.warn(`[Resend] ${label} with custom address (${fromAddress}) failed: ${err.message}`);
         lastResendError = err;
+
+        // 2. Fallback: If custom domain is not authorized on this key, attempt with onboarding@resend.dev
+        try {
+          console.log(`[Resend Fallback] Retrying via ${label} using onboarding@resend.dev...`);
+          const fallbackRes = await client.emails.send({
+            from: `${fromName} <onboarding@resend.dev>`,
+            to,
+            subject,
+            html: finalHtml,
+            ...(text ? { text } : {})
+          });
+
+          if (!fallbackRes.error) {
+            console.log(`[Resend Fallback] Sent successfully via ${label} (onboarding@resend.dev) to ${to}`);
+            return { success: true, provider: `resend_${label}_fallback`, data: fallbackRes };
+          }
+        } catch (fallbackErr) {
+          console.warn(`[Resend Fallback] ${label} with onboarding@resend.dev failed: ${fallbackErr.message}`);
+          lastResendError = fallbackErr;
+        }
       }
     }
+
     return { success: false, error: lastResendError };
   };
+
 
 
   // ── Route based on preferSmtp ─────────────────────────────────────────────
