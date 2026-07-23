@@ -39,3 +39,13 @@ export const submitExamLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Dedicated rate limiter for private 24/7 internal wake-up / heartbeat endpoint
+export const wakeupLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute window
+  max: 9, // max 9 requests per 60s per IP
+  message: { error: 'Too Many Requests' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+
