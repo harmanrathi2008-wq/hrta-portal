@@ -806,15 +806,34 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
           ...(text ? { text } : {})
         });
         if (response.error) throw new Error(response.error.message || `Resend ${name} returned error`);
-        console.log(`[Resend] Sent successfully via ${name} to ${to}`);
+        console.log(`[Resend] Sent successfully via ${name} (${activeFromAddress}) to ${to}`);
         return { success: true, provider: `resend_${name}`, data: response };
       } catch (err) {
-        console.warn(`[Resend] Client ${name} failed: ${err.message}`);
+        console.warn(`[Resend] Client ${name} (${activeFromAddress}) failed: ${err.message}`);
+        
+        // Automatic fallback: If custom domain is not authorized on Resend, retry using onboarding@resend.dev
+        if (err.message && (err.message.includes('not authorized') || err.message.includes('domain') || err.message.includes('validation_error'))) {
+          try {
+            console.log(`[Resend Fallback] Retrying via ${name} using onboarding@resend.dev...`);
+            const fallbackResponse = await client.emails.send({
+              from: `${fromName} <onboarding@resend.dev>`, to, subject, html: finalHtml,
+              ...(text ? { text } : {})
+            });
+            if (!fallbackResponse.error) {
+              console.log(`[Resend Fallback] Sent successfully via ${name} (onboarding@resend.dev) to ${to}`);
+              return { success: true, provider: `resend_${name}_fallback`, data: fallbackResponse };
+            }
+          } catch (fallbackErr) {
+            console.warn(`[Resend Fallback] onboarding@resend.dev attempt failed: ${fallbackErr.message}`);
+          }
+        }
+        
         lastResendError = err;
       }
     }
     return { success: false, error: lastResendError };
   };
+
 
   // ── Route based on preferSmtp ─────────────────────────────────────────────
   if (preferSmtp) {
@@ -2288,7 +2307,169 @@ Copyright ${new Date().getFullYear()} HRTA. All Rights Reserved.`;
   }
 });
 
+// ============ SUPERADMIN MAIL SYSTEM ENDPOINTS ============
+
+// 1. Compose & Send Broadcast/Individual Emails
+app.post('/api/admin/mail/compose', verifyAdminJWT, async (req, res) => {
+  try {
+    const { recipients, subject, body, attachments = [] } = req.body;
+
+    if (!Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'Recipients array is required and must not be empty.' });
+    }
+    if (!subject || typeof subject !== 'string' || !subject.trim()) {
+      return res.status(400).json({ error: 'Subject is required.' });
+    }
+    if (!body || typeof body !== 'string' || !body.trim()) {
+      return res.status(400).json({ error: 'Email body is required.' });
+    }
+
+    // Filter valid email addresses
+    const validRecipients = recipients
+      .map(r => (typeof r === 'string' ? r.trim() : ''))
+      .filter(r => r.includes('@') && r.length > 3);
+
+    if (validRecipients.length === 0) {
+      return res.status(400).json({ error: 'No valid recipient email addresses provided.' });
+    }
+
+    if (validRecipients.length > 1000) {
+      return res.status(400).json({ error: 'Maximum 1000 recipients allowed per email dispatch.' });
+    }
+
+    console.log(`[Superadmin Mail] Initiating email dispatch to ${validRecipients.length} recipient(s). Subject: "${subject}"`);
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const errors = [];
+    const logsToInsert = [];
+
+    // Send emails in concurrent batches of 5
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < validRecipients.length; i += BATCH_SIZE) {
+      const batch = validRecipients.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(async (recipient) => {
+        try {
+          const result = await sendEmail({
+            to: recipient,
+            subject: subject.trim(),
+            html: body,
+            fromName: 'HRTA Central Controller',
+            preferSmtp: false
+          });
+
+          if (result && result.success) {
+            sentCount++;
+            logsToInsert.push({
+              recipient,
+              subject: subject.trim(),
+              status: 'SENT',
+              provider: result.provider || 'resend',
+              sent_at: new Date().toISOString()
+            });
+          } else {
+            failedCount++;
+            errors.push({ recipient, error: result?.error?.message || 'Dispatch failed' });
+            logsToInsert.push({
+              recipient,
+              subject: subject.trim(),
+              status: 'FAILED',
+              provider: 'none',
+              error_details: result?.error?.message || 'Dispatch failed',
+              sent_at: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          failedCount++;
+          console.error(`[Superadmin Mail Error] Failed to send email to ${recipient}:`, err.message);
+          errors.push({ recipient, error: err.message });
+          logsToInsert.push({
+            recipient,
+            subject: subject.trim(),
+            status: 'FAILED',
+            provider: 'none',
+            error_details: err.message,
+            sent_at: new Date().toISOString()
+          });
+        }
+      }));
+    }
+
+    // Persist logs in DB if table exists
+    if (supabaseAdmin && logsToInsert.length > 0) {
+      try {
+        await supabaseAdmin.from('mail_logs').insert(logsToInsert);
+      } catch (dbErr) {
+        console.log('[Superadmin Mail] Log insert skipped:', dbErr.message);
+      }
+    }
+
+    console.log(`[Superadmin Mail Finished] Sent: ${sentCount}/${validRecipients.length}, Failed: ${failedCount}`);
+
+    if (sentCount === 0 && validRecipients.length > 0) {
+      return res.status(500).json({
+        error: `Failed to send email to any recipient. Error: ${errors[0]?.error || 'Unknown error'}`,
+        sent: 0,
+        failed: failedCount,
+        errors
+      });
+    }
+
+    return res.json({
+      success: true,
+      sent: sentCount,
+      failed: failedCount,
+      total: validRecipients.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (err) {
+    console.error('[Superadmin Mail Fatal Error]:', err);
+    return res.status(500).json({ error: err.message || 'Internal server error while processing mail dispatch.' });
+  }
+});
+
+// 2. Fetch Mail Logs
+app.get('/api/admin/mail/logs', verifyAdminJWT, async (req, res) => {
+  try {
+    if (supabaseAdmin) {
+      const { data, error } = await supabaseAdmin
+        .from('mail_logs')
+        .select('*')
+        .order('sent_at', { ascending: false })
+        .limit(100);
+
+      if (!error && Array.isArray(data)) {
+        return res.json(data);
+      }
+    }
+    return res.json([]);
+  } catch (err) {
+    return res.json([]);
+  }
+});
+
+// 3. Upload Mail Attachment
+app.post('/api/admin/mail/upload-attachment', verifyAdminJWT, async (req, res) => {
+  try {
+    const { file, filename, mimetype } = req.body;
+    if (!file || !filename) {
+      return res.status(400).json({ error: 'File data and filename are required.' });
+    }
+    const dataUri = `data:${mimetype || 'application/octet-stream'};base64,${file}`;
+    const uploadRes = await cloudinary.uploader.upload(dataUri, {
+      folder: 'hrta_mail_attachments',
+      resource_type: 'auto'
+    });
+
+    return res.json({ url: uploadRes.secure_url, filename });
+  } catch (err) {
+    console.error('[Mail Attachment Upload Error]:', err);
+    return res.status(500).json({ error: err.message || 'Attachment upload failed.' });
+  }
+});
+
 // ============ REPLY TO SUPPORT TICKET ============
+
 app.post('/api/reply-support-ticket', verifyAdminJWT, async (req, res) => {
   const { ticketId, replyMessage } = req.body;
   if (!ticketId || !replyMessage) {
