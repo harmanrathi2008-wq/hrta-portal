@@ -838,10 +838,10 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
         console.warn(`[Resend] ${label} with custom address (${fromAddress}) failed: ${err.message}`);
         lastResendError = err;
 
-        // 2. Fallback 1: Retry using verified nxtdev.xyz domain
+        // 2. Fallback: Retry using verified custom nxtdev.xyz domain
         try {
           const verifiedNxtFrom = `${fromName} <superadmin-direct-mail@harmanrathitportal.nxtdev.xyz>`;
-          console.log(`[Resend Fallback 1] Retrying via ${label} using ${verifiedNxtFrom}...`);
+          console.log(`[Resend Fallback] Retrying via ${label} using ${verifiedNxtFrom}...`);
           const fallbackRes1 = await client.emails.send({
             from: verifiedNxtFrom,
             to,
@@ -851,34 +851,16 @@ async function sendEmail({ to, subject, html, text = '', fromName = 'HRTA', type
           });
 
           if (!fallbackRes1.error) {
-            console.log(`[Resend Fallback 1] Sent successfully via ${label} (${verifiedNxtFrom}) to ${to}`);
+            console.log(`[Resend Fallback] Sent successfully via ${label} (${verifiedNxtFrom}) to ${to}`);
             return { success: true, provider: `resend_${label}_nxtdev`, data: fallbackRes1 };
           }
         } catch (fallbackErr1) {
-          console.warn(`[Resend Fallback 1] ${label} with nxtdev.xyz failed: ${fallbackErr1.message}`);
-        }
-
-        // 3. Fallback 2: Retry using onboarding@resend.dev
-        try {
-          console.log(`[Resend Fallback 2] Retrying via ${label} using onboarding@resend.dev...`);
-          const fallbackRes2 = await client.emails.send({
-            from: `${fromName} <onboarding@resend.dev>`,
-            to,
-            subject,
-            html: finalHtml,
-            ...(text ? { text } : {})
-          });
-
-          if (!fallbackRes2.error) {
-            console.log(`[Resend Fallback 2] Sent successfully via ${label} (onboarding@resend.dev) to ${to}`);
-            return { success: true, provider: `resend_${label}_fallback`, data: fallbackRes2 };
-          }
-        } catch (fallbackErr2) {
-          console.warn(`[Resend Fallback 2] ${label} with onboarding@resend.dev failed: ${fallbackErr2.message}`);
-          lastResendError = fallbackErr2;
+          console.warn(`[Resend Fallback] ${label} with nxtdev.xyz failed: ${fallbackErr1.message}`);
+          lastResendError = fallbackErr1;
         }
       }
     }
+
 
 
     return { success: false, error: lastResendError };
